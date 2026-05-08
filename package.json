@@ -1,0 +1,22 @@
+{
+  "name": "shsid-social-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production-track web and API foundation for the SHSID Social Platform.",
+  "scripts": {
+    "dev": "node server/server.js",
+    "dev:static": "npx serve . -l 4173",
+    "check": "node --check src/app.js && node --check server/server.js && node --check server/store.js && node --check scripts/smoke-test.mjs",
+    "smoke": "node scripts/smoke-test.mjs"
+  },
+  "keywords": [
+    "social",
+    "pwa",
+    "school"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "firebase": "^12.12.1"
+  }
+}

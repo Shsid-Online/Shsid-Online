@@ -1,0 +1,50 @@
+SHSID Social Platform - Important Implementation Notes
+Last updated: 2026-05-07
+
+1) Current signup flow (frontend)
+- Step 1: Email entry
+- Step 2: Verification step (Firebase-based)
+  - "Send verification email" sends Firebase verification email.
+  - User enters verification code in app.
+  - "Verify code" applies code via Firebase Auth applyActionCode().
+- Step 3: Password with double confirmation
+- Step 4: Name + class info
+  - Year must be 1-12
+  - Class must be 1-13
+- Step 5: Video upload (verification video filename submitted)
+- Step 6: Waiting page (wait for admin approval)
+
+2) Login behavior
+- Login uses backend API endpoint /api/auth/login.
+- Firebase login check was removed from login path because it broke normal backend login flow.
+
+3) Firebase integration (frontend)
+- Firebase package installed: firebase@12.12.1
+- Config is currently hardcoded in src/app.js:
+  - apiKey: AIzaSyCHZNOo_Jd0vb-y_PYPckA7WfGWP1N4bTI
+  - authDomain: shsid-2bb9b.firebaseapp.com
+  - projectId: shsid-2bb9b
+  - storageBucket: shsid-2bb9b.firebasestorage.app
+  - messagingSenderId: 784649191903
+  - appId: 1:784649191903:web:ea124d45a35bfd39e1846a
+  - measurementId: G-NE7E1TMLVK
+- Analytics initialization is guarded with isSupported() to avoid runtime issues.
+
+4) Backend register behavior (server/server.js)
+- /api/auth/register accepts a Firebase-verified path using:
+  - firebaseVerified: true
+- Fallback OTP path still exists (legacy backend OTP checks using code) when firebaseVerified is not true.
+
+5) Important caveat about "verification code"
+- Firebase email verification is link-based.
+- The app’s verification code input expects the code token from that link (oobCode), not a classic 6-digit OTP.
+- If needed, improve UX by auto-reading oobCode from URL query params.
+
+6) Files changed during this work
+- src/app.js
+- server/server.js
+
+7) Syntax checks run
+- node --check src/app.js
+- node --check server/server.js
+

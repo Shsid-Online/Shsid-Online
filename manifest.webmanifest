@@ -1,0 +1,15 @@
+{
+  "name": "SHSID Social Platform",
+  "short_name": "SHSID Social",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f6f7fb",
+  "theme_color": "#182033",
+  "icons": [
+    {
+      "src": "./src/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
