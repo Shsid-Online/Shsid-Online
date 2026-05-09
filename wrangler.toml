@@ -1,0 +1,21 @@
+name = "shsid-online-api"
+main = "worker/index.js"
+compatibility_date = "2026-05-08"
+
+routes = [
+  { pattern = "www.shsid.online/api/*", zone_name = "shsid.online" },
+  { pattern = "shsid.online/api/*", zone_name = "shsid.online" },
+  { pattern = "www.shsid.online/upload-url", zone_name = "shsid.online" },
+  { pattern = "shsid.online/upload-url", zone_name = "shsid.online" },
+  { pattern = "www.shsid.online/upload/*", zone_name = "shsid.online" },
+  { pattern = "shsid.online/upload/*", zone_name = "shsid.online" },
+  { pattern = "www.shsid.online/health", zone_name = "shsid.online" },
+  { pattern = "shsid.online/health", zone_name = "shsid.online" }
+]
+
+[observability]
+enabled = true
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "shsid-media"

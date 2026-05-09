@@ -33,6 +33,15 @@ const ROOT = path.resolve(__dirname, "..");
 const store = new Store(DATA_FILE);
 store.load();
 
+const RATE_LIMIT = { windowMs: 15 * 60 * 1000, maxAuthRequests: 20, maxOtpAttempts: 5 };
+const rateLimitMap = new Map();
+const OTP_LENGTH = 8;
+const MAX_TEXT_LEN = 10000;
+const MAX_NAME_LEN = 100;
+const MAX_TITLE_LEN = 200;
+const MAX_REASON_LEN = 1000;
+const MAX_CATEGORY_LEN = 50;
+
 class HttpError extends Error {
   constructor(status, message) {
     super(message);
@@ -64,17 +73,29 @@ const mimeTypes = {
 const commonHeaders = {
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
-  "referrer-policy": "same-origin",
+  "referrer-policy": "strict-origin-when-cross-origin",
   "permissions-policy": "camera=(), microphone=(), geolocation=()",
-  "access-control-allow-origin": process.env.CORS_ORIGIN || "*",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
-  "access-control-allow-headers": "content-type, authorization"
+  "x-content-type-options": "nosniff",
+  "x-xss-protection": "1; mode=block",
+  "strict-transport-security": "max-age=31536000; includeSubDomains"
 };
-
-function send(res, status, payload, headers = {}) {
-  const body = typeof payload === "string" ? payload : JSON.stringify(payload);
-  res.writeHead(status, {
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "https://www.shsid.online,https://shsid.online").split(",").map((o) => o.trim());
+function getCorsOrigin(origin) {
+  if (!origin) return null;
+  return ALLOWED_ORIGINS.includes(origin) ? origin : null;
+}
+function getCommonHeaders(req) {
+  const origin = getCorsOrigin(req.headers.origin);
+  return {
     ...commonHeaders,
+    ...(origin ? { "access-control-allow-origin": origin, "access-control-allow-credentials": "true" } : {})
+  };
+}
+function send(res, status, payload, headers = {}, req = null) {
+  const body = typeof payload === "string" ? payload : JSON.stringify(payload);
+  const h = req ? getCommonHeaders(req) : commonHeaders;
+  res.writeHead(status, {
+    ...h,
     "content-type": typeof payload === "string" ? "text/plain; charset=utf-8" : "application/json; charset=utf-8",
     "cache-control": "no-store",
     ...headers
@@ -82,8 +103,8 @@ function send(res, status, payload, headers = {}) {
   res.end(body);
 }
 
-function sendJson(res, status, payload) {
-  send(res, status, payload);
+function sendJson(res, status, payload, req = null) {
+  send(res, status, payload, {}, req);
 }
 
 function parseBody(req) {
@@ -111,12 +132,32 @@ function parseBody(req) {
   });
 }
 
+function checkRateLimit(ip, action) {
+  const now = Date.now();
+  const key = `${ip}:${action}`;
+  const entry = rateLimitMap.get(key) || { count: 0, windowStart: now };
+  if (now - entry.windowStart > RATE_LIMIT.windowMs) {
+    rateLimitMap.set(key, { count: 1, windowStart: now });
+    return true;
+  }
+  const max = action === "otp_attempt" ? RATE_LIMIT.maxOtpAttempts : RATE_LIMIT.maxAuthRequests;
+  if (entry.count >= max) return false;
+  rateLimitMap.set(key, { count: entry.count + 1, windowStart: entry.windowStart });
+  return true;
+}
+
+function getClientIp(req) {
+  return req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress || "unknown";
+}
+
 function isEmailAddress(email) {
   return typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function createVerificationCode() {
-  return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+  const bytes = crypto.randomBytes(5);
+  const num = bytes.readUInt32BE(0) % 10 ** OTP_LENGTH;
+  return String(num).padStart(OTP_LENGTH, "0");
 }
 
 function verificationCodeDigest(code) {
@@ -450,6 +491,10 @@ function userView(target, viewer) {
     delete safe.email;
     delete safe.verificationVideo;
   }
+  if (viewer?.id === target.id) {
+    safe.following = store.data.follows.filter((row) => row.followerId === target.id).map((row) => row.followingId);
+    safe.followers = store.data.follows.filter((row) => row.followingId === target.id).map((row) => row.followerId);
+  }
   return safe;
 }
 
@@ -488,8 +533,11 @@ async function handleApi(req, res, url) {
   }
 
   if (method === "POST" && url.pathname === "/api/auth/start") {
+    const ip = getClientIp(req);
+    if (!checkRateLimit(ip, "auth")) return sendJson(res, 429, { error: "Too many requests, please try again later" }, req);
     const email = String(body.email || "").trim().toLowerCase();
-    if (!isEmailAddress(email)) return sendJson(res, 400, { error: "Enter a valid email address" });
+    if (!isEmailAddress(email)) return sendJson(res, 400, { error: "Enter a valid email address" }, req);
+    const dispEmail = email.replace(/(.{2}).*(@.{3})/, "$1***$2");
     let user = store.findUserByEmail(email);
     if (!user) {
       user = {
@@ -509,106 +557,128 @@ async function handleApi(req, res, url) {
       store.data.users.push(user);
       store.rebuildIndexes();
     }
+    if (user.passwordHash) {
+      return sendJson(res, 200, { ok: true, hint: "login" }, req);
+    }
     try {
       const result = await issueVerificationEmail(user);
       store.save();
       return sendJson(res, 200, {
         ok: true,
+        hint: "verify",
         transport: result.transport,
         ...(result.transport === "log" ? { devCode: result.code } : {})
-      });
+      }, req);
     } catch (error) {
       return sendJson(res, 502, {
         error: "Failed to send verification email",
         detail: process.env.NODE_ENV === "production" ? undefined : error.message
-      });
+      }, req);
     }
   }
 
   if (method === "POST" && url.pathname === "/api/auth/register") {
     const email = String(body.email || "").trim().toLowerCase();
+    if (email.length > 254) return sendJson(res, 400, { error: "Email address too long" }, req);
     const user = store.findUserByEmail(email);
-    if (!user) return sendJson(res, 400, { error: "No account setup was started for this email" });
+    if (!user) return sendJson(res, 400, { error: "No account setup was started for this email" }, req);
     const firebaseVerified = body.firebaseVerified === true;
     if (!firebaseVerified) {
       const verification = user.emailVerification;
-      if (!verification) return sendJson(res, 400, { error: "No verification code was requested for this email" });
+      if (!verification) return sendJson(res, 400, { error: "No verification code was requested for this email" }, req);
       if (new Date(verification.expiresAt).getTime() < Date.now()) {
-        return sendJson(res, 400, { error: "Verification code expired" });
+        return sendJson(res, 400, { error: "Verification code expired" }, req);
       }
       if (verification.attempts >= EMAIL_VERIFICATION_MAX_ATTEMPTS) {
-        return sendJson(res, 429, { error: "Too many invalid attempts" });
+        return sendJson(res, 429, { error: "Too many invalid attempts" }, req);
       }
       if (verification.codeHash !== verificationCodeDigest(body.code)) {
         verification.attempts += 1;
         user.updatedAt = now();
         store.save();
-        return sendJson(res, 400, { error: "Invalid verification code" });
+        return sendJson(res, 400, { error: "Invalid verification code" }, req);
       }
     }
-    if (!body.password || String(body.password).length < 8) return sendJson(res, 400, { error: "Password must be at least 8 characters" });
+    if (!body.password || String(body.password).length < 8) return sendJson(res, 400, { error: "Password must be at least 8 characters" }, req);
+    if (String(body.password).length > 128) return sendJson(res, 400, { error: "Password too long" }, req);
     user.passwordHash = hashPassword(String(body.password));
     delete user.emailVerification;
     user.updatedAt = now();
     const session = store.createSession(user, SESSION_TTL_HOURS);
-    return sendJson(res, 201, { user: userView(user, user), session });
+    return sendJson(res, 201, { user: userView(user, user), session }, req);
   }
 
   if (method === "POST" && url.pathname === "/api/auth/verify-code") {
+    const ip = getClientIp(req);
+    if (!checkRateLimit(ip, "otp_attempt")) return sendJson(res, 429, { error: "Too many attempts, please try again later" }, req);
     const email = String(body.email || "").trim().toLowerCase();
     const code = String(body.code || "").trim();
     const user = store.findUserByEmail(email);
     const verification = user?.emailVerification;
-    if (!user || !verification) return sendJson(res, 400, { error: "No verification code was requested for this email" });
+    if (!user || !verification) return sendJson(res, 400, { error: "No verification code was requested for this email" }, req);
     if (new Date(verification.expiresAt).getTime() < Date.now()) {
-      return sendJson(res, 400, { error: "Verification code expired" });
+      return sendJson(res, 400, { error: "Verification code expired" }, req);
     }
     if (verification.attempts >= EMAIL_VERIFICATION_MAX_ATTEMPTS) {
-      return sendJson(res, 429, { error: "Too many invalid attempts" });
+      return sendJson(res, 429, { error: "Too many invalid attempts" }, req);
     }
     if (verification.codeHash !== verificationCodeDigest(code)) {
       verification.attempts += 1;
       user.updatedAt = now();
       store.save();
-      return sendJson(res, 400, { error: "Invalid verification code" });
+      return sendJson(res, 400, { error: "Invalid verification code" }, req);
     }
-    return sendJson(res, 200, { ok: true });
+    return sendJson(res, 200, { ok: true }, req);
   }
 
   if (method === "POST" && url.pathname === "/api/auth/login") {
+    const ip = getClientIp(req);
+    if (!checkRateLimit(ip, "auth")) return sendJson(res, 429, { error: "Too many requests, please try again later" }, req);
     const email = String(body.email || "").trim().toLowerCase();
     const user = store.findUserByEmail(email);
     if (!user || !user.passwordHash || !verifyPassword(String(body.password || ""), user.passwordHash)) {
-      return sendJson(res, 401, { error: "Invalid email or password" });
+      return sendJson(res, 401, { error: "Invalid email or password" }, req);
     }
     const session = store.createSession(user, SESSION_TTL_HOURS);
-    return sendJson(res, 200, { user: userView(user, user), session });
+    return sendJson(res, 200, { user: userView(user, user), session }, req);
+  }
+
+  if (method === "POST" && url.pathname === "/api/auth/logout") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const header = req.headers.authorization || "";
+    const token = header.split(/\s+/)[1];
+    store.audit(user.id, "session_revoked");
+    if (token) store.revokeSessionByToken(token);
+    else store.save();
+    return sendJson(res, 200, { ok: true });
   }
 
   if (method === "POST" && url.pathname === "/api/auth/complete-profile") {
     const user = requireAuth(req, res);
     if (!user) return;
-    const englishName = String(body.englishName || "").trim();
-    const chineseName = String(body.chineseName || "").trim();
+    const englishName = String(body.englishName || "").trim().slice(0, MAX_NAME_LEN);
+    const chineseName = String(body.chineseName || "").trim().slice(0, MAX_NAME_LEN);
     const grade = Number(body.grade);
     const classNo = Number(body.classNo);
     if (!englishName || !chineseName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
-      return sendJson(res, 400, { error: "Name, grade 1-12, and class 1-13 are required" });
+      return sendJson(res, 400, { error: "Name, grade 1-12, and class 1-13 are required" }, req);
     }
     const duplicate = store.data.users.find((item) => item.id !== user.id && item.englishName === englishName && item.chineseName === chineseName);
-    if (duplicate) return sendJson(res, 409, { error: "A student account with this real name already exists" });
+    if (duplicate) return sendJson(res, 409, { error: "A student account with this real name already exists" }, req);
     Object.assign(user, {
       englishName,
       chineseName,
       grade,
       classNo,
-      verificationVideo: body.verificationVideo || "pending-upload",
+      verificationVideo: String(body.verificationVideo || "pending-upload").slice(0, 200),
+      bio: String(body.bio || "").trim().slice(0, MAX_TEXT_LEN),
       status: user.role === "admin" ? "verified" : "pending_verification",
       updatedAt: now()
     });
     store.audit(user.id, "profile_completed");
     store.save();
-    return sendJson(res, 200, { user: userView(user, user) });
+    return sendJson(res, 200, { user: userView(user, user) }, req);
   }
 
   if (method === "GET" && url.pathname === "/api/me") {
@@ -639,15 +709,17 @@ async function handleApi(req, res, url) {
   if (method === "POST" && url.pathname === "/api/posts") {
     const user = requireAuth(req, res);
     if (!user) return;
-    if (user.status !== "verified" && user.role !== "admin") return sendJson(res, 403, { error: "Verification required before posting" });
+    if (user.status !== "verified" && user.role !== "admin") return sendJson(res, 403, { error: "Verification required before posting" }, req);
     const text = String(body.text || "").trim();
-    if (!text && !(body.media || []).length) return sendJson(res, 400, { error: "Text or media is required" });
+    if (!text && !(body.media || []).length) return sendJson(res, 400, { error: "Text or media is required" }, req);
+    const sanitizedText = text.slice(0, MAX_TEXT_LEN);
+    const category = String(body.category || "school").slice(0, MAX_CATEGORY_LEN);
     const post = {
       id: id("pst"),
       authorId: user.id,
       anonymous: Boolean(body.anonymous),
-      category: String(body.category || "school"),
-      text,
+      category,
+      text: sanitizedText,
       media: Array.isArray(body.media) ? body.media.slice(0, 9) : [],
       likes: [],
       comments: [],
@@ -679,24 +751,42 @@ async function handleApi(req, res, url) {
     const post = store.data.posts.find((item) => item.id === postCommentMatch[1] && !item.deletedAt);
     if (!post) return notFound(res);
     const text = String(body.text || "").trim();
-    if (!text) return sendJson(res, 400, { error: "Comment text is required" });
-    const comment = { id: id("cmt"), authorId: user.id, anonymous: Boolean(body.anonymous), text, createdAt: now(), deletedAt: null };
+    if (!text) return sendJson(res, 400, { error: "Comment text is required" }, req);
+    const comment = { id: id("cmt"), authorId: user.id, anonymous: Boolean(body.anonymous), text: text.slice(0, MAX_TEXT_LEN), createdAt: now(), deletedAt: null };
     post.comments.push(comment);
     store.audit(user.id, "comment_created", { postId: post.id, commentId: comment.id });
     store.save();
     return sendJson(res, 201, { comment });
   }
 
+  const postIdOnlyMatch = url.pathname.match(/^\/api\/posts\/([^/]+)$/);
+  if (postIdOnlyMatch && (method === "PATCH" || method === "DELETE")) {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const post = store.data.posts.find((item) => item.id === postIdOnlyMatch[1]);
+    if (!post) return notFound(res);
+    if (method === "DELETE") {
+      post.deletedAt = now();
+      store.audit(admin.id, "post_deleted", { postId: post.id });
+      store.save();
+      return sendJson(res, 200, { ok: true });
+    }
+    if (body.sticky !== undefined) post.sticky = Boolean(body.sticky);
+    store.audit(admin.id, "post_updated", { postId: post.id, sticky: post.sticky });
+    store.save();
+    return sendJson(res, 200, { post });
+  }
+
   if (method === "POST" && url.pathname === "/api/reports") {
     const user = requireAuth(req, res);
     if (!user) return;
-    const reason = String(body.reason || "").trim();
-    if (!reason) return sendJson(res, 400, { error: "Report reason is required" });
+    const reason = String(body.reason || "").trim().slice(0, MAX_REASON_LEN);
+    if (!reason) return sendJson(res, 400, { error: "Report reason is required" }, req);
     const report = {
       id: id("rpt"),
       reporterId: user.id,
-      targetType: String(body.targetType || ""),
-      targetId: String(body.targetId || ""),
+      targetType: String(body.targetType || "").slice(0, 50),
+      targetId: String(body.targetId || "").slice(0, 100),
       reason,
       status: "pending",
       adminNotes: "",
@@ -717,19 +807,251 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { conversations: items, pagination });
   }
 
+  if (method === "POST" && url.pathname === "/api/conversations") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const memberIds = Array.isArray(body.memberIds) ? body.memberIds.map((item) => String(item || "").trim()).filter(Boolean) : [];
+    const uniqueMembers = [...new Set([user.id, ...memberIds])];
+    if (uniqueMembers.length < 2) return sendJson(res, 400, { error: "Select at least one other person to message" });
+    const group = Boolean(body.group);
+    let title = String(body.title || "").trim();
+    if (!title) {
+      if (group) title = "Group chat";
+      else {
+        const otherId = uniqueMembers.find((memberId) => memberId !== user.id);
+        const other = otherId ? store.findUserById(otherId) : null;
+        title = other?.englishName || other?.email || "Direct message";
+      }
+    }
+    const conversation = {
+      id: id("cnv"),
+      title,
+      members: uniqueMembers,
+      group,
+      messages: [],
+      createdAt: now()
+    };
+    store.data.conversations.unshift(conversation);
+    store.audit(user.id, "conversation_created", { conversationId: conversation.id });
+    store.save();
+    return sendJson(res, 201, { conversation });
+  }
+
   const messageMatch = url.pathname.match(/^\/api\/conversations\/([^/]+)\/messages$/);
-  if (method === "POST" && messageMatch) {
+  if (messageMatch && (method === "GET" || method === "POST")) {
     const user = requireAuth(req, res);
     if (!user) return;
     const conversation = store.data.conversations.find((item) => item.id === messageMatch[1]);
     if (!conversation || (!conversation.members.includes(user.id) && user.role !== "admin")) return notFound(res);
+    if (method === "GET") {
+      const msgs = (conversation.messages || []).filter((item) => !item.deletedAt);
+      const { items, pagination } = paginate(msgs, url, { limit: 100, maxLimit: 500 });
+      return sendJson(res, 200, { messages: items, pagination });
+    }
     const text = String(body.text || "").trim();
-    if (!text) return sendJson(res, 400, { error: "Message text is required" });
-    const message = { id: id("msg"), authorId: user.id, anonymous: Boolean(body.anonymous), text, createdAt: now(), deletedAt: null };
+    if (!text) return sendJson(res, 400, { error: "Message text is required" }, req);
+    const message = { id: id("msg"), authorId: user.id, anonymous: Boolean(body.anonymous), text: text.slice(0, MAX_TEXT_LEN), createdAt: now(), deletedAt: null };
     conversation.messages.push(message);
     store.audit(user.id, "message_created", { conversationId: conversation.id, messageId: message.id });
     store.save();
     return sendJson(res, 201, { message });
+  }
+
+  if (method === "GET" && url.pathname === "/api/notifications") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const mine = store.data.notifications
+      .filter((item) => item.userId === user.id)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const { items, pagination } = paginate(mine, url, { limit: 50, maxLimit: 100 });
+    const notifications = items.map((item) => ({
+      id: item.id,
+      userId: item.userId,
+      type: item.type || "notice",
+      text: item.body || item.text || "",
+      read: Boolean(item.readAt),
+      createdAt: item.createdAt
+    }));
+    return sendJson(res, 200, { notifications, pagination });
+  }
+
+  if (method === "POST" && url.pathname === "/api/notifications/read-all") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const marked = now();
+    for (const item of store.data.notifications) {
+      if (item.userId === user.id && !item.readAt) item.readAt = marked;
+    }
+    store.save();
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (method === "GET" && url.pathname === "/api/stories") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const active = store.data.stories.filter((story) => {
+      if (story.archivedAt) return false;
+      const exp = new Date(story.expiresAt || 0).getTime();
+      return exp > Date.now();
+    });
+    const sorted = active.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const { items, pagination } = paginate(sorted, url, { limit: 50, maxLimit: 100 });
+    return sendJson(res, 200, { stories: items, pagination });
+  }
+
+  if (method === "POST" && url.pathname === "/api/stories") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    if (user.status !== "verified" && user.role !== "admin") return sendJson(res, 403, { error: "Verification required" });
+    const text = String(body.text || "").trim();
+    if (!text) return sendJson(res, 400, { error: "Story text is required" }, req);
+    const story = {
+      id: id("sty"),
+      authorId: user.id,
+      text: text.slice(0, MAX_TEXT_LEN),
+      views: [],
+      createdAt: now(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      archivedAt: null
+    };
+    store.data.stories.unshift(story);
+    store.audit(user.id, "story_created", { storyId: story.id });
+    store.save();
+    return sendJson(res, 201, { story });
+  }
+
+  const storyViewMatch = url.pathname.match(/^\/api\/stories\/([^/]+)\/view$/);
+  if (method === "POST" && storyViewMatch) {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const story = store.data.stories.find((item) => item.id === storyViewMatch[1]);
+    if (!story || story.archivedAt || new Date(story.expiresAt || 0).getTime() <= Date.now()) return notFound(res);
+    story.views ||= [];
+    if (!story.views.includes(user.id)) story.views.push(user.id);
+    store.save();
+    return sendJson(res, 200, { story });
+  }
+
+  if (method === "GET" && url.pathname === "/api/reels") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const { items, pagination } = paginate(store.data.reels, url, { limit: 30, maxLimit: 100 });
+    return sendJson(res, 200, { reels: items, pagination });
+  }
+
+  if (method === "POST" && url.pathname === "/api/reels") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    if (user.status !== "verified" && user.role !== "admin") return sendJson(res, 403, { error: "Verification required" });
+    const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN);
+    const category = String(body.category || "school").trim().slice(0, MAX_CATEGORY_LEN);
+    const videoUrl = String(body.videoUrl || "").trim().slice(0, 2000) || "pending-upload";
+    if (!title) return sendJson(res, 400, { error: "Title is required" }, req);
+    const reel = {
+      id: id("rel"),
+      authorId: user.id,
+      title,
+      category,
+      videoUrl,
+      likes: [],
+      createdAt: now()
+    };
+    store.data.reels.unshift(reel);
+    store.audit(user.id, "reel_created", { reelId: reel.id });
+    store.save();
+    return sendJson(res, 201, { reel });
+  }
+
+  const reelLikeMatch = url.pathname.match(/^\/api\/reels\/([^/]+)\/like$/);
+  if (method === "POST" && reelLikeMatch) {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const reel = store.data.reels.find((item) => item.id === reelLikeMatch[1]);
+    if (!reel) return notFound(res);
+    reel.likes ||= [];
+    reel.likes = reel.likes.includes(user.id) ? reel.likes.filter((item) => item !== user.id) : [...reel.likes, user.id];
+    store.save();
+    return sendJson(res, 200, { reel });
+  }
+
+  const userFollowMatch = url.pathname.match(/^\/api\/users\/([^/]+)\/follow$/);
+  if (method === "POST" && userFollowMatch) {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const targetId = userFollowMatch[1];
+    const target = store.findUserById(targetId);
+    if (!target || target.role !== "student") return sendJson(res, 404, { error: "Student not found" });
+    if (targetId === user.id) return sendJson(res, 400, { error: "Cannot follow yourself" });
+    const idx = store.data.follows.findIndex((row) => row.followerId === user.id && row.followingId === targetId);
+    if (idx >= 0) {
+      store.data.follows.splice(idx, 1);
+      store.audit(user.id, "unfollow", { targetId });
+    } else {
+      store.data.follows.push({ followerId: user.id, followingId: targetId, createdAt: now() });
+      store.audit(user.id, "follow", { targetId });
+    }
+    store.save();
+    return sendJson(res, 200, { user: userView(user, user), following: store.data.follows.filter((row) => row.followerId === user.id).map((row) => row.followingId) });
+  }
+
+  const userQnaMatch = url.pathname.match(/^\/api\/users\/([^/]+)\/qna$/);
+  if (userQnaMatch && (method === "GET" || method === "POST")) {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const profileId = userQnaMatch[1];
+    const profile = store.findUserById(profileId);
+    if (!profile) return notFound(res);
+    if (method === "GET") {
+      const visibility = user.role === "admin" || user.id === profileId ? null : "public";
+      let rows = store.data.qna.filter((row) => row.profileId === profileId);
+      if (visibility) rows = rows.filter((row) => row.visibility === "public");
+      const { items, pagination } = paginate(rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), url, { limit: 50, maxLimit: 100 });
+      return sendJson(res, 200, { questions: items, pagination });
+    }
+    const question = String(body.question || "").trim();
+    if (!question) return sendJson(res, 400, { error: "Question is required" });
+    const entry = {
+      id: id("qna"),
+      profileId,
+      askerId: user.id,
+      anonymous: Boolean(body.anonymous),
+      visibility: body.visibility === "private" ? "private" : "public",
+      question,
+      answer: "",
+      createdAt: now()
+    };
+    store.data.qna.push(entry);
+    store.audit(user.id, "qna_asked", { profileId, questionId: entry.id });
+    store.save();
+    return sendJson(res, 201, { question: entry });
+  }
+
+  if (method === "GET" && url.pathname === "/api/suggestions") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const mine = store.data.suggestions
+      .filter((item) => item.userId === user.id)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const { items, pagination } = paginate(mine, url, { limit: 50, maxLimit: 100 });
+    return sendJson(res, 200, { suggestions: items, pagination });
+  }
+
+  if (method === "POST" && url.pathname === "/api/suggestions") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const text = String(body.text || "").trim();
+    if (!text) return sendJson(res, 400, { error: "Suggestion text is required" });
+    const suggestion = {
+      id: id("sgg"),
+      userId: user.id,
+      text,
+      status: "pending",
+      createdAt: now()
+    };
+    store.data.suggestions.push(suggestion);
+    store.audit(user.id, "suggestion_created", { suggestionId: suggestion.id });
+    store.save();
+    return sendJson(res, 201, { suggestion });
   }
 
   if (method === "GET" && url.pathname === "/api/admin/verifications") {
@@ -805,12 +1127,12 @@ function serveStatic(req, res, url) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
-    if (req.method === "OPTIONS") {
-      send(res, 204, "");
+    if (method === "OPTIONS") {
+      send(res, 204, "", {}, req);
       return;
     }
-    if (!["GET", "HEAD", "POST"].includes(req.method || "")) {
-      sendJson(res, 405, { error: "Method not allowed" });
+    if (!["GET", "HEAD", "POST", "PATCH", "DELETE"].includes(req.method || "")) {
+      sendJson(res, 405, { error: "Method not allowed" }, req);
       return;
     }
     if (url.pathname.startsWith("/api/")) {
@@ -822,7 +1144,7 @@ const server = http.createServer(async (req, res) => {
     if (res.headersSent) return;
     const status = error.status || 500;
     const message = status >= 500 ? "Server error" : error.message;
-    sendJson(res, status, { error: message });
+    sendJson(res, status, { error: message }, req);
   }
 });
 

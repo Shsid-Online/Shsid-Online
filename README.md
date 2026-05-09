@@ -2,8 +2,9 @@
 
 This repository now has two layers:
 
-- `index.html` and `src/`: interactive PWA prototype for validating the product surface.
+- `public/`: interactive PWA prototype for validating the product surface.
 - `server/`: production-path Node API with real auth boundaries, session tokens, password hashing, moderation actions, audit logs, and JSON persistence for local development.
+- `worker/`: Cloudflare Worker API for production edge deploys with R2 uploads.
 
 ## Run
 
@@ -62,6 +63,39 @@ Use the returned token:
 curl -s http://127.0.0.1:4174/api/me \
   -H 'authorization: Bearer YOUR_TOKEN'
 ```
+
+## Cloudflare Deployment (Pages + Worker + R2)
+
+Frontend (Pages):
+
+- Build command: empty
+- Output directory: `public`
+- Do not use `npx wrangler deploy` as the Pages deploy command.
+
+Worker API:
+
+```bash
+npm run cf:deploy
+```
+
+Then set Worker secrets and bindings:
+
+```bash
+wrangler secret put UPLOAD_SIGNING_SECRET
+```
+
+`wrangler.toml` already binds:
+
+- Worker name: `shsid-online-api`
+- R2 binding: `R2_BUCKET`
+- Bucket name: `shsid-media`
+
+Routes exposed by Worker:
+
+- `GET /health`
+- `POST /upload-url` (returns short-lived signed upload URL)
+- `PUT /upload/:key?exp=...&token=...`
+- `GET /files?prefix=uploads/`
 
 ## Next Production Steps
 

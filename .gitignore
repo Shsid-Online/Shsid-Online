@@ -5,3 +5,5 @@ data/*.json
 dist/
 build/
 coverage/
+.wrangler/
+.api-doc

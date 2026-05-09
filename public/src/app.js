@@ -1,5 +1,5 @@
 const STORAGE_KEY = "shsid-social-state-v2";
-const API_BASE = `${window.location.origin}/api`;
+const API_BASE = window.SHISD_API_BASE || (window.location.hostname === "127.0.0.1" ? "http://127.0.0.1:4174/api" : `${window.location.origin}/api`);
 
 const initialState = {
   currentUserId: null,
@@ -154,7 +154,7 @@ async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
-      "content-type": "application/json",
+      ...(options.body ? { "content-type": "application/json" } : {}),
       ...(state.apiToken ? { authorization: `Bearer ${state.apiToken}` } : {}),
       ...(options.headers || {})
     }
@@ -167,6 +167,156 @@ async function apiRequest(path, options = {}) {
   return body;
 }
 
+function at(ts) {
+  if (ts == null) return Date.now();
+  if (typeof ts === "number") return ts;
+  const ms = new Date(ts).getTime();
+  return Number.isFinite(ms) ? ms : Date.now();
+}
+
+function normalizePost(post) {
+  if (!post) return post;
+  const copy = { ...post };
+  copy.createdAt = at(copy.createdAt);
+  copy.likes = Array.isArray(copy.likes) ? copy.likes : [];
+  copy.comments = (copy.comments || []).map((comment) => ({ ...comment, createdAt: at(comment.createdAt) }));
+  delete copy.author;
+  delete copy.adminAuthor;
+  return copy;
+}
+
+function normalizeConversation(conversation) {
+  if (!conversation) return conversation;
+  const copy = { ...conversation };
+  copy.messages = (copy.messages || []).map((message) => ({ ...message, createdAt: at(message.createdAt) }));
+  return copy;
+}
+
+async function refreshPosts() {
+  if (!state.apiToken) return;
+  try {
+    const result = await apiRequest("/posts");
+    state.posts = (result.posts || []).map(normalizePost);
+    saveState();
+  } catch (error) {
+    console.error("refreshPosts failed", error);
+  }
+}
+
+async function refreshConversations() {
+  if (!state.apiToken) return;
+  try {
+    const result = await apiRequest("/conversations");
+    state.conversations = (result.conversations || []).map(normalizeConversation);
+    if (!state.conversations.some((item) => item.id === activeConversationId)) {
+      activeConversationId = state.conversations[0]?.id;
+    }
+    saveState();
+  } catch (error) {
+    console.error("refreshConversations failed", error);
+  }
+}
+
+async function refreshStories() {
+  if (!state.apiToken) return;
+  try {
+    const result = await apiRequest("/stories");
+    state.stories = (result.stories || []).map((story) => ({ ...story, createdAt: at(story.createdAt) }));
+    saveState();
+  } catch (error) {
+    console.error("refreshStories failed", error);
+  }
+}
+
+async function refreshReels() {
+  if (!state.apiToken) return;
+  try {
+    const result = await apiRequest("/reels");
+    state.reels = (result.reels || []).map((reel) => ({
+      ...reel,
+      createdAt: at(reel.createdAt),
+      likes: Array.isArray(reel.likes) ? reel.likes : []
+    }));
+    saveState();
+  } catch (error) {
+    console.error("refreshReels failed", error);
+  }
+}
+
+async function refreshReports() {
+  if (!state.apiToken) return;
+  const user = currentUser();
+  if (!user || user.role !== "admin") return;
+  try {
+    const result = await apiRequest("/admin/reports");
+    state.reports = (result.reports || []).map((report) => ({
+      ...report,
+      type: report.targetType || report.type,
+      targetId: report.targetId
+    }));
+    saveState();
+  } catch (error) {
+    console.error("refreshReports failed", error);
+  }
+}
+
+async function refreshAuditLogs() {
+  if (!state.apiToken) return;
+  const user = currentUser();
+  if (!user || user.role !== "admin") return;
+  try {
+    const result = await apiRequest("/admin/audit-logs");
+    state.audit = (result.auditLogs || []).map((entry) => ({
+      ...entry,
+      userId: entry.actorId || entry.userId,
+      createdAt: at(entry.createdAt)
+    }));
+    saveState();
+  } catch (error) {
+    console.error("refreshAuditLogs failed", error);
+  }
+}
+
+async function refreshNotifications() {
+  if (!state.apiToken) return;
+  try {
+    const result = await apiRequest("/notifications");
+    state.notifications = (result.notifications || []).map((item) => ({
+      id: item.id,
+      userId: item.userId,
+      text: item.text,
+      read: item.read,
+      createdAt: at(item.createdAt)
+    }));
+    saveState();
+  } catch (error) {
+    console.error("refreshNotifications failed", error);
+  }
+}
+
+async function refreshSuggestions() {
+  if (!state.apiToken) return;
+  try {
+    const result = await apiRequest("/suggestions");
+    state.suggestions = result.suggestions || [];
+    saveState();
+  } catch (error) {
+    console.error("refreshSuggestions failed", error);
+  }
+}
+
+async function refreshQnaForProfile(profileId) {
+  if (!state.apiToken || !profileId) return;
+  try {
+    const result = await apiRequest(`/users/${profileId}/qna`);
+    const rows = result.questions || [];
+    state.qna = [...state.qna.filter((item) => item.profileId !== profileId), ...rows];
+    saveState();
+  } catch (error) {
+    console.error("refreshQnaForProfile failed", error);
+  }
+}
+
 function mergeApiUser(apiUser) {
   mergeApiUsers([apiUser]);
   state.currentUserId = apiUser.id;
@@ -174,6 +324,7 @@ function mergeApiUser(apiUser) {
 
 function mergeApiUsers(apiUsers = []) {
   for (const apiUser of apiUsers) {
+    const existing = state.users.find((user) => user.id === apiUser.id);
     const localUser = {
       id: apiUser.id,
       email: apiUser.email || "",
@@ -185,8 +336,8 @@ function mergeApiUsers(apiUsers = []) {
       classNo: apiUser.classNo || 1,
       status: apiUser.status,
       bio: apiUser.bio || "",
-      followers: [],
-      following: [],
+      followers: apiUser.followers !== undefined ? apiUser.followers : (existing?.followers || []),
+      following: apiUser.following !== undefined ? apiUser.following : (existing?.following || []),
       online: true
     };
     const index = state.users.findIndex((user) => user.id === localUser.id);
@@ -204,7 +355,17 @@ async function bootstrapSession() {
     const result = await apiRequest("/me");
     mergeApiUser(result.user);
     await refreshStudents();
-    if (result.user.role === "admin") await refreshAdminVerifications();
+    await refreshPosts();
+    await refreshConversations();
+    await refreshStories();
+    await refreshReels();
+    await refreshNotifications();
+    await refreshSuggestions();
+    if (result.user.role === "admin") {
+      await refreshAdminVerifications();
+      await refreshReports();
+      await refreshAuditLogs();
+    }
     state.authStep = nextAuthStepForUser(result.user);
     saveState();
   } catch {
@@ -253,7 +414,8 @@ function initials(user) {
 }
 
 function timeAgo(ts) {
-  const minutes = Math.max(1, Math.round((Date.now() - ts) / 60000));
+  const t = at(ts);
+  const minutes = Math.max(1, Math.round((Date.now() - t) / 60000));
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `${hours}h`;
@@ -300,6 +462,14 @@ async function handleEmailAuthIntent(intent) {
     state.pendingEmail = email;
     state.authMode = "register";
     const result = await apiRequest("/auth/start", { method: "POST", body: JSON.stringify({ email }) });
+    if (result.hint === "login") {
+      state.authMode = "login";
+      state.authStep = "password";
+      saveState();
+      render();
+      toast("This email already has a password. Sign in instead.");
+      return;
+    }
     state.authStep = "verify";
     saveState();
     render();
@@ -451,6 +621,11 @@ function renderAuth() {
         <h2>${title}</h2>
         <p class="muted">${subtitle}</p>
         <div class="grid">${body}</div>
+        <div class="auth-footer">
+          <a href="./guidelines.html" target="_blank" rel="noopener">Community guidelines</a>
+          <span aria-hidden="true"> · </span>
+          <a href="./privacy.html" target="_blank" rel="noopener">Privacy overview</a>
+        </div>
       </div>
       <div class="auth-art">
         <h1>Private social networking for verified SHSID students.</h1>
@@ -491,11 +666,17 @@ function renderView() {
 
 function renderFeed() {
   const posts = [...state.posts].sort((a, b) => Number(b.sticky) - Number(a.sticky) || b.createdAt - a.createdAt);
+  const storyStrip = state.stories.length
+    ? state.stories.map(renderStoryMini).join("")
+    : `<span class="empty-hint">No active stories — open <strong>Stories</strong> to post one.</span>`;
+  const postsHtml = posts.length
+    ? posts.map(renderPost).join("")
+    : `<div class="empty-state">No posts yet. Share something positive or helpful to get the feed started.</div>`;
   return page("Feed", "Posts from followed students, categories, sticky announcements, comments, likes, and reports.", `
     <section class="panel" style="margin-bottom:16px">
-      <div class="story-strip">${state.stories.map(renderStoryMini).join("")}</div>
+      <div class="story-strip">${storyStrip}</div>
     </section>
-    <section class="grid">${posts.map(renderPost).join("")}</section>
+    <section class="grid">${postsHtml}</section>
   `, `<button class="btn primary" data-view="post">New post</button>`);
 }
 
@@ -505,7 +686,9 @@ function renderStoryMini(story) {
 
 function renderPost(post) {
   const author = state.users.find((u) => u.id === post.authorId);
-  const liked = post.likes.includes(state.currentUserId);
+  const likes = post.likes || [];
+  const liked = likes.includes(state.currentUserId);
+  const media = post.media || [];
   return `
     <article class="card">
       <div class="post-head">
@@ -518,11 +701,11 @@ function renderPost(post) {
           <div class="muted">${post.category} · ${timeAgo(post.createdAt)} ${currentUser().role === "admin" && post.anonymous ? `· Admin sees ${escapeHtml(userName(post.authorId))}` : ""}</div>
         </div>
       </div>
-      <div class="post-text">${escapeHtml(post.text)}</div>
-      ${post.media.length ? `<div class="media-grid">${post.media.slice(0, 9).map((item) => `<div class="media-tile">${escapeHtml(item)}</div>`).join("")}</div>` : ""}
-      ${post.comments.map((comment) => `<p class="comment"><strong>${escapeHtml(userName(comment.authorId, comment.anonymous))}:</strong> ${escapeHtml(comment.text)}</p>`).join("")}
+      <div class="post-text">${escapeHtml(post.text || "")}</div>
+      ${media.length ? `<div class="media-grid">${media.slice(0, 9).map((item) => `<div class="media-tile">${escapeHtml(item)}</div>`).join("")}</div>` : ""}
+      ${(post.comments || []).map((comment) => `<p class="comment"><strong>${escapeHtml(userName(comment.authorId, comment.anonymous))}:</strong> ${escapeHtml(comment.text)}</p>`).join("")}
       <div class="post-actions">
-        <button class="btn small" data-action="like-post" data-id="${post.id}">${liked ? "Liked" : "Like"} · ${post.likes.length}</button>
+        <button class="btn small" data-action="like-post" data-id="${post.id}">${liked ? "Liked" : "Like"} · ${likes.length}</button>
         <button class="btn small" data-action="comment-post" data-id="${post.id}">Comment</button>
         <button class="btn small" data-action="report-post" data-id="${post.id}">Report</button>
         ${currentUser().role === "admin" ? `<button class="btn small" data-action="toggle-sticky" data-id="${post.id}">${post.sticky ? "Unpin" : "Pin"}</button><button class="btn small danger" data-action="delete-post" data-id="${post.id}">Delete</button>` : ""}
@@ -546,14 +729,34 @@ function renderComposer() {
 }
 
 function renderReels() {
-  return page("Reels", "Short vertical videos and the longer video section.", `
-    <section class="grid three">${state.reels.map((reel) => `
+  const uid = state.currentUserId;
+  const tiles = state.reels.map((reel) => {
+    const likes = reel.likes || [];
+    const liked = likes.includes(uid);
+    const openable = reel.videoUrl && reel.videoUrl !== "pending-upload" && /^https?:\/\//i.test(reel.videoUrl);
+    return `
       <article class="card video-tile">
         <span class="chip">${escapeHtml(reel.category)}</span>
         <h2>${escapeHtml(reel.title)}</h2>
-        <p>${escapeHtml(userName(reel.authorId))} · ${reel.likes} likes</p>
+        <p class="reel-meta">${escapeHtml(userName(reel.authorId))} · ${likes.length} likes · ${timeAgo(reel.createdAt)}</p>
+        <div class="reel-actions">
+          <button class="btn small" data-action="like-reel" data-id="${reel.id}">${liked ? "Liked" : "Like"}</button>
+          ${openable ? `<a class="reel-link" href="${escapeHtml(reel.videoUrl)}" target="_blank" rel="noopener noreferrer">Open video</a>` : `<span class="muted" style="font-size:13px">Video link pending</span>`}
+        </div>
       </article>
-    `).join("")}</section>
+    `;
+  }).join("");
+  const grid = tiles || `<div class="empty-state">No reels yet. Add one below or ask classmates to share.</div>`;
+  return page("Reels", "Short vertical videos — add a title and optional hosted video URL.", `
+    <section class="composer" style="margin-bottom:16px">
+      <div class="grid two">
+        <div class="field"><label>Title</label><input id="reel-title" placeholder="What is this reel about?" /></div>
+        <div class="field"><label>Category</label><select id="reel-category"><option>school</option><option>lifestyle</option><option>gaming</option><option>academic</option></select></div>
+      </div>
+      <div class="field"><label>Video URL (optional)</label><input id="reel-video-url" type="url" placeholder="https://… (YouTube, Drive share link, etc.)" /></div>
+      <button class="btn primary" data-action="create-reel">Publish reel</button>
+    </section>
+    <section class="grid three">${grid}</section>
   `);
 }
 
@@ -696,8 +899,18 @@ function bindEvents() {
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", async () => {
       view = button.dataset.view;
-      if (view === "profile") state.selectedProfileId = null;
-      if (view === "admin") await refreshAdminVerifications();
+      if (view === "profile") {
+        state.selectedProfileId = null;
+        await refreshSuggestions();
+        await refreshQnaForProfile(state.currentUserId);
+      }
+      if (view === "admin") {
+        await refreshAdminVerifications();
+        await refreshReports();
+        await refreshAuditLogs();
+      }
+      if (view === "messages") await refreshConversations();
+      if (view === "feed") await refreshPosts();
       render();
     });
   });
@@ -755,6 +968,11 @@ function bindAuth() {
           render();
         }
         if (action === "logout") {
+          try {
+            if (state.apiToken) await apiRequest("/auth/logout", { method: "POST", body: JSON.stringify({}) });
+          } catch {
+            // ignore
+          }
           state.apiToken = null;
           state.currentUserId = null;
           clearAuthDraftState();
@@ -881,6 +1099,11 @@ function bindAuth() {
 async function handleAction(action, id) {
   const user = currentUser();
   if (action === "logout") {
+    try {
+      if (state.apiToken) await apiRequest("/auth/logout", { method: "POST", body: JSON.stringify({}) });
+    } catch {
+      // ignore
+    }
     state.apiToken = null;
     state.currentUserId = null;
     clearAuthDraftState();
@@ -889,71 +1112,106 @@ async function handleAction(action, id) {
   }
   if (action === "create-post") {
     const text = document.querySelector("#post-text").value.trim();
-    if (!text) return toast("Write something first");
-    const files = [...document.querySelector("#post-media").files].slice(0, 9).map((file) => file.type.startsWith("video") ? "Video" : "Photo");
-    state.posts.unshift({ id: uid("p"), authorId: user.id, anonymous: document.querySelector("#post-anon").value === "true", category: document.querySelector("#post-category").value, text, media: files, likes: [], sticky: false, createdAt: Date.now(), comments: [] });
-    state.audit.push({ id: uid("a"), userId: user.id, action: "create_post", ip: "client", createdAt: Date.now() });
+    const files = [...document.querySelector("#post-media").files].slice(0, 9).map((file) => (file.type.startsWith("video") ? "Video" : "Photo"));
+    if (!text && !files.length) return toast("Write something or attach media");
+    await apiRequest("/posts", {
+      method: "POST",
+      body: JSON.stringify({
+        text,
+        anonymous: document.querySelector("#post-anon").value === "true",
+        category: document.querySelector("#post-category").value,
+        media: files
+      })
+    });
+    await refreshPosts();
     view = "feed";
     toast("Post published");
   }
   if (action === "like-post") {
-    const post = state.posts.find((item) => item.id === id);
-    post.likes = post.likes.includes(user.id) ? post.likes.filter((item) => item !== user.id) : [...post.likes, user.id];
+    const result = await apiRequest(`/posts/${id}/like`, { method: "POST", body: JSON.stringify({}) });
+    const idx = state.posts.findIndex((item) => item.id === id);
+    if (idx >= 0) state.posts[idx] = normalizePost(result.post);
   }
   if (action === "comment-post") {
     const text = prompt("Comment text");
-    if (text) state.posts.find((item) => item.id === id).comments.push({ id: uid("c"), authorId: user.id, anonymous: confirm("Post comment anonymously?"), text, createdAt: Date.now() });
+    if (text) {
+      const anonymous = confirm("Post comment anonymously?");
+      await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous }) });
+      await refreshPosts();
+    }
   }
   if (action === "report-post") {
     const reason = prompt("Report reason");
-    if (reason) state.reports.push({ id: uid("rep"), type: "post", targetId: id, reporterId: user.id, reason, status: "pending", notes: "" });
+    if (reason) {
+      await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "post", targetId: id, reason }) });
+      if (user.role === "admin") await refreshReports();
+    }
   }
   if (action === "toggle-sticky") {
     const post = state.posts.find((item) => item.id === id);
-    post.sticky = !post.sticky;
+    if (!post) return;
+    await apiRequest(`/posts/${id}`, { method: "PATCH", body: JSON.stringify({ sticky: !post.sticky }) });
+    await refreshPosts();
   }
   if (action === "delete-post") {
-    state.posts = state.posts.filter((item) => item.id !== id);
+    await apiRequest(`/posts/${id}`, { method: "DELETE" });
+    await refreshPosts();
   }
   if (action === "follow") {
-    user.following = user.following.includes(id) ? user.following.filter((item) => item !== id) : [...user.following, id];
+    const result = await apiRequest(`/users/${id}/follow`, { method: "POST", body: JSON.stringify({}) });
+    mergeApiUsers([result.user]);
   }
   if (action === "view-profile") {
     state.selectedProfileId = id;
     view = "profile";
+    await refreshQnaForProfile(id);
   }
   if (action === "start-chat") {
-    let conv = state.conversations.find((item) => !item.group && item.participants.includes(user.id) && item.participants.includes(id));
-    if (!conv) {
-      conv = { id: uid("m"), title: userName(id), participants: [user.id, id], group: false, messages: [] };
-      state.conversations.unshift(conv);
-    }
-    activeConversationId = conv.id;
+    const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: [id], group: false }) });
+    await refreshConversations();
+    activeConversationId = result.conversation.id;
     view = "messages";
   }
   if (action === "send-message") {
-    const conv = state.conversations.find((item) => item.id === id);
     const text = document.querySelector("#message-text").value.trim();
-    if (conv && text) conv.messages.push({ id: uid("msg"), authorId: user.id, anonymous: document.querySelector("#message-anon").value === "true", text, createdAt: Date.now() });
+    if (!text || !id) return toast("Enter a message");
+    await apiRequest(`/conversations/${id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text, anonymous: document.querySelector("#message-anon").value === "true" })
+    });
+    document.querySelector("#message-text").value = "";
+    await refreshConversations();
   }
   if (action === "open-conv") activeConversationId = id;
   if (action === "new-group") {
-    const conv = { id: uid("m"), title: "New group chat", participants: state.users.map((item) => item.id), group: true, messages: [] };
-    state.conversations.unshift(conv);
-    activeConversationId = conv.id;
+    const memberIds = [...new Set(state.users.filter((item) => item.id !== user.id && item.role !== "admin").map((item) => item.id))];
+    const peers = memberIds.length ? memberIds : state.users.filter((item) => item.id !== user.id).map((item) => item.id);
+    if (!peers.length) return toast("No classmates to add yet");
+    await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: peers, group: true, title: "New group chat" }) });
+    await refreshConversations();
+    activeConversationId = state.conversations[0]?.id;
+    view = "messages";
   }
   if (action === "report-message") {
     const reason = prompt("Message report reason");
-    if (reason) state.reports.push({ id: uid("rep"), type: "message", targetId: id, reporterId: user.id, reason, status: "pending", notes: "" });
+    if (reason) {
+      await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "conversation", targetId: id, reason }) });
+      if (user.role === "admin") await refreshReports();
+    }
   }
   if (action === "create-story") {
     const text = document.querySelector("#story-text").value.trim();
-    if (text) state.stories.unshift({ id: uid("s"), authorId: user.id, text, views: [], createdAt: Date.now() });
+    if (text) {
+      await apiRequest("/stories", { method: "POST", body: JSON.stringify({ text }) });
+      await refreshStories();
+    }
   }
   if (action === "view-story") {
+    await apiRequest(`/stories/${id}/view`, { method: "POST", body: JSON.stringify({}) });
+    await refreshStories();
     const story = state.stories.find((item) => item.id === id);
-    if (!story.views.includes(user.id)) story.views.push(user.id);
-    toast(`${story.text} · ${story.views.length} views`);
+    const views = story?.views?.length ?? 0;
+    if (story) toast(`${story.text} · ${views} views`);
   }
   if (action === "verify-user") {
     await apiRequest(`/admin/verifications/${id}`, {
@@ -972,17 +1230,21 @@ async function handleAction(action, id) {
     await refreshStudents();
   }
   if (action === "resolve-report") {
-    const report = state.reports.find((item) => item.id === id);
-    if (report) report.status = "resolved";
+    await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "resolved" }) });
+    await refreshReports();
   }
   if (action === "mark-read") {
-    state.notifications.forEach((item) => {
-      if (item.userId === user.id) item.read = true;
-    });
+    await apiRequest("/notifications/read-all", { method: "POST", body: JSON.stringify({}) });
+    await refreshNotifications();
   }
   if (action === "ask-qna") {
     const question = prompt("Question");
-    if (question) state.qna.push({ id: uid("q"), profileId: id, askerId: user.id, anonymous: confirm("Ask anonymously?"), visibility: confirm("Display publicly?") ? "public" : "private", question, answer: "" });
+    if (question) {
+      const anonymous = confirm("Ask anonymously?");
+      const visibility = confirm("Display publicly on their profile?") ? "public" : "private";
+      await apiRequest(`/users/${id}/qna`, { method: "POST", body: JSON.stringify({ question, anonymous, visibility }) });
+      await refreshQnaForProfile(id);
+    }
   }
   saveState();
   render();

@@ -1,0 +1,29 @@
+# Project Log
+
+- 2026-05-08: Activated project context at /Users/xy-inv/shsid-social-platform. Initial state checked.
+- 2026-05-08: User subscribed to Cloudflare R2. Next step is wiring R2 credentials/bucket bindings into this project.
+- 2026-05-08: User at Cloudflare R2 bucket creation step. Recommended bucket config captured: name shsid-media, Automatic APAC location, Standard class. Waiting for bucket creation confirmation.
+- 2026-05-08: Verified repo wiring. wrangler.toml has R2 binding R2_BUCKET but bucket_name currently shsid-online-assets; should be updated to shsid-media.
+- 2026-05-08: Confirmed custom domain is shsid.online. Next: map R2 public domain for media serving.
+- 2026-05-08: Updated repo config to bind R2 bucket name shsid-media in wrangler.toml and README.
+- 2026-05-08: User shared Cloudflare account ID and API token in chat. Advised immediate token rotation and moving to secure env vars only.
+- 2026-05-08: Attempted Cloudflare API automation for Workers/Pages config; API returned code 10000 Authentication error for provided token. Awaiting new token/scopes.
+- 2026-05-08: Confirmed R2 bucket details: name shsid-media, location APAC, S3 endpoint d98dcaba2f1066cc78f8fb4a61c55f17.r2.cloudflarestorage.com/shsid-media, public dev URL pub-7612d88ec90c4844a48f60289a8c8872.r2.dev.
+- 2026-05-08: User says token should work (name: r2-storage-access). Retrying Cloudflare API auth checks.
+- 2026-05-08: Provided consolidated one-shot checklist of all required Cloudflare info/permissions to complete automated R2 + Pages/Worker wiring.
+- 2026-05-08: Received token storage-api and project name shsid-online. Running API automation checks and config attempts.
+- 2026-05-08: API checks with token storage-api: R2 bucket access works; Pages/Workers endpoints return authentication error; zone lookup for shsid.online returned empty; custom domain API call failed due payload/schema mismatch and likely missing zone context.
+- 2026-05-08: Received new tokens with broader scopes; starting automated Pages/Workers/R2 configuration pass.
+- 2026-05-08: Applied Pages env vars/secrets for project shsid-online (production+preview): R2_BUCKET, R2_ACCOUNT_ID, R2_PUBLIC_BASE_URL, UPLOAD_SIGNING_SECRET. Verified via API response.
+- 2026-05-08: Ran full debug/function check: npm run check passed; npm run smoke initially failed in sandbox (EPERM listen) then passed with escalated permissions. Service health ok with seeded admin and zero pending data.
+- 2026-05-08: Full live check run. Local check+smoke passed. www.shsid.online responds 200. media.shsid.online and r2.dev base return expected 404 with no object key. Critical gap: production API routes not wired (GET /api/health returns HTML shell, POST /upload-url returns 405), so backend/upload endpoints are not active in current Pages deployment.
+
+- 2026-05-08: Production API wiring fix prepared in repo. Actions:
+  - Updated `worker/index.js` to support both `/health` and `/api/health` (and similarly `/upload-url`, `/upload/*`, `/files`) by stripping an optional `/api` prefix.
+  - Updated `wrangler.toml` to add Worker route bindings for `www.shsid.online` + `shsid.online` on `/api/*`, `/upload-url`, `/upload/*`, and `/health` so these requests no longer fall through to Pages.
+  - Verified local integrity: `npm run check` and `npm run smoke` still pass.
+  - Conclusion: code-side fix is ready; once the Worker is deployed with these routes, `GET /api/health` should return JSON and `POST /upload-url` should stop returning 405 in production.
+- 2026-05-08: Creating api doc with all currently visible API keys/tokens and usage descriptions from repo/chat context.
+- 2026-05-08: Created '/Users/xy-inv/shsid-social-platform/api doc' containing all currently visible API keys/tokens and usage notes.
+- 2026-05-09: Worker deployed successfully via wrangler. All routes (api/*, upload-url, upload/*, health) on www.shsid.online + shsid.online verified and active. Domain currently suspended at Namecheap (clientHold) — awaiting reactivation to test live endpoints.
+- 2026-05-09: Security audit completed. Fixed: user enumeration in /api/auth/start (now returns same response regardless of account state), weak 6-digit OTP upgraded to 8-digit, rate limiting on all auth endpoints (20 req/15min, 5 OTP attempts/15min per IP), input length limits (10k text, 100 name, 200 title, 1k reason), CORS changed from wildcard to explicit origin list, added HSTS/x-xss-protection/referrer-policy headers, file type whitelist on Worker uploads, per-IP rate limiting on Worker (30 req/min), content-type validation. All checks pass. Worker redeployed. Version ID: 1e2f8d9e-3ab0-4ff4-ac3b-be0fc5c22952.

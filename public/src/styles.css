@@ -583,3 +583,61 @@ button {
     font-size: 40px;
   }
 }
+
+.empty-state {
+  padding: 28px 20px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  text-align: center;
+}
+
+.auth-footer {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.auth-footer a {
+  color: var(--blue);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.auth-footer a:hover {
+  text-decoration: underline;
+}
+
+.video-tile .reel-meta {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.video-tile .reel-actions {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.video-tile .reel-link {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--blue);
+  text-decoration: none;
+}
+
+.video-tile .reel-link:hover {
+  text-decoration: underline;
+}
+
+.story-strip .empty-hint {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 8px 4px;
+}

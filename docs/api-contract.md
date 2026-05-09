@@ -39,6 +39,10 @@ User objects are privacy-filtered by viewer:
   - Body: `{ "email": "YOUR_ADMIN_EMAIL", "password": "YOUR_ADMIN_PASSWORD" }`
   - Returns `{ user, session: { token, expiresAt } }`.
 
+- `POST /auth/logout`
+  - Auth required.
+  - Revokes the current bearer session server-side.
+
 - `POST /auth/complete-profile`
   - Auth required.
   - Body: `{ "englishName": "...", "chineseName": "...", "grade": 12, "classNo": 3, "verificationVideo": "object-key.mp4" }`
@@ -52,14 +56,56 @@ User objects are privacy-filtered by viewer:
 - `GET /students`
 - `GET /posts`
 - `POST /posts`
+  - Body: `{ "text": "...", "anonymous": false, "category": "school", "media": ["Photo"] }` — `media` is optional (prototype stores labels, not binary).
+- `PATCH /posts/:id` (admin)
+  - Body: `{ "sticky": true }`
+- `DELETE /posts/:id` (admin)
+  - Soft-deletes the post (`deletedAt` set).
 - `POST /posts/:id/like`
 - `POST /posts/:id/comments`
+  - Body: `{ "text": "...", "anonymous": false }`
 - `POST /reports`
+  - Body: `{ "targetType": "post", "targetId": "<id>", "reason": "..." }`
+
+## Stories & reels
+
+- `GET /stories`
+- `POST /stories`
+  - Body: `{ "text": "..." }` — stories expire after 24 hours server-side.
+- `POST /stories/:id/view`
+- `GET /reels`
+- `POST /reels`
+  - Body: `{ "title": "...", "category": "school", "videoUrl": "optional-or-pending-upload" }`
+- `POST /reels/:id/like`
+
+## Profiles & community
+
+- `POST /users/:userId/follow`
+  - Toggles follow; returns `{ user, following: string[] }` for the acting user.
+- `GET /users/:userId/qna`
+- `POST /users/:userId/qna`
+  - Body: `{ "question": "...", "anonymous": false, "visibility": "public" | "private" }`
+
+## Suggestions
+
+- `GET /suggestions`
+  - Lists the authenticated user’s submissions.
+- `POST /suggestions`
+  - Body: `{ "text": "..." }`
+
+## Notifications
+
+- `GET /notifications`
+- `POST /notifications/read-all`
 
 ## Messaging
 
 - `GET /conversations`
+- `POST /conversations`
+  - Body: `{ "memberIds": ["usr_..."], "group": false, "title": "optional" }` — the caller is always included in `members`.
+- `GET /conversations/:id/messages`
 - `POST /conversations/:id/messages`
+  - Body: `{ "text": "...", "anonymous": false }`
 
 ## Admin
 
@@ -70,12 +116,14 @@ Admin role required.
   - Body: `{ "decision": "approve" }` or `{ "decision": "reject" }`
 - `GET /admin/reports`
 - `POST /admin/reports/:reportId`
+  - Body: `{ "status": "resolved", "adminNotes": "optional" }`
 - `GET /admin/audit-logs`
 
 ## Production Gaps Remaining
 
-- Multipart media uploads
+- Multipart media uploads (binary) end-to-end; prototype uses labels / separate Worker upload flow for objects.
 - WebSocket events for messaging, typing, presence, and notifications
-- PostgreSQL persistence
+- PostgreSQL persistence (see `docs/database-schema.sql`)
+- Hosting the Node `/api/*` app beside Cloudflare Pages (or porting logic to Workers + D1)
 - Push notification provider integration
 - Automated test suite

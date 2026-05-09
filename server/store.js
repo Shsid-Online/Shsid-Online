@@ -63,7 +63,13 @@ function createSeed() {
     reports: [],
     conversations: [],
     notifications: [],
-    auditLogs: []
+    auditLogs: [],
+    stories: [],
+    reels: [],
+    follows: [],
+    qna: [],
+    suggestions: [],
+    bans: []
   };
 }
 
@@ -103,6 +109,24 @@ class Store {
     this.data.sessions ||= [];
     this.data.notifications ||= [];
     this.data.auditLogs ||= [];
+    this.data.stories ||= [];
+    this.data.reels ||= [];
+    this.data.follows ||= [];
+    this.data.qna ||= [];
+    this.data.suggestions ||= [];
+    this.data.bans ||= [];
+    this.data.conversations ||= [];
+    for (const conversation of this.data.conversations) {
+      if (conversation.participants && !conversation.members) {
+        conversation.members = conversation.participants;
+        delete conversation.participants;
+      }
+      conversation.members ||= [];
+      conversation.messages ||= [];
+      if (conversation.group === undefined) {
+        conversation.group = conversation.members.length > 2;
+      }
+    }
     for (const user of this.data.users) {
       if (Array.isArray(user.sessions)) {
         for (const legacySession of user.sessions) {
@@ -187,6 +211,15 @@ class Store {
     const before = this.data.sessions.length;
     this.data.sessions = this.data.sessions.filter((session) => new Date(session.expiresAt).getTime() > Date.now());
     return before - this.data.sessions.length;
+  }
+
+  revokeSessionByToken(token) {
+    const digest = tokenDigest(token);
+    const next = this.data.sessions.filter((session) => session.tokenDigest !== digest);
+    if (next.length === this.data.sessions.length) return false;
+    this.data.sessions = next;
+    this.save();
+    return true;
   }
 }
 
