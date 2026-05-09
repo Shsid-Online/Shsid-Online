@@ -16,6 +16,16 @@ routes = [
 [observability]
 enabled = true
 
+[[d1_databases]]
+binding = "DB"
+database_name = "shsid-social-db"
+database_id = "3a073c1d-b38c-49e7-9282-d193c1bb4248"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "8313bb172fc349dbba8e957975b29aaf"
+preview_id = "8313bb172fc349dbba8e957975b29aaf"
+
 [[r2_buckets]]
 binding = "R2_BUCKET"
 bucket_name = "shsid-media"

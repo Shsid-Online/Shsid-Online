@@ -1,5 +1,5 @@
 const STORAGE_KEY = "shsid-social-state-v2";
-const API_BASE = window.SHISD_API_BASE || (window.location.hostname === "127.0.0.1" ? "http://127.0.0.1:4174/api" : `${window.location.origin}/api`);
+const API_BASE = window.SHSID_API_BASE || (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost" ? "http://127.0.0.1:4174/api" : "https://www.shsid.online/api");
 
 const initialState = {
   currentUserId: null,
