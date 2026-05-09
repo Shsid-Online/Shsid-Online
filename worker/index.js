@@ -9,6 +9,13 @@ const MAX_NAME_LEN = 100;
 const MAX_TITLE_LEN = 200;
 const MAX_REASON_LEN = 1000;
 const MAX_CATEGORY_LEN = 50;
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const UPLOAD_TTL_SECONDS = 10 * 60;
+const ALLOWED_UPLOAD_TYPES = [
+  "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
+  "video/mp4", "video/webm", "video/quicktime",
+  "application/pdf"
+];
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
@@ -43,6 +50,53 @@ async function handleApi(request, env, url, route) {
 
   if (method === "GET" && route === "/health") {
     return json({ ok: true, service: "shsid-social-api", time: new Date().toISOString() }, 200);
+  }
+
+  if (method === "POST" && route === "/upload-url") {
+    const fileName = safeName(String(body.fileName || "").trim());
+    const contentType = String(body.contentType || "application/octet-stream").trim().toLowerCase();
+    if (!fileName) return json({ error: "fileName is required" }, 400);
+    if (!ALLOWED_UPLOAD_TYPES.includes(contentType)) return json({ error: "Unsupported file type" }, 415);
+
+    const key = `uploads/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+    const expiresAt = Math.floor(Date.now() / 1000) + UPLOAD_TTL_SECONDS;
+    const uploadSecret = requireUploadSigningSecret(env);
+    const token = await signToken(uploadSecret, `${key}:${expiresAt}`);
+    const uploadUrl = `${url.origin}/upload/${encodeURIComponent(key)}?exp=${expiresAt}&token=${token}`;
+    const mediaUrl = `${url.origin}/api/media/${encodeURIComponent(key)}`;
+    return json({ key, uploadUrl, mediaUrl, method: "PUT", headers: { "content-type": contentType } }, 200);
+  }
+
+  const uploadMatch = route.match(/^\/upload\/(.+)$/);
+  if (method === "PUT" && uploadMatch) {
+    const key = decodeURIComponent(uploadMatch[1]);
+    const exp = Number(url.searchParams.get("exp") || "0");
+    const token = String(url.searchParams.get("token") || "");
+    if (!key || !exp || !token) return json({ error: "Missing upload signature parameters" }, 400);
+    if (Math.floor(Date.now() / 1000) > exp) return json({ error: "Upload URL expired" }, 401);
+    const uploadSecret = requireUploadSigningSecret(env);
+    const expected = await signToken(uploadSecret, `${key}:${exp}`);
+    if (!timingSafeEqual(token, expected)) return json({ error: "Invalid upload signature" }, 401);
+
+    const contentLength = Number(request.headers.get("content-length") || "0");
+    if (contentLength > MAX_UPLOAD_BYTES) return json({ error: "File too large. Max 25 MiB." }, 413);
+    const contentType = (request.headers.get("content-type") || "application/octet-stream").toLowerCase();
+    if (!ALLOWED_UPLOAD_TYPES.includes(contentType)) return json({ error: "Unsupported file type" }, 415);
+
+    await env.R2_BUCKET.put(key, request.body, { httpMetadata: { contentType } });
+    return json({ ok: true, key }, 200);
+  }
+
+  const mediaMatch = route.match(/^\/media\/(.+)$/);
+  if (method === "GET" && mediaMatch) {
+    const key = decodeURIComponent(mediaMatch[1]);
+    const object = await env.R2_BUCKET.get(key);
+    if (!object) return json({ error: "Not found" }, 404);
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set("etag", object.httpEtag);
+    headers.set("cache-control", "public, max-age=3600");
+    return new Response(object.body, { status: 200, headers });
   }
 
   if (method === "POST" && route === "/auth/start") {
@@ -82,8 +136,13 @@ async function handleApi(request, env, url, route) {
     await env.SESSIONS.put(key, JSON.stringify({ codeHash, attempts: 0, expiresAt: Date.now() + EMAIL_CODE_TTL_SECONDS * 1000 }), {
       expirationTtl: EMAIL_CODE_TTL_SECONDS
     });
-
-    return json({ ok: true, hint: "verify", transport: "log", devCode: code }, 200);
+    const emailResult = await sendVerificationEmail(env, email, code);
+    return json({
+      ok: true,
+      hint: "verify",
+      transport: emailResult.transport,
+      ...(emailResult.transport === "log" ? { devCode: code } : {})
+    }, 200);
   }
 
   if (method === "POST" && route === "/auth/verify-code") {
@@ -130,6 +189,7 @@ async function handleApi(request, env, url, route) {
 
     const fresh = await getUserById(env, user.id);
     const session = await createSession(env, fresh.id);
+    await audit(env, fresh.id, "auth_register", { email: fresh.email }, request);
     return json({ user: await userView(env, fresh, fresh), session }, 201);
   }
 
@@ -142,12 +202,15 @@ async function handleApi(request, env, url, route) {
     if (!ok) return json({ error: "Invalid email or password" }, 401);
 
     const session = await createSession(env, user.id);
+    await audit(env, user.id, "auth_login", { email: user.email }, request);
     return json({ user: await userView(env, user, user), session }, 200);
   }
 
   if (method === "POST" && route === "/auth/logout") {
+    const authUserForLogout = await maybeAuthUser(request, env);
     const token = getBearerToken(request);
     if (token) await env.SESSIONS.delete(`session:${await sha256Hex(token)}`);
+    if (authUserForLogout?.id) await audit(env, authUserForLogout.id, "auth_logout", {}, request);
     return json({ ok: true }, 200);
   }
 
@@ -179,6 +242,7 @@ async function handleApi(request, env, url, route) {
       .run();
 
     const updated = await getUserById(env, authUser.id);
+    await audit(env, authUser.id, "profile_completed", { status }, request);
     return json({ user: await userView(env, updated, updated) }, 200);
   }
 
@@ -227,6 +291,7 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("insert into posts (id, author_id, category, text, media, likes, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(post.id, post.author_id, post.category, post.text, post.media, post.likes, post.anonymous, post.sticky, post.deleted_at, post.created_at)
       .run();
+    await audit(env, authUser.id, "post_created", { postId: post.id }, request);
 
     return json({ post: fromDbPost(post) }, 201);
   }
@@ -263,6 +328,7 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("insert into comments (id, post_id, author_id, text, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?)")
       .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.anonymous, comment.deleted_at, comment.created_at)
       .run();
+    await audit(env, authUser.id, "comment_created", { postId: post.id, commentId: comment.id }, request);
 
     return json({ comment: fromDbComment(comment) }, 201);
   }
@@ -274,10 +340,12 @@ async function handleApi(request, env, url, route) {
     if (!row) return json({ error: "Not found" }, 404);
     if (method === "DELETE") {
       await env.DB.prepare("update posts set deleted_at=? where id=?").bind(now(), row.id).run();
+      await audit(env, authUser.id, "post_deleted", { postId: row.id }, request);
       return json({ ok: true }, 200);
     }
     await env.DB.prepare("update posts set sticky=? where id=?").bind(body.sticky ? 1 : 0, row.id).run();
     row.sticky = body.sticky ? 1 : 0;
+    await audit(env, authUser.id, "post_sticky_updated", { postId: row.id, sticky: Boolean(row.sticky) }, request);
     return json({ post: fromDbPost(row) }, 200);
   }
 
@@ -299,6 +367,7 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("insert into reports (id, reporter_id, target_type, target_id, reason, status, admin_notes, resolved_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(report.id, report.reporter_id, report.target_type, report.target_id, report.reason, report.status, report.admin_notes, report.resolved_at, report.created_at)
       .run();
+    await audit(env, authUser.id, "report_created", { reportId: report.id, targetType: report.target_type }, request);
     return json({ report }, 201);
   }
 
@@ -325,6 +394,7 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("insert into stories (id, author_id, text, views, expires_at, archived_at, created_at) values (?, ?, ?, ?, ?, ?, ?)")
       .bind(story.id, story.author_id, story.text, story.views, story.expires_at, story.archived_at, story.created_at)
       .run();
+    await audit(env, authUser.id, "story_created", { storyId: story.id }, request);
     return json({ story: { ...story, views: [] } }, 201);
   }
 
@@ -363,6 +433,7 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("insert into reels (id, author_id, title, category, video_url, likes, created_at) values (?, ?, ?, ?, ?, ?, ?)")
       .bind(reel.id, reel.author_id, reel.title, reel.category, reel.video_url, reel.likes, reel.created_at)
       .run();
+    await audit(env, authUser.id, "reel_created", { reelId: reel.id }, request);
     return json({ reel: { ...reel, likes: [], authorId: reel.author_id, videoUrl: reel.video_url, createdAt: reel.created_at } }, 201);
   }
 
@@ -437,6 +508,7 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("insert into messages (id, conversation_id, author_id, text, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?)")
       .bind(message.id, message.conversation_id, message.author_id, message.text, message.anonymous, message.deleted_at, message.created_at)
       .run();
+    await audit(env, authUser.id, "message_created", { conversationId: conversation.id, messageId: message.id }, request);
 
     return json({ message: { id: message.id, authorId: message.author_id, text: message.text, anonymous: Boolean(message.anonymous), createdAt: message.created_at, deletedAt: null } }, 201);
   }
@@ -452,6 +524,7 @@ async function handleApi(request, env, url, route) {
     const exists = await env.DB.prepare("select 1 from follows where follower_id=? and following_id=?").bind(authUser.id, targetId).first();
     if (exists) await env.DB.prepare("delete from follows where follower_id=? and following_id=?").bind(authUser.id, targetId).run();
     else await env.DB.prepare("insert into follows (follower_id, following_id, created_at) values (?, ?, ?)").bind(authUser.id, targetId, now()).run();
+    await audit(env, authUser.id, exists ? "unfollow" : "follow", { targetId }, request);
 
     const followingRows = await env.DB.prepare("select following_id from follows where follower_id=?").bind(authUser.id).all();
     const following = (followingRows.results || []).map((r) => r.following_id);
@@ -538,6 +611,7 @@ async function handleApi(request, env, url, route) {
       .bind(id("ntf"), user.id, "verification", `Your verification was ${decision}.`, null, now())
       .run();
     const updated = await getUserById(env, user.id);
+    await audit(env, authUser.id, "verification_reviewed", { userId: user.id, decision }, request);
     return json({ user: await userView(env, updated, authUser) }, 200);
   }
 
@@ -559,6 +633,7 @@ async function handleApi(request, env, url, route) {
     report.status = status;
     report.admin_notes = adminNotes;
     report.resolved_at = resolvedAt;
+    await audit(env, authUser.id, "report_reviewed", { reportId: report.id, status }, request);
     return json({ report }, 200);
   }
 
@@ -668,6 +743,10 @@ function getAllowedOrigin(origin) {
   return ALLOWED_ORIGINS.includes(origin) ? origin : null;
 }
 
+function safeName(name) {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "file.bin";
+}
+
 function withCors(response, origin) {
   const headers = new Headers(response.headers);
   if (origin) {
@@ -733,6 +812,74 @@ async function sha256Hex(input) {
   const digest = await crypto.subtle.digest("SHA-256", data);
   const bytes = new Uint8Array(digest);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function signToken(secret, message) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function sendVerificationEmail(env, to, code) {
+  const apiKey = String(env.RESEND_API_KEY || "").trim();
+  const from = String(env.EMAIL_FROM || "").trim();
+  const allowDevOtp = String(env.ALLOW_DEV_OTP || "").trim().toLowerCase() === "true";
+  if (!apiKey || !from) {
+    if (!allowDevOtp) {
+      throw new Error("Email provider is not configured. Set RESEND_API_KEY and EMAIL_FROM.");
+    }
+    console.log(`[OTP][dev] ${to} -> ${code}`);
+    return { transport: "log" };
+  }
+
+  const payload = {
+    from,
+    to: [to],
+    subject: "Your SHSID Social verification code",
+    text: `Your verification code is: ${code}\n\nThis code expires in 15 minutes.`,
+    html: `<p>Your verification code is: <strong>${code}</strong></p><p>This code expires in 15 minutes.</p>`
+  };
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Email send failed: ${response.status} ${detail}`);
+  }
+
+  return { transport: "resend" };
+}
+
+async function audit(env, actorId, action, metadata = {}, request = null) {
+  try {
+    const ip = request?.headers?.get("cf-connecting-ip") || request?.headers?.get("x-forwarded-for") || null;
+    await env.DB.prepare("insert into audit_logs (id, actor_id, action, metadata, ip_address, created_at) values (?, ?, ?, ?, ?, ?)")
+      .bind(id("aud"), actorId || null, action, JSON.stringify(metadata || {}), ip, now())
+      .run();
+  } catch {
+    // Best-effort logging only.
+  }
+}
+
+function requireUploadSigningSecret(env) {
+  const secret = String(env.UPLOAD_SIGNING_SECRET || "").trim();
+  if (!secret) {
+    throw new Error("UPLOAD_SIGNING_SECRET is not configured");
+  }
+  return secret;
 }
 
 async function hashPassword(password) {

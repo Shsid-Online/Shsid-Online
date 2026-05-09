@@ -179,6 +179,7 @@ function normalizePost(post) {
   const copy = { ...post };
   copy.createdAt = at(copy.createdAt);
   copy.likes = Array.isArray(copy.likes) ? copy.likes : [];
+  copy.media = Array.isArray(copy.media) ? copy.media : [];
   copy.comments = (copy.comments || []).map((comment) => ({ ...comment, createdAt: at(comment.createdAt) }));
   delete copy.author;
   delete copy.adminAuthor;
@@ -251,8 +252,9 @@ async function refreshReports() {
     const result = await apiRequest("/admin/reports");
     state.reports = (result.reports || []).map((report) => ({
       ...report,
+      reporterId: report.reporterId || report.reporter_id,
       type: report.targetType || report.type,
-      targetId: report.targetId
+      targetId: report.targetId || report.target_id
     }));
     saveState();
   } catch (error) {
@@ -474,7 +476,7 @@ async function handleEmailAuthIntent(intent) {
     saveState();
     render();
     startResendCooldown(30);
-    toast(result.devCode ? `Dev OTP: ${result.devCode}` : `Verification code sent via ${result.transport || "email provider"}`);
+    toast(result.devCode ? `Dev OTP: ${result.devCode}` : "Verification code sent to your email");
     return;
   }
   state.pendingEmail = email;
@@ -702,7 +704,7 @@ function renderPost(post) {
         </div>
       </div>
       <div class="post-text">${escapeHtml(post.text || "")}</div>
-      ${media.length ? `<div class="media-grid">${media.slice(0, 9).map((item) => `<div class="media-tile">${escapeHtml(item)}</div>`).join("")}</div>` : ""}
+      ${media.length ? `<div class="media-grid">${media.slice(0, 9).map((item) => renderPostMedia(item)).join("")}</div>` : ""}
       ${(post.comments || []).map((comment) => `<p class="comment"><strong>${escapeHtml(userName(comment.authorId, comment.anonymous))}:</strong> ${escapeHtml(comment.text)}</p>`).join("")}
       <div class="post-actions">
         <button class="btn small" data-action="like-post" data-id="${post.id}">${liked ? "Liked" : "Like"} · ${likes.length}</button>
@@ -733,7 +735,8 @@ function renderReels() {
   const tiles = state.reels.map((reel) => {
     const likes = reel.likes || [];
     const liked = likes.includes(uid);
-    const openable = reel.videoUrl && reel.videoUrl !== "pending-upload" && /^https?:\/\//i.test(reel.videoUrl);
+    const videoUrl = reel.videoUrl || reel.video_url || "";
+    const openable = videoUrl && videoUrl !== "pending-upload" && /^https?:\/\//i.test(videoUrl);
     return `
       <article class="card video-tile">
         <span class="chip">${escapeHtml(reel.category)}</span>
@@ -741,19 +744,19 @@ function renderReels() {
         <p class="reel-meta">${escapeHtml(userName(reel.authorId))} · ${likes.length} likes · ${timeAgo(reel.createdAt)}</p>
         <div class="reel-actions">
           <button class="btn small" data-action="like-reel" data-id="${reel.id}">${liked ? "Liked" : "Like"}</button>
-          ${openable ? `<a class="reel-link" href="${escapeHtml(reel.videoUrl)}" target="_blank" rel="noopener noreferrer">Open video</a>` : `<span class="muted" style="font-size:13px">Video link pending</span>`}
+          ${openable ? `<video class="media-tile" src="${escapeHtml(videoUrl)}" controls preload="metadata"></video>` : `<span class="muted" style="font-size:13px">Video pending upload</span>`}
         </div>
       </article>
     `;
   }).join("");
   const grid = tiles || `<div class="empty-state">No reels yet. Add one below or ask classmates to share.</div>`;
-  return page("Reels", "Short vertical videos — add a title and optional hosted video URL.", `
+  return page("Reels", "Short vertical videos — upload file and stream directly in app.", `
     <section class="composer" style="margin-bottom:16px">
       <div class="grid two">
         <div class="field"><label>Title</label><input id="reel-title" placeholder="What is this reel about?" /></div>
         <div class="field"><label>Category</label><select id="reel-category"><option>school</option><option>lifestyle</option><option>gaming</option><option>academic</option></select></div>
       </div>
-      <div class="field"><label>Video URL (optional)</label><input id="reel-video-url" type="url" placeholder="https://… (YouTube, Drive share link, etc.)" /></div>
+      <div class="field"><label>Upload reel video (optional)</label><input id="reel-video-file" type="file" accept="video/*" /></div>
       <button class="btn primary" data-action="create-reel">Publish reel</button>
     </section>
     <section class="grid three">${grid}</section>
@@ -938,11 +941,25 @@ function bindAuth() {
       toast(error.message || "Could not continue");
     }
   });
-  document.querySelector('[data-auth-intent="register"]')?.addEventListener("click", () => {
+  document.querySelector('[data-auth-intent="register"]')?.addEventListener("click", async (event) => {
+    event.preventDefault();
     authEmailSubmitIntent = "register";
+    try {
+      await handleEmailAuthIntent("register");
+    } catch (error) {
+      console.error("auth-register click failed", error);
+      toast(error.message || "Could not continue");
+    }
   });
-  document.querySelector('[data-auth-intent="login"]')?.addEventListener("click", () => {
+  document.querySelector('[data-auth-intent="login"]')?.addEventListener("click", async (event) => {
+    event.preventDefault();
     authEmailSubmitIntent = "login";
+    try {
+      await handleEmailAuthIntent("login");
+    } catch (error) {
+      console.error("auth-login click failed", error);
+      toast(error.message || "Could not continue");
+    }
   });
 
   document.querySelectorAll('[data-auth="back"], [data-auth="resend-code"], [data-auth="logout"]').forEach((button) => {
@@ -957,7 +974,7 @@ function bindAuth() {
           setAuthInFlight(true);
           const result = await apiRequest("/auth/start", { method: "POST", body: JSON.stringify({ email }) });
           startResendCooldown(30);
-          toast(result.devCode ? `Dev OTP: ${result.devCode}` : `Verification code resent via ${result.transport || "email provider"}`);
+          toast(result.devCode ? `Dev OTP: ${result.devCode}` : "Verification code resent to your email");
           setAuthInFlight(false);
           render();
         }
@@ -1075,6 +1092,7 @@ function bindAuth() {
       const videoFile = document.querySelector("#reg-video").files[0];
       if (!videoFile) return toast("Upload a verification video");
       state.pendingVideoName = videoFile.name;
+      const [uploadedVideo] = await uploadFiles([videoFile]);
       const result = await apiRequest("/auth/complete-profile", {
         method: "POST",
         body: JSON.stringify({
@@ -1082,7 +1100,7 @@ function bindAuth() {
           chineseName: state.pendingChineseName,
           grade: Number(state.pendingGrade),
           classNo: Number(state.pendingClassNo),
-          verificationVideo: videoFile.name || "pending-upload"
+          verificationVideo: uploadedVideo?.url || videoFile.name
         })
       });
       mergeApiUser(result.user);
@@ -1112,15 +1130,16 @@ async function handleAction(action, id) {
   }
   if (action === "create-post") {
     const text = document.querySelector("#post-text").value.trim();
-    const files = [...document.querySelector("#post-media").files].slice(0, 9).map((file) => (file.type.startsWith("video") ? "Video" : "Photo"));
+    const files = [...document.querySelector("#post-media").files].slice(0, 9);
     if (!text && !files.length) return toast("Write something or attach media");
+    const media = files.length ? await uploadFiles(files) : [];
     await apiRequest("/posts", {
       method: "POST",
       body: JSON.stringify({
         text,
         anonymous: document.querySelector("#post-anon").value === "true",
         category: document.querySelector("#post-category").value,
-        media: files
+        media
       })
     });
     await refreshPosts();
@@ -1213,6 +1232,28 @@ async function handleAction(action, id) {
     const views = story?.views?.length ?? 0;
     if (story) toast(`${story.text} · ${views} views`);
   }
+  if (action === "create-reel") {
+    const title = document.querySelector("#reel-title").value.trim();
+    if (!title) return toast("Add a reel title");
+    const category = document.querySelector("#reel-category").value;
+    const videoFile = document.querySelector("#reel-video-file").files[0];
+    let videoUrl = "";
+    if (videoFile) {
+      const [uploaded] = await uploadFiles([videoFile]);
+      videoUrl = uploaded?.url || "";
+    }
+    await apiRequest("/reels", {
+      method: "POST",
+      body: JSON.stringify({ title, category, videoUrl })
+    });
+    await refreshReels();
+    view = "reels";
+    toast("Reel published");
+  }
+  if (action === "like-reel") {
+    await apiRequest(`/reels/${id}/like`, { method: "POST", body: JSON.stringify({}) });
+    await refreshReels();
+  }
   if (action === "verify-user") {
     await apiRequest(`/admin/verifications/${id}`, {
       method: "POST",
@@ -1248,6 +1289,38 @@ async function handleAction(action, id) {
   }
   saveState();
   render();
+}
+
+function renderPostMedia(item) {
+  if (typeof item === "string") return `<div class="media-tile">${escapeHtml(item)}</div>`;
+  const url = String(item?.url || "");
+  const type = String(item?.type || "");
+  if (!url) return `<div class="media-tile">Media</div>`;
+  if (type.startsWith("image/")) return `<img class="media-tile" src="${escapeHtml(url)}" alt="Post media" loading="lazy" />`;
+  if (type.startsWith("video/")) return `<video class="media-tile" src="${escapeHtml(url)}" controls preload="metadata"></video>`;
+  return `<a class="media-tile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open file</a>`;
+}
+
+async function uploadFiles(files) {
+  const uploaded = [];
+  for (const file of files) {
+    const sign = await apiRequest("/upload-url", {
+      method: "POST",
+      body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream" })
+    });
+    const response = await fetch(sign.uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": file.type || "application/octet-stream" },
+      body: file
+    });
+    if (!response.ok) throw new Error(`Upload failed for ${file.name}`);
+    uploaded.push({
+      url: sign.mediaUrl,
+      type: file.type || "application/octet-stream",
+      name: file.name
+    });
+  }
+  return uploaded;
 }
 
 bootstrapSession();
