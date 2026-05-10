@@ -75,6 +75,16 @@ create table if not exists reels (
   created_at text not null
 );
 
+create table if not exists reel_comments (
+  id text primary key,
+  reel_id text not null references reels(id),
+  author_id text not null references users(id),
+  text text not null,
+  anonymous integer not null default 0,
+  deleted_at text,
+  created_at text not null
+);
+
 create table if not exists conversations (
   id text primary key,
   title text not null default '',
@@ -147,6 +157,7 @@ create index if not exists idx_users_status on users(status);
 create index if not exists idx_posts_author on posts(author_id);
 create index if not exists idx_posts_created on posts(created_at desc);
 create index if not exists idx_comments_post on comments(post_id);
+create index if not exists idx_reel_comments_reel on reel_comments(reel_id);
 create index if not exists idx_follows_follower on follows(follower_id);
 create index if not exists idx_follows_following on follows(following_id);
 create index if not exists idx_notifications_user on notifications(user_id);

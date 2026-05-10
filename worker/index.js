@@ -493,7 +493,22 @@ async function handleApi(request, env, url, route) {
   if (method === "GET" && route === "/reels") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     const rows = await env.DB.prepare("select * from reels order by created_at desc limit 100").all();
-    return json({ reels: (rows.results || []).map((r) => ({ ...r, likes: jsonArray(r.likes), authorId: r.author_id, videoUrl: r.video_url, createdAt: r.created_at, id: r.id, title: r.title, category: r.category })), pagination: { limit: 100, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
+    const reels = [];
+    for (const r of rows.results || []) {
+      const commentCountRow = await env.DB.prepare("select count(*) as count from reel_comments where reel_id=? and deleted_at is null").bind(r.id).first();
+      reels.push({
+        ...r,
+        likes: jsonArray(r.likes),
+        authorId: r.author_id,
+        videoUrl: r.video_url,
+        createdAt: r.created_at,
+        id: r.id,
+        title: r.title,
+        category: r.category,
+        commentCount: Number(commentCountRow?.count || 0)
+      });
+    }
+    return json({ reels, pagination: { limit: 100, offset: 0, total: reels.length, nextOffset: null } }, 200);
   }
 
   if (method === "POST" && route === "/reels") {
@@ -527,6 +542,50 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("update reels set likes=? where id=?").bind(JSON.stringify(nextLikes), reel.id).run();
     reel.likes = nextLikes;
     return json({ reel }, 200);
+  }
+
+  const reelCommentsMatch = route.match(/^\/reels\/([^/]+)\/comments$/);
+  if (reelCommentsMatch && (method === "GET" || method === "POST")) {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const reel = await env.DB.prepare("select id from reels where id=?").bind(reelCommentsMatch[1]).first();
+    if (!reel) return json({ error: "Not found" }, 404);
+    if (method === "GET") {
+      const rows = await env.DB.prepare("select * from reel_comments where reel_id=? and deleted_at is null order by created_at asc").bind(reel.id).all();
+      const comments = (rows.results || []).map((c) => ({
+        id: c.id,
+        reelId: c.reel_id,
+        authorId: c.author_id,
+        text: c.text,
+        anonymous: Boolean(c.anonymous),
+        createdAt: c.created_at
+      }));
+      return json({ comments, pagination: { limit: 500, offset: 0, total: comments.length, nextOffset: null } }, 200);
+    }
+    const text = String(body.text || "").trim();
+    if (!text) return json({ error: "Comment text is required" }, 400);
+    const comment = {
+      id: id("rcm"),
+      reel_id: reel.id,
+      author_id: authUser.id,
+      text: text.slice(0, MAX_TEXT_LEN),
+      anonymous: body.anonymous ? 1 : 0,
+      deleted_at: null,
+      created_at: now()
+    };
+    await env.DB.prepare("insert into reel_comments (id, reel_id, author_id, text, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+      .bind(comment.id, comment.reel_id, comment.author_id, comment.text, comment.anonymous, comment.deleted_at, comment.created_at)
+      .run();
+    await audit(env, authUser.id, "reel_comment_created", { reelId: reel.id, commentId: comment.id }, request);
+    return json({
+      comment: {
+        id: comment.id,
+        reelId: comment.reel_id,
+        authorId: comment.author_id,
+        text: comment.text,
+        anonymous: Boolean(comment.anonymous),
+        createdAt: comment.created_at
+      }
+    }, 201);
   }
 
   if (method === "GET" && route === "/conversations") {

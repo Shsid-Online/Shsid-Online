@@ -272,6 +272,7 @@ async function refreshAuditLogs() {
     state.audit = (result.auditLogs || []).map((entry) => ({
       ...entry,
       userId: entry.actorId || entry.userId,
+      metadata: parseJsonObject(entry.metadata),
       createdAt: at(entry.createdAt)
     }));
     saveState();
@@ -434,6 +435,21 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function parseJsonObject(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function formatActionLabel(action) {
+  return String(action || "").replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
 function toast(message) {
   const existing = document.querySelector(".toast");
   existing?.remove();
@@ -538,6 +554,35 @@ function askQnaPopup() {
       const visibility = popup.querySelector("#site-qna-public")?.checked ? "public" : "private";
       popup.remove();
       resolve({ question, anonymous, visibility });
+    });
+  });
+}
+
+function askCommentPopup() {
+  return new Promise((resolve) => {
+    const popup = showFormPopup("Add Comment", `
+      <form id="site-comment-form" class="grid">
+        <div class="field"><label>Comment</label><textarea id="site-comment-text" placeholder="Write your comment" required></textarea></div>
+        <div class="row">
+          <label><input id="site-comment-anon" type="checkbox"> Post anonymously</label>
+        </div>
+        <div class="row">
+          <button class="btn primary" type="submit">Submit</button>
+          <button class="btn" type="button" data-cancel>Cancel</button>
+        </div>
+      </form>
+    `);
+    popup.querySelector("[data-cancel]")?.addEventListener("click", () => {
+      popup.remove();
+      resolve(null);
+    });
+    popup.querySelector("#site-comment-form")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = String(popup.querySelector("#site-comment-text")?.value || "").trim();
+      if (!text) return;
+      const anonymous = Boolean(popup.querySelector("#site-comment-anon")?.checked);
+      popup.remove();
+      resolve({ text, anonymous });
     });
   });
 }
@@ -827,6 +872,7 @@ function renderPost(post) {
       <div class="post-actions">
         <button class="btn small" data-action="like-post" data-id="${post.id}">${liked ? "Liked" : "Like"} · ${likes.length}</button>
         <button class="btn small" data-action="comment-post" data-id="${post.id}">Comment</button>
+        <button class="btn small" data-action="share-post" data-id="${post.id}">Share</button>
         <button class="btn small" data-action="report-post" data-id="${post.id}">Report</button>
         ${currentUser().role === "admin" ? `<button class="btn small" data-action="toggle-sticky" data-id="${post.id}">${post.sticky ? "Unpin" : "Pin"}</button><button class="btn small danger" data-action="delete-post" data-id="${post.id}">Delete</button>` : ""}
       </div>
@@ -853,6 +899,7 @@ function renderReels() {
   const tiles = state.reels.map((reel) => {
     const likes = reel.likes || [];
     const liked = likes.includes(uid);
+    const commentCount = Number(reel.commentCount || 0);
     const videoUrl = reel.videoUrl || reel.video_url || "";
     const openable = videoUrl && videoUrl !== "pending-upload" && /^https?:\/\//i.test(videoUrl);
     return `
@@ -870,6 +917,7 @@ function renderReels() {
             </div>
             <div class="reel-actions">
               <button class="btn small ${liked ? "primary" : ""}" data-action="like-reel" data-id="${reel.id}">${liked ? "Liked" : "Like"}</button>
+              <button class="btn small" data-action="comment-reel" data-id="${reel.id}">Comment · ${commentCount}</button>
             </div>
           </div>
         </div>
@@ -962,7 +1010,7 @@ function renderProfile() {
       </div>
       <div class="panel">
         <h3>Q&A Box</h3>
-        ${questions.length ? questions.map((q) => `<p class="comment"><strong>${escapeHtml(q.question)}</strong><br>${escapeHtml(q.answer || "Waiting for answer")}</p>`).join("") : `<p class="muted">No questions yet.</p>`}
+        ${questions.length ? questions.map((q) => `<button class="comment qna-item" data-action="open-qna" data-id="${q.id}" style="text-align:left"><strong>${escapeHtml(q.question)}</strong><br>${escapeHtml(q.answer || "Waiting for answer")}</button>`).join("") : `<p class="muted">No questions yet.</p>`}
         <h3>Suggestion Box</h3>
         ${state.suggestions.map((s) => `<p class="comment">${escapeHtml(s.text)} · ${escapeHtml(s.status)}</p>`).join("")}
       </div>
@@ -1000,7 +1048,7 @@ function renderAdmin() {
         <h2>Audit Trail</h2>
         <div class="table-wrap">
           <table class="table"><thead><tr><th>User</th><th>Action</th><th>IP</th><th>Time</th></tr></thead><tbody>
-            ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}</td><td>${escapeHtml(item.action)}</td><td>${escapeHtml(item.ip)}</td><td>${timeAgo(item.createdAt)} ago</td></tr>`).join("")}
+            ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}</td><td>${escapeHtml(formatActionLabel(item.action))}<br><span class="muted">${escapeHtml(Object.entries(item.metadata || {}).slice(0, 2).map(([k, v]) => `${k}: ${v}`).join(" · ") || "No metadata")}</span></td><td>${escapeHtml(item.ip || "-")}</td><td>${new Date(item.createdAt).toLocaleString()}<br><span class="muted">${timeAgo(item.createdAt)} ago</span></td></tr>`).join("")}
           </tbody></table>
         </div>
       </div>
@@ -1311,6 +1359,21 @@ async function handleAction(action, id) {
     await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "post", targetId: id, reason }) });
     if (user.role === "admin") await refreshReports();
   }
+  if (action === "share-post") {
+    const shareUrl = `${window.location.origin}/?post=${encodeURIComponent(id)}`;
+    const post = state.posts.find((item) => item.id === id);
+    const text = post?.text ? post.text.slice(0, 120) : "Check this post";
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "SHSID Social Post", text, url: shareUrl });
+      } catch {
+        // user cancelled
+      }
+    } else {
+      await navigator.clipboard.writeText(shareUrl);
+      toast("Post link copied");
+    }
+  }
   if (action === "toggle-sticky") {
     const post = state.posts.find((item) => item.id === id);
     if (!post) return;
@@ -1398,6 +1461,13 @@ async function handleAction(action, id) {
     await apiRequest(`/reels/${id}/like`, { method: "POST", body: JSON.stringify({}) });
     await refreshReels();
   }
+  if (action === "comment-reel") {
+    const payload = await askCommentPopup();
+    if (!payload) return;
+    await apiRequest(`/reels/${id}/comments`, { method: "POST", body: JSON.stringify(payload) });
+    await refreshReels();
+    toast("Comment added");
+  }
   if (action === "verify-user") {
     await apiRequest(`/admin/verifications/${id}`, {
       method: "POST",
@@ -1427,6 +1497,11 @@ async function handleAction(action, id) {
     if (!payload) return;
     await apiRequest(`/users/${id}/qna`, { method: "POST", body: JSON.stringify(payload) });
     await refreshQnaForProfile(id);
+  }
+  if (action === "open-qna") {
+    const entry = state.qna.find((item) => item.id === id);
+    if (!entry) return;
+    showPopup("Q&A", `${entry.question}\n\n${entry.answer || "Waiting for answer"}`);
   }
   saveState();
   render();
