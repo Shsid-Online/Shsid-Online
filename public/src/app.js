@@ -249,10 +249,7 @@ function shouldHideCounterpartIdentity(conversation) {
   if (!conversation || !me || me.role === "admin") return false;
   const members = Array.isArray(conversation.members) ? conversation.members : [];
   if (members.length !== 2) return false;
-  const latest = (conversation.messages || [])[conversation.messages.length - 1];
-  if (!latest) return false;
-  const sentByOther = latest.authorId && latest.authorId !== me.id;
-  return sentByOther && Boolean(latest.anonymous);
+  return (conversation.messages || []).some((message) => message.authorId && message.authorId !== me.id && Boolean(message.anonymous));
 }
 
 function setRemarkForUser(userId, remark) {
