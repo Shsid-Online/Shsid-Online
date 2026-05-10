@@ -29,6 +29,7 @@ const initialState = {
   selectedProfileId: null,
   conversationIdentityMode: {},
   acceptedRequests: {},
+  rejectedRequests: {},
   contactRemarks: {}
 };
 
@@ -220,9 +221,11 @@ function classifyConversations() {
     return !meId || members.includes(meId);
   });
   if (!state.acceptedRequests || typeof state.acceptedRequests !== "object") state.acceptedRequests = {};
+  if (!state.rejectedRequests || typeof state.rejectedRequests !== "object") state.rejectedRequests = {};
   const inbox = [];
   const requests = [];
   for (const conv of all) {
+    if (state.rejectedRequests?.[conv.id]) continue;
     if (state.acceptedRequests?.[conv.id]) inbox.push(conv);
     else requests.push(conv);
   }
@@ -1348,7 +1351,7 @@ function renderMessages() {
         <div class="grid chat-messages-scroll" style="margin:14px 0">${(active?.messages || []).map((message) => `
           <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} ${(message.media || []).map((item) => renderChatMediaItem(item)).join("")} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${message.authorId === currentUser().id ? `<span class="muted">· receiver sees: ${message.anonymous ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span>` : ""} ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
         `).join("")}</div>
-        ${requestView && active && !accepted ? `<div class="row" style="margin-bottom:12px"><button class="btn primary" data-action="accept-request" data-id="${active.id}">Accept request</button></div>` : ""}
+        ${requestView && active && !accepted ? `<div class="row" style="margin-bottom:12px"><button class="btn primary" data-action="accept-request" data-id="${active.id}">Accept request</button><button class="btn danger" data-action="reject-request" data-id="${active.id}">Reject request</button></div>` : ""}
         ${isReceiverPending ? `<p class="muted" style="margin:0 0 10px">Accept this request before sending messages.</p>` : ""}
         <div class="field"><label>Message</label><textarea id="message-text" placeholder="Type a message"></textarea></div>
         <div class="field"><label>Photo / Video</label><input id="message-media-file" type="file" accept="image/*,video/*" multiple /></div>
@@ -1940,6 +1943,15 @@ async function handleAction(action, id) {
     conversationTab = "inbox";
     activeConversationId = id;
     toast("Request accepted");
+  }
+  if (action === "reject-request") {
+    if (!id) return;
+    if (!state.rejectedRequests || typeof state.rejectedRequests !== "object") state.rejectedRequests = {};
+    state.rejectedRequests[id] = true;
+    saveState();
+    const next = classifyConversations().requests[0] || classifyConversations().inbox[0];
+    activeConversationId = next?.id || "";
+    toast("Request rejected");
   }
   if (action === "open-start-direct") {
     const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified");
