@@ -1125,13 +1125,7 @@ function bindAuth() {
       if (!videoFile) return toast("Upload a verification video");
       if (!(videoFile.type || "").startsWith("video/")) return toast("Please upload a valid video file.");
       state.pendingVideoName = videoFile.name;
-      let uploadedVideoUrl = "";
-      if (videoFile.size > 20 * 1024 * 1024) {
-        uploadedVideoUrl = await uploadVerificationVideoMultipart(videoFile);
-      } else {
-        const [uploadedVideo] = await uploadFiles([videoFile], { purpose: "verification" });
-        uploadedVideoUrl = uploadedVideo?.url || "";
-      }
+      const uploadedVideoUrl = await uploadVerificationVideoMultipart(videoFile);
       const result = await apiRequest("/auth/complete-profile", {
         method: "POST",
         body: JSON.stringify({
@@ -1363,7 +1357,8 @@ async function uploadFiles(files, options = {}) {
       } catch {
         reason = await response.text();
       }
-      throw new Error(reason ? `Upload failed (${file.name}): ${reason}` : `Upload failed (${file.name})`);
+      const detail = typeof reason === "string" && reason.trim().length ? ` ${reason.trim()}` : "";
+      throw new Error(`Upload failed (${file.name}):${detail || " Unknown upload error."}`);
     }
     uploaded.push({
       url: sign.mediaUrl,
@@ -1397,7 +1392,10 @@ async function uploadVerificationVideoMultipart(file) {
       body: chunk
     });
     const body = await response.json();
-    if (!response.ok) throw new Error(body?.error || body?.detail || `Chunk upload failed (part ${partNumber})`);
+    if (!response.ok) {
+      const detail = [body?.error, body?.detail].filter(Boolean).join(" - ");
+      throw new Error(detail || `Chunk upload failed (part ${partNumber})`);
+    }
     parts.push({ partNumber, etag: body.etag });
     partNumber += 1;
   }
