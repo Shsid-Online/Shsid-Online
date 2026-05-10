@@ -48,7 +48,8 @@ export default {
 
 async function handleApi(request, env, url, route) {
   const method = request.method || "GET";
-  const body = method === "GET" || method === "HEAD" ? {} : await readJson(request);
+  const isBinaryUploadPut = method === "PUT" && (route.startsWith("/upload/") || route.startsWith("/verification-upload/"));
+  const body = method === "GET" || method === "HEAD" || isBinaryUploadPut ? {} : await readJson(request);
 
   if (method === "GET" && route === "/health") {
     return json({ ok: true, service: "shsid-social-api", time: new Date().toISOString() }, 200);
