@@ -1354,7 +1354,7 @@ async function handleAction(action, id) {
   }
   if (action === "create-post") {
     const text = document.querySelector("#post-text").value.trim();
-    const files = [...document.querySelector("#post-media").files].slice(0, 9);
+    const files = [...document.querySelector("#post-media").files].slice(0, 20);
     if (!text && !files.length) return toast("Write something or attach media");
     const media = files.length ? await uploadFiles(files) : [];
     await apiRequest("/posts", {
@@ -1578,6 +1578,12 @@ async function uploadFiles(files, options = {}) {
   const purpose = options.purpose || "media";
   const uploaded = [];
   for (const file of files) {
+    const shouldUseMultipart = file.size > 20 * 1024 * 1024 || (file.type || "").startsWith("video/");
+    if (shouldUseMultipart) {
+      const mediaUrl = await uploadFileMultipart(file, purpose);
+      uploaded.push({ url: mediaUrl, type: file.type || "application/octet-stream", name: file.name });
+      continue;
+    }
     const sign = await apiRequest("/upload-url", {
       method: "POST",
       body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", purpose })
@@ -1605,6 +1611,43 @@ async function uploadFiles(files, options = {}) {
     });
   }
   return uploaded;
+}
+
+async function uploadFileMultipart(file, purpose = "media") {
+  const init = await apiRequest("/multipart/init", {
+    method: "POST",
+    body: JSON.stringify({
+      fileName: file.name,
+      contentType: file.type || "application/octet-stream",
+      purpose
+    })
+  });
+  const chunkSize = Number(init.chunkSize || 8 * 1024 * 1024);
+  const parts = [];
+  let partNumber = 1;
+  for (let offset = 0; offset < file.size; offset += chunkSize) {
+    const chunk = file.slice(offset, offset + chunkSize);
+    const response = await fetch(`${API_BASE}/multipart/${encodeURIComponent(init.uploadId)}/${partNumber}?key=${encodeURIComponent(init.key)}`, {
+      method: "PUT",
+      headers: {
+        "content-type": file.type || "application/octet-stream",
+        ...(state.apiToken ? { authorization: `Bearer ${state.apiToken}` } : {})
+      },
+      body: chunk
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      const detail = [body?.error, body?.detail].filter(Boolean).join(" - ");
+      throw new Error(detail || `Chunk upload failed (part ${partNumber})`);
+    }
+    parts.push({ partNumber, etag: body.etag });
+    partNumber += 1;
+  }
+  const completed = await apiRequest("/multipart/complete", {
+    method: "POST",
+    body: JSON.stringify({ key: init.key, uploadId: init.uploadId, parts })
+  });
+  return completed.mediaUrl;
 }
 
 async function uploadVerificationVideoMultipart(file) {

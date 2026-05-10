@@ -13,6 +13,7 @@ const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const UPLOAD_TTL_SECONDS = 10 * 60;
 const VERIFICATION_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 const VERIFICATION_CHUNK_SIZE = 8 * 1024 * 1024;
+const MULTIPART_CHUNK_SIZE = 8 * 1024 * 1024;
 const ALLOWED_UPLOAD_TYPES = [
   "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
   "video/mp4", "video/webm", "video/quicktime",
@@ -87,6 +88,65 @@ async function handleApi(request, env, url, route) {
       httpMetadata: { contentType }
     });
     return json({ key, uploadId: upload.uploadId, chunkSize: VERIFICATION_CHUNK_SIZE }, 200);
+  }
+
+  if (method === "POST" && route === "/multipart/init") {
+    const authUser = await maybeAuthUser(request, env);
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const fileName = safeName(String(body.fileName || "").trim());
+    const contentType = String(body.contentType || "").trim().toLowerCase();
+    const purpose = String(body.purpose || "media").trim().toLowerCase();
+    if (!fileName) return json({ error: "fileName is required" }, 400);
+    if (purpose === "verification") {
+      if (!contentType.startsWith("video/")) return json({ error: "Verification upload must be a video file" }, 415);
+    } else if (!ALLOWED_UPLOAD_TYPES.includes(contentType)) {
+      return json({ error: "Unsupported file type" }, 415);
+    }
+    const prefix = purpose === "verification" ? "verification" : "uploads";
+    const key = `${prefix}/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+    const upload = await env.R2_BUCKET.createMultipartUpload(key, {
+      httpMetadata: { contentType }
+    });
+    return json({ key, uploadId: upload.uploadId, chunkSize: MULTIPART_CHUNK_SIZE }, 200);
+  }
+
+  const multipartPartMatch = route.match(/^\/multipart\/([^/]+)\/(\d+)$/);
+  if (method === "PUT" && multipartPartMatch) {
+    const authUser = await maybeAuthUser(request, env);
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const uploadId = multipartPartMatch[1];
+    const partNumber = Number(multipartPartMatch[2]);
+    const key = String(url.searchParams.get("key") || "");
+    if (!key || !uploadId || !partNumber) return json({ error: "Missing upload parameters" }, 400);
+    try {
+      const upload = env.R2_BUCKET.resumeMultipartUpload(key, uploadId);
+      const result = await upload.uploadPart(partNumber, request.body);
+      return json({ ok: true, partNumber, etag: result.etag }, 200);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return json({ error: "Upload part failed", detail: message }, 502);
+    }
+  }
+
+  if (method === "POST" && route === "/multipart/complete") {
+    const authUser = await maybeAuthUser(request, env);
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const key = String(body.key || "");
+    const uploadId = String(body.uploadId || "");
+    const parts = Array.isArray(body.parts) ? body.parts : [];
+    if (!key || !uploadId || !parts.length) return json({ error: "Missing completion payload" }, 400);
+    try {
+      const upload = env.R2_BUCKET.resumeMultipartUpload(key, uploadId);
+      await upload.complete(parts.map((part) => ({
+        partNumber: Number(part.partNumber),
+        etag: String(part.etag)
+      })));
+      const mediaUrl = `${url.origin}/api/media/${encodeURIComponent(key)}`;
+      return json({ ok: true, key, mediaUrl }, 200);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return json({ error: "Complete upload failed", detail: message }, 502);
+    }
   }
 
   const verificationPartMatch = route.match(/^\/verification-upload\/([^/]+)\/(\d+)$/);
@@ -352,7 +412,7 @@ async function handleApi(request, env, url, route) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     if (authUser.status !== "verified" && authUser.role !== "admin") return json({ error: "Verification required before posting" }, 403);
     const text = String(body.text || "").trim();
-    const media = Array.isArray(body.media) ? body.media.slice(0, 9) : [];
+    const media = Array.isArray(body.media) ? body.media.slice(0, 20) : [];
     if (!text && media.length === 0) return json({ error: "Text or media is required" }, 400);
 
     const post = {
