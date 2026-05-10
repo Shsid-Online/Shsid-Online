@@ -552,7 +552,7 @@ button {
 }
 
 .chat-layout {
-  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.6fr);
+  grid-template-columns: minmax(180px, 0.62fr) minmax(0, 1.9fr);
   align-items: start;
 }
 
