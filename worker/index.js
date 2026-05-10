@@ -411,6 +411,22 @@ async function handleApi(request, env, url, route) {
     return json({ posts, pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null } }, 200);
   }
 
+  const postByIdMatch = route.match(/^\/posts\/([^/]+)$/);
+  if (method === "GET" && postByIdMatch) {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const post = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postByIdMatch[1]).first();
+    if (!post) return json({ error: "Not found" }, 404);
+    const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
+    return json({
+      post: {
+        ...fromDbPost(post),
+        comments: (comments.results || []).map(fromDbComment),
+        author: post.anonymous && authUser.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
+        adminAuthor: authUser.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
+      }
+    }, 200);
+  }
+
   if (method === "POST" && route === "/posts") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     if (authUser.status !== "verified" && authUser.role !== "admin") return json({ error: "Verification required before posting" }, 403);

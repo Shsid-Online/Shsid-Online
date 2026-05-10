@@ -38,6 +38,8 @@ let resendCooldownUntil = 0;
 let openCommentPostId = null;
 let postsNextOffset = null;
 let reelsNextOffset = null;
+let deepLinkedPostId = "";
+let conversationTab = "inbox";
 
 hydrateAuthFromUrl();
 
@@ -89,6 +91,11 @@ function hydrateAuthFromUrl() {
       state.authMode = "register";
       state.authStep = "verify";
       changed = true;
+    }
+    const postId = (url.searchParams.get("post") || "").trim();
+    if (postId) {
+      deepLinkedPostId = postId;
+      view = "single-post";
     }
 
     if (changed) saveState();
@@ -194,6 +201,35 @@ function normalizeConversation(conversation) {
   const copy = { ...conversation };
   copy.messages = (copy.messages || []).map((message) => ({ ...message, createdAt: at(message.createdAt) }));
   return copy;
+}
+
+function classifyConversations() {
+  const userId = currentUser()?.id;
+  const all = state.conversations || [];
+  if (!userId) return { inbox: all, requests: [] };
+  const inbox = [];
+  const requests = [];
+  for (const conv of all) {
+    const mineCount = (conv.messages || []).filter((msg) => msg.authorId === userId).length;
+    const firstAuthor = conv.messages?.[0]?.authorId || "";
+    if (mineCount === 0 && firstAuthor && firstAuthor !== userId) requests.push(conv);
+    else inbox.push(conv);
+  }
+  return { inbox, requests };
+}
+
+async function ensureDeepLinkedPostLoaded() {
+  if (!deepLinkedPostId || !state.apiToken) return;
+  if (state.posts.some((post) => post.id === deepLinkedPostId)) return;
+  try {
+    const result = await apiRequest(`/posts/${encodeURIComponent(deepLinkedPostId)}`);
+    if (result?.post) {
+      state.posts = [normalizePost(result.post), ...state.posts.filter((post) => post.id !== result.post.id)];
+      saveState();
+    }
+  } catch (error) {
+    console.error("ensureDeepLinkedPostLoaded failed", error);
+  }
 }
 
 async function refreshPosts(reset = true) {
@@ -368,6 +404,7 @@ async function bootstrapSession() {
     mergeApiUser(result.user);
     await refreshStudents();
     await refreshPosts();
+    await ensureDeepLinkedPostLoaded();
     await refreshConversations();
     await refreshStories();
     await refreshReels();
@@ -534,13 +571,14 @@ function showSharePopup(url, text = "", postId = "") {
       </div>
       ${text ? `<p class="muted" style="margin:0">${escapeHtml(text)}</p>` : ""}
       <div class="field">
-        <label>Send to chat</label>
-        <select id="share-conversation-id" ${conversations.length ? "" : "disabled"}>
+        <label>Select chats</label>
+        <select id="share-conversation-id" multiple size="6" ${conversations.length ? "" : "disabled"}>
           ${conversations.length
             ? conversations.map((conv) => `<option value="${escapeHtml(conv.id)}">${escapeHtml(conv.title || "Conversation")}</option>`).join("")
             : `<option value="">No conversation available</option>`
           }
         </select>
+        <p class="muted" style="margin:4px 0 0">Hold Command/Ctrl to choose multiple chats.</p>
       </div>
       <div class="row">
         <button class="btn primary" type="button" data-copy-share>Copy link</button>
@@ -565,14 +603,16 @@ function showSharePopup(url, text = "", postId = "") {
   });
   popup.querySelector("[data-share-chat]")?.addEventListener("click", async () => {
     try {
-      const conversationId = String(popup.querySelector("#share-conversation-id")?.value || "");
-      if (!conversationId) return;
+      const selected = [...(popup.querySelector("#share-conversation-id")?.selectedOptions || [])].map((option) => String(option.value || "")).filter(Boolean);
+      if (!selected.length) return toast("Select at least one chat");
       const messageText = [`Shared post${postId ? ` (${postId})` : ""}:`, text || "", url].filter(Boolean).join("\n");
-      await apiRequest(`/conversations/${conversationId}/messages`, {
-        method: "POST",
-        body: JSON.stringify({ text: messageText, anonymous: false })
-      });
-      toast("Shared to chat");
+      for (const conversationId of selected) {
+        await apiRequest(`/conversations/${conversationId}/messages`, {
+          method: "POST",
+          body: JSON.stringify({ text: messageText, anonymous: false })
+        });
+      }
+      toast(`Shared to ${selected.length} chat${selected.length > 1 ? "s" : ""}`);
       popup.remove();
     } catch (error) {
       toast(error.message || "Could not share to chat");
@@ -904,6 +944,7 @@ function renderView() {
   }
   const routes = {
     feed: renderFeed,
+    "single-post": renderSinglePost,
     post: renderComposer,
     reels: renderReels,
     students: renderStudents,
@@ -913,6 +954,24 @@ function renderView() {
     admin: renderAdmin
   };
   return (routes[view] || renderFeed)();
+}
+
+function renderSinglePost() {
+  const post = state.posts.find((item) => item.id === deepLinkedPostId);
+  if (!post) {
+    return page("Shared Post", "Opening shared post...", `
+      <section class="panel">
+        <p class="muted">Loading post…</p>
+        <div class="row"><button class="btn" data-action="back-feed">Back to feed</button></div>
+      </section>
+    `);
+  }
+  return page("Shared Post", "This is the single post shared with you.", `
+    <section class="grid">
+      <div class="row"><button class="btn" data-action="back-feed">Back to feed</button></div>
+      ${renderPost(post)}
+    </section>
+  `);
 }
 
 function renderFeed() {
@@ -1063,12 +1122,20 @@ function renderStudents() {
 }
 
 function renderMessages() {
-  const active = state.conversations.find((item) => item.id === activeConversationId) || state.conversations[0];
+  const { inbox, requests } = classifyConversations();
+  const list = conversationTab === "requests" ? requests : inbox;
+  const active = list.find((item) => item.id === activeConversationId) || list[0] || inbox[0] || requests[0];
   return page("Messages", "Real-time style direct and group messaging, anonymous sending, reporting, and admin monitoring.", `
     <section class="grid two">
       <div class="panel">
-        <div class="between" style="margin-bottom:12px"><strong>Conversations</strong><button class="btn small" data-action="new-group">Group</button></div>
-        <div class="grid">${state.conversations.map((conv) => `<button class="btn ${active?.id === conv.id ? "primary" : ""}" data-action="open-conv" data-id="${conv.id}">${escapeHtml(conv.title)} · ${conv.group ? "group" : "direct"}</button>`).join("")}</div>
+        <div class="between" style="margin-bottom:12px"><strong>Conversations</strong><button class="btn small" data-action="open-create-convo">Create convo</button></div>
+        <div class="row" style="margin-bottom:12px">
+          <button class="btn ${conversationTab === "inbox" ? "primary" : ""}" data-action="chat-tab-inbox">Inbox (${inbox.length})</button>
+          <button class="btn ${conversationTab === "requests" ? "primary" : ""}" data-action="chat-tab-requests">Requests (${requests.length})</button>
+        </div>
+        <div class="grid">${list.length
+          ? list.map((conv) => `<button class="btn ${active?.id === conv.id ? "primary" : ""}" data-action="open-conv" data-id="${conv.id}">${escapeHtml(conv.title)} · ${conv.group ? "group" : "direct"}</button>`).join("")
+          : `<p class="muted">No conversations in this tab yet.</p>`}</div>
       </div>
       <div class="panel">
         <div class="between"><strong>${escapeHtml(active?.title || "No conversation")}</strong><span class="chip">Active</span></div>
@@ -1483,6 +1550,17 @@ async function handleAction(action, id) {
     showSharePopup(shareUrl, text, id);
     return;
   }
+  if (action === "back-feed") {
+    view = "feed";
+    deepLinkedPostId = "";
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("post");
+      window.history.replaceState({}, "", url.toString());
+    } catch {
+      // ignore
+    }
+  }
   if (action === "toggle-sticky") {
     const post = state.posts.find((item) => item.id === id);
     if (!post) return;
@@ -1531,6 +1609,50 @@ async function handleAction(action, id) {
     await refreshConversations();
   }
   if (action === "open-conv") activeConversationId = id;
+  if (action === "chat-tab-inbox") {
+    conversationTab = "inbox";
+    const next = classifyConversations().inbox[0];
+    activeConversationId = next?.id || activeConversationId;
+  }
+  if (action === "chat-tab-requests") {
+    conversationTab = "requests";
+    const next = classifyConversations().requests[0];
+    activeConversationId = next?.id || activeConversationId;
+  }
+  if (action === "open-create-convo") {
+    const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin");
+    const popup = showFormPopup("Create Conversation", `
+      <form id="create-convo-form" class="grid">
+        <div class="field"><label>Title (optional)</label><input id="create-convo-title" placeholder="Conversation title"></div>
+        <div class="field">
+          <label>Members</label>
+          <select id="create-convo-members" multiple size="8" required>
+            ${choices.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.englishName)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="row">
+          <button class="btn primary" type="submit">Create</button>
+          <button class="btn" type="button" data-cancel>Create later</button>
+        </div>
+      </form>
+    `);
+    popup.querySelector("[data-cancel]")?.addEventListener("click", () => popup.remove());
+    popup.querySelector("#create-convo-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const memberIds = [...popup.querySelector("#create-convo-members").selectedOptions].map((option) => option.value).filter(Boolean);
+      if (!memberIds.length) return toast("Select at least one member");
+      const title = String(popup.querySelector("#create-convo-title").value || "").trim();
+      const payload = { memberIds, group: memberIds.length > 1, title: title || undefined };
+      await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
+      popup.remove();
+      await refreshConversations();
+      conversationTab = "inbox";
+      activeConversationId = state.conversations[0]?.id;
+      toast("Conversation created");
+      render();
+    });
+    return;
+  }
   if (action === "new-group") {
     const memberIds = [...new Set(state.users.filter((item) => item.id !== user.id && item.role !== "admin").map((item) => item.id))];
     const peers = memberIds.length ? memberIds : state.users.filter((item) => item.id !== user.id).map((item) => item.id);
