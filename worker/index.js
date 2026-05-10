@@ -545,18 +545,24 @@ async function handleApi(request, env, url, route) {
   if (method === "GET" && route === "/stories") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     const rows = await env.DB.prepare("select * from stories where archived_at is null and expires_at > ? order by created_at desc").bind(now()).all();
-    return json({ stories: (rows.results || []).map((s) => ({ ...s, views: jsonArray(s.views) })), pagination: { limit: 100, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
+    return json({ stories: (rows.results || []).map((s) => storyViewModel(s)), pagination: { limit: 100, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
   }
 
   if (method === "POST" && route === "/stories") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     if (authUser.status !== "verified" && authUser.role !== "admin") return json({ error: "Verification required" }, 403);
     const text = String(body.text || "").trim();
-    if (!text) return json({ error: "Story text is required" }, 400);
+    const postId = String(body.postId || "").trim();
+    if (!text && !postId) return json({ error: "Story text or post is required" }, 400);
+    if (text && postId) return json({ error: "Only one story item is allowed (text or post)" }, 400);
+    if (postId) {
+      const post = await env.DB.prepare("select id from posts where id=? and deleted_at is null").bind(postId).first();
+      if (!post) return json({ error: "Selected post was not found" }, 404);
+    }
     const story = {
       id: id("sty"),
       author_id: authUser.id,
-      text: text.slice(0, MAX_TEXT_LEN),
+      text: postId ? `__POST__:${postId}` : text.slice(0, MAX_TEXT_LEN),
       views: "[]",
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       archived_at: null,
@@ -566,7 +572,7 @@ async function handleApi(request, env, url, route) {
       .bind(story.id, story.author_id, story.text, story.views, story.expires_at, story.archived_at, story.created_at)
       .run();
     await audit(env, authUser.id, "story_created", { storyId: story.id }, request);
-    return json({ story: { ...story, views: [] } }, 201);
+    return json({ story: storyViewModel(story) }, 201);
   }
 
   const storyViewMatch = route.match(/^\/stories\/([^/]+)\/view$/);
@@ -577,8 +583,8 @@ async function handleApi(request, env, url, route) {
     const views = jsonArray(story.views);
     if (!views.includes(authUser.id)) views.push(authUser.id);
     await env.DB.prepare("update stories set views=? where id=?").bind(JSON.stringify(views), story.id).run();
-    story.views = views;
-    return json({ story }, 200);
+    story.views = JSON.stringify(views);
+    return json({ story: storyViewModel(story) }, 200);
   }
 
   const storyDeleteMatch = route.match(/^\/stories\/([^/]+)$/);
@@ -903,6 +909,19 @@ async function handleApi(request, env, url, route) {
   }
 
   return json({ error: "Not found" }, 404);
+}
+
+function storyViewModel(row) {
+  const text = String(row.text || "");
+  const isPost = text.startsWith("__POST__:");
+  const postId = isPost ? text.slice("__POST__:".length) : "";
+  return {
+    ...row,
+    views: jsonArray(row.views),
+    storyType: isPost ? "post" : "text",
+    postId,
+    text: isPost ? "" : text
+  };
 }
 
 function fromDbPost(row) {
