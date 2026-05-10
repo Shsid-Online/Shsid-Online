@@ -464,6 +464,83 @@ function showPopup(title, message) {
   });
 }
 
+function showFormPopup(title, bodyHtml) {
+  document.querySelector("#site-form-popup")?.remove();
+  const node = document.createElement("div");
+  node.id = "site-form-popup";
+  node.className = "modal-backdrop";
+  node.innerHTML = `
+    <div class="modal">
+      <div class="between" style="margin-bottom:10px">
+        <strong>${escapeHtml(title)}</strong>
+        <button class="btn small" type="button" data-close-popup>Close</button>
+      </div>
+      ${bodyHtml}
+    </div>
+  `;
+  document.body.appendChild(node);
+  node.querySelector("[data-close-popup]")?.addEventListener("click", () => node.remove());
+  node.addEventListener("click", (event) => {
+    if (event.target === node) node.remove();
+  });
+  return node;
+}
+
+function askTextPopup(title, label, placeholder = "") {
+  return new Promise((resolve) => {
+    const popup = showFormPopup(title, `
+      <form id="site-text-form" class="grid">
+        <div class="field"><label>${escapeHtml(label)}</label><textarea id="site-text-input" placeholder="${escapeHtml(placeholder)}" required></textarea></div>
+        <div class="row">
+          <button class="btn primary" type="submit">Submit</button>
+          <button class="btn" type="button" data-cancel>Cancel</button>
+        </div>
+      </form>
+    `);
+    popup.querySelector("[data-cancel]")?.addEventListener("click", () => {
+      popup.remove();
+      resolve(null);
+    });
+    popup.querySelector("#site-text-form")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const value = String(popup.querySelector("#site-text-input")?.value || "").trim();
+      popup.remove();
+      resolve(value || null);
+    });
+  });
+}
+
+function askQnaPopup() {
+  return new Promise((resolve) => {
+    const popup = showFormPopup("Ask Question", `
+      <form id="site-qna-form" class="grid">
+        <div class="field"><label>Question</label><textarea id="site-qna-question" placeholder="Write your question" required></textarea></div>
+        <div class="row">
+          <label><input id="site-qna-anon" type="checkbox"> Ask anonymously</label>
+          <label><input id="site-qna-public" type="checkbox" checked> Show publicly</label>
+        </div>
+        <div class="row">
+          <button class="btn primary" type="submit">Submit</button>
+          <button class="btn" type="button" data-cancel>Cancel</button>
+        </div>
+      </form>
+    `);
+    popup.querySelector("[data-cancel]")?.addEventListener("click", () => {
+      popup.remove();
+      resolve(null);
+    });
+    popup.querySelector("#site-qna-form")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const question = String(popup.querySelector("#site-qna-question")?.value || "").trim();
+      if (!question) return;
+      const anonymous = Boolean(popup.querySelector("#site-qna-anon")?.checked);
+      const visibility = popup.querySelector("#site-qna-public")?.checked ? "public" : "private";
+      popup.remove();
+      resolve({ question, anonymous, visibility });
+    });
+  });
+}
+
 function startResendCooldown(seconds = 30) {
   resendCooldownUntil = Date.now() + seconds * 1000;
 }
@@ -1193,19 +1270,16 @@ async function handleAction(action, id) {
     if (idx >= 0) state.posts[idx] = normalizePost(result.post);
   }
   if (action === "comment-post") {
-    const text = prompt("Comment text");
-    if (text) {
-      const anonymous = confirm("Post comment anonymously?");
-      await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous }) });
-      await refreshPosts();
-    }
+    const text = await askTextPopup("Add Comment", "Comment text", "Write your comment");
+    if (!text) return;
+    await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous: false }) });
+    await refreshPosts();
   }
   if (action === "report-post") {
-    const reason = prompt("Report reason");
-    if (reason) {
-      await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "post", targetId: id, reason }) });
-      if (user.role === "admin") await refreshReports();
-    }
+    const reason = await askTextPopup("Report Post", "Reason", "Describe the issue");
+    if (!reason) return;
+    await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "post", targetId: id, reason }) });
+    if (user.role === "admin") await refreshReports();
   }
   if (action === "toggle-sticky") {
     const post = state.posts.find((item) => item.id === id);
@@ -1253,11 +1327,10 @@ async function handleAction(action, id) {
     view = "messages";
   }
   if (action === "report-message") {
-    const reason = prompt("Message report reason");
-    if (reason) {
-      await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "conversation", targetId: id, reason }) });
-      if (user.role === "admin") await refreshReports();
-    }
+    const reason = await askTextPopup("Report Conversation", "Reason", "Describe the issue");
+    if (!reason) return;
+    await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "conversation", targetId: id, reason }) });
+    if (user.role === "admin") await refreshReports();
   }
   if (action === "create-story") {
     const text = document.querySelector("#story-text").value.trim();
@@ -1320,13 +1393,10 @@ async function handleAction(action, id) {
     await refreshNotifications();
   }
   if (action === "ask-qna") {
-    const question = prompt("Question");
-    if (question) {
-      const anonymous = confirm("Ask anonymously?");
-      const visibility = confirm("Display publicly on their profile?") ? "public" : "private";
-      await apiRequest(`/users/${id}/qna`, { method: "POST", body: JSON.stringify({ question, anonymous, visibility }) });
-      await refreshQnaForProfile(id);
-    }
+    const payload = await askQnaPopup();
+    if (!payload) return;
+    await apiRequest(`/users/${id}/qna`, { method: "POST", body: JSON.stringify(payload) });
+    await refreshQnaForProfile(id);
   }
   saveState();
   render();
