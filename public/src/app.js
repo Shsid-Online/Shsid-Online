@@ -1455,6 +1455,7 @@ async function handleAction(action, id) {
     const post = state.posts.find((item) => item.id === id);
     const text = post?.text ? post.text.slice(0, 120) : "Check this post";
     showSharePopup(shareUrl, text);
+    return;
   }
   if (action === "toggle-sticky") {
     const post = state.posts.find((item) => item.id === id);
