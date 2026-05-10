@@ -12,6 +12,7 @@ const MAX_CATEGORY_LEN = 50;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const UPLOAD_TTL_SECONDS = 10 * 60;
 const VERIFICATION_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
+const VERIFICATION_CHUNK_SIZE = 8 * 1024 * 1024;
 const ALLOWED_UPLOAD_TYPES = [
   "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
   "video/mp4", "video/webm", "video/quicktime",
@@ -71,6 +72,61 @@ async function handleApi(request, env, url, route) {
     const uploadUrl = `${url.origin}/upload/${encodeURIComponent(key)}?exp=${expiresAt}&token=${token}`;
     const mediaUrl = `${url.origin}/api/media/${encodeURIComponent(key)}`;
     return json({ key, uploadUrl, mediaUrl, method: "PUT", headers: { "content-type": contentType } }, 200);
+  }
+
+  if (method === "POST" && route === "/verification-upload/init") {
+    const authUser = await maybeAuthUser(request, env);
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const fileName = safeName(String(body.fileName || "").trim());
+    const contentType = String(body.contentType || "").trim().toLowerCase();
+    if (!fileName) return json({ error: "fileName is required" }, 400);
+    if (!contentType.startsWith("video/")) return json({ error: "Verification upload must be a video file" }, 415);
+    const key = `verification/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+    const upload = await env.R2_BUCKET.createMultipartUpload(key, {
+      httpMetadata: { contentType }
+    });
+    return json({ key, uploadId: upload.uploadId, chunkSize: VERIFICATION_CHUNK_SIZE }, 200);
+  }
+
+  const verificationPartMatch = route.match(/^\/verification-upload\/([^/]+)\/(\d+)$/);
+  if (method === "PUT" && verificationPartMatch) {
+    const authUser = await maybeAuthUser(request, env);
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const uploadId = verificationPartMatch[1];
+    const partNumber = Number(verificationPartMatch[2]);
+    const key = String(url.searchParams.get("key") || "");
+    if (!key || !uploadId || !partNumber) return json({ error: "Missing upload parameters" }, 400);
+    if (!key.startsWith("verification/")) return json({ error: "Invalid upload key" }, 400);
+    try {
+      const upload = env.R2_BUCKET.resumeMultipartUpload(key, uploadId);
+      const result = await upload.uploadPart(partNumber, request.body);
+      return json({ ok: true, partNumber, etag: result.etag }, 200);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return json({ error: "Upload part failed", detail: message }, 502);
+    }
+  }
+
+  if (method === "POST" && route === "/verification-upload/complete") {
+    const authUser = await maybeAuthUser(request, env);
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const key = String(body.key || "");
+    const uploadId = String(body.uploadId || "");
+    const parts = Array.isArray(body.parts) ? body.parts : [];
+    if (!key || !uploadId || !parts.length) return json({ error: "Missing completion payload" }, 400);
+    if (!key.startsWith("verification/")) return json({ error: "Invalid upload key" }, 400);
+    try {
+      const upload = env.R2_BUCKET.resumeMultipartUpload(key, uploadId);
+      await upload.complete(parts.map((part) => ({
+        partNumber: Number(part.partNumber),
+        etag: String(part.etag)
+      })));
+      const mediaUrl = `${url.origin}/api/media/${encodeURIComponent(key)}`;
+      return json({ ok: true, key, mediaUrl }, 200);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return json({ error: "Complete upload failed", detail: message }, 502);
+    }
   }
 
   const uploadMatch = route.match(/^\/upload\/(.+)$/);

@@ -1125,7 +1125,13 @@ function bindAuth() {
       if (!videoFile) return toast("Upload a verification video");
       if (!(videoFile.type || "").startsWith("video/")) return toast("Please upload a valid video file.");
       state.pendingVideoName = videoFile.name;
-      const [uploadedVideo] = await uploadFiles([videoFile], { purpose: "verification" });
+      let uploadedVideoUrl = "";
+      if (videoFile.size > 20 * 1024 * 1024) {
+        uploadedVideoUrl = await uploadVerificationVideoMultipart(videoFile);
+      } else {
+        const [uploadedVideo] = await uploadFiles([videoFile], { purpose: "verification" });
+        uploadedVideoUrl = uploadedVideo?.url || "";
+      }
       const result = await apiRequest("/auth/complete-profile", {
         method: "POST",
         body: JSON.stringify({
@@ -1133,7 +1139,7 @@ function bindAuth() {
           chineseName: state.pendingChineseName,
           grade: Number(state.pendingGrade),
           classNo: Number(state.pendingClassNo),
-          verificationVideo: uploadedVideo?.url || videoFile.name
+          verificationVideo: uploadedVideoUrl || videoFile.name
         })
       });
       mergeApiUser(result.user);
@@ -1366,6 +1372,41 @@ async function uploadFiles(files, options = {}) {
     });
   }
   return uploaded;
+}
+
+async function uploadVerificationVideoMultipart(file) {
+  const init = await apiRequest("/verification-upload/init", {
+    method: "POST",
+    body: JSON.stringify({
+      fileName: file.name,
+      contentType: file.type || "application/octet-stream"
+    })
+  });
+
+  const chunkSize = Number(init.chunkSize || 8 * 1024 * 1024);
+  const parts = [];
+  let partNumber = 1;
+  for (let offset = 0; offset < file.size; offset += chunkSize) {
+    const chunk = file.slice(offset, offset + chunkSize);
+    const response = await fetch(`${API_BASE}/verification-upload/${encodeURIComponent(init.uploadId)}/${partNumber}?key=${encodeURIComponent(init.key)}`, {
+      method: "PUT",
+      headers: {
+        "content-type": file.type || "application/octet-stream",
+        ...(state.apiToken ? { authorization: `Bearer ${state.apiToken}` } : {})
+      },
+      body: chunk
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body?.error || body?.detail || `Chunk upload failed (part ${partNumber})`);
+    parts.push({ partNumber, etag: body.etag });
+    partNumber += 1;
+  }
+
+  const completed = await apiRequest("/verification-upload/complete", {
+    method: "POST",
+    body: JSON.stringify({ key: init.key, uploadId: init.uploadId, parts })
+  });
+  return completed.mediaUrl;
 }
 
 bootstrapSession();
