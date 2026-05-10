@@ -45,6 +45,9 @@ let deepLinkedPostId = "";
 let conversationTab = "inbox";
 let adminChatMonitorFilter = "all";
 let adminActiveConversationId = "";
+let liveChatTimer = null;
+let liveChatPollInFlight = false;
+let liveChatSnapshot = "";
 
 hydrateAuthFromUrl();
 
@@ -861,6 +864,7 @@ async function handleEmailAuthIntent(intent) {
 function render() {
   const user = currentUser();
   if (!user || state.authStep !== "app") {
+    stopLiveChatLoop();
     renderAuth();
     return;
   }
@@ -889,6 +893,53 @@ function render() {
     </div>
   `;
   bindEvents();
+  syncLiveChatLoop();
+}
+
+function conversationsSnapshot() {
+  return JSON.stringify((state.conversations || []).map((conv) => ({
+    id: conv.id,
+    m: (conv.messages || []).length,
+    l: conv.messages?.[conv.messages.length - 1]?.id || "",
+    t: conv.messages?.[conv.messages.length - 1]?.createdAt || ""
+  })));
+}
+
+function stopLiveChatLoop() {
+  if (liveChatTimer) {
+    clearInterval(liveChatTimer);
+    liveChatTimer = null;
+  }
+}
+
+function syncLiveChatLoop() {
+  const user = currentUser();
+  const needsLiveChat = Boolean(user && state.authStep === "app" && (view === "messages" || (view === "admin" && user.role === "admin")));
+  if (!needsLiveChat) {
+    stopLiveChatLoop();
+    return;
+  }
+  if (liveChatTimer) return;
+  liveChatTimer = setInterval(pollLiveChatUpdates, 2500);
+  pollLiveChatUpdates();
+}
+
+async function pollLiveChatUpdates() {
+  if (liveChatPollInFlight || !state.apiToken) return;
+  liveChatPollInFlight = true;
+  try {
+    await refreshConversations();
+    liveChatSnapshot = conversationsSnapshot();
+    const next = conversationsSnapshot();
+    if (next !== liveChatSnapshot) {
+      liveChatSnapshot = next;
+      render();
+    }
+  } catch (error) {
+    console.error("pollLiveChatUpdates failed", error);
+  } finally {
+    liveChatPollInFlight = false;
+  }
 }
 
 function renderAuth() {
@@ -1490,6 +1541,7 @@ function bindAuth() {
           state.adminVerifications = [];
           state.authMode = "login";
           state.authStep = "email";
+          stopLiveChatLoop();
           saveState();
           render();
         }
@@ -1625,6 +1677,7 @@ async function handleAction(action, id) {
     clearAuthDraftState();
     state.authMode = "login";
     state.authStep = "email";
+    stopLiveChatLoop();
   }
   if (action === "create-post") {
     const text = document.querySelector("#post-text").value.trim();
