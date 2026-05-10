@@ -281,7 +281,9 @@ function conversationDisplayTitle(conversation, forAdmin = false) {
   if (!conversation) return "Conversation";
   if (conversation.group) return conversation.title || "Group chat";
   if (forAdmin) return directConversationTitle(conversation);
-  return conversationCounterpartName(conversation);
+  const base = conversationCounterpartName(conversation);
+  const status = getConversationIdentityMode(conversation.id) === "anonymous" ? "anon" : "public";
+  return status === "anonymous" || status === "anon" ? `${base}(anon)` : base;
 }
 
 async function ensureDeepLinkedPostLoaded() {
@@ -1276,12 +1278,13 @@ function renderMessages() {
           <button class="btn ${conversationTab === "requests" ? "primary" : ""}" data-action="chat-tab-requests">Requests (${requests.length})</button>
         </div>
         <div class="grid chat-list-scroll">${list.length
-          ? list.map((conv) => `<button class="btn ${active?.id === conv.id ? "primary" : ""}" data-action="open-conv" data-id="${conv.id}">${escapeHtml(conversationDisplayTitle(conv))} + ${getConversationIdentityMode(conv.id) === "anonymous" ? "anon" : "public"}</button>`).join("")
+          ? list.map((conv) => `<button class="btn ${active?.id === conv.id ? "primary" : ""}" data-action="open-conv" data-id="${conv.id}">${escapeHtml(conversationDisplayTitle(conv))}</button>`).join("")
           : `<p class="muted">No conversations in this tab yet.</p>`}</div>
       </div>
       <div class="panel chat-panel chat-panel-thread">
-        <div class="between"><strong>${escapeHtml(active ? `${conversationDisplayTitle(active)} + ${identityMode === "anonymous" ? "anon" : "public"}` : "No conversation")}</strong><span class="chip">Active</span></div>
+        <div class="between"><strong>${escapeHtml(active ? conversationDisplayTitle(active) : "No conversation")}</strong><span class="chip">Active</span></div>
         <p class="muted" style="margin:8px 0 0">Receiver: ${escapeHtml(receiverName)}</p>
+        ${active ? `<div class="row" style="margin:6px 0 0"><button class="btn small" data-action="rename-conv" data-id="${active.id}">Rename Chat</button></div>` : ""}
         ${counterpartId ? `<p class="muted" style="margin:6px 0 0">Remark: ${escapeHtml(counterpartRemark || "None")} <button class="btn small" data-action="edit-remark" data-id="${counterpartId}">Edit</button></p>` : ""}
         <div class="grid chat-messages-scroll" style="margin:14px 0">${(active?.messages || []).map((message) => `
           <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} ${(message.media || []).map((item) => renderChatMediaItem(item)).join("")} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${message.authorId === currentUser().id ? `<span class="muted">· receiver sees: ${message.anonymous ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span>` : ""} ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
@@ -1814,6 +1817,17 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "open-conv") activeConversationId = id;
+  if (action === "rename-conv") {
+    const conv = state.conversations.find((item) => item.id === id);
+    if (!conv) return;
+    const next = await askTextPopup("Rename Chat", "New title", conv.title || "Conversation");
+    if (next == null) return;
+    const title = next.trim();
+    if (!title) return toast("Title cannot be empty");
+    await apiRequest(`/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) });
+    await refreshConversations();
+    toast("Chat title updated");
+  }
   if (action === "chat-tab-inbox") {
     conversationTab = "inbox";
     const next = classifyConversations().inbox[0];

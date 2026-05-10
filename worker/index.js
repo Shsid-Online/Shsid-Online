@@ -738,6 +738,30 @@ async function handleApi(request, env, url, route) {
     return json({ conversation: { id: conversation.id, title, settings, members, group, messages: [], createdAt: conversation.created_at } }, 201);
   }
 
+  const convMatch = route.match(/^\/conversations\/([^/]+)$/);
+  if (method === "PATCH" && convMatch) {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const conversation = await env.DB.prepare("select * from conversations where id=?").bind(convMatch[1]).first();
+    if (!conversation) return json({ error: "Not found" }, 404);
+    const members = jsonArray(conversation.members);
+    if (authUser.role !== "admin" && !members.includes(authUser.id)) return json({ error: "Not found" }, 404);
+    const currentMeta = unpackConversationTitle(conversation.title);
+    const nextTitle = String(body.title || currentMeta.title || "").trim().slice(0, 120) || currentMeta.title || "Conversation";
+    const nextSettings = sanitizeConversationSettings(body.settings || currentMeta.settings || {}, members);
+    const packed = packConversationTitle(nextTitle, nextSettings);
+    await env.DB.prepare("update conversations set title=? where id=?").bind(packed, conversation.id).run();
+    return json({
+      conversation: {
+        id: conversation.id,
+        title: nextTitle,
+        settings: nextSettings,
+        members,
+        group: Boolean(conversation.is_group),
+        createdAt: conversation.created_at
+      }
+    }, 200);
+  }
+
   const convMsgMatch = route.match(/^\/conversations\/([^/]+)\/messages$/);
   if (convMsgMatch && (method === "GET" || method === "POST")) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
