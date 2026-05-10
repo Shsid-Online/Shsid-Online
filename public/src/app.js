@@ -842,19 +842,28 @@ function renderReels() {
     const videoUrl = reel.videoUrl || reel.video_url || "";
     const openable = videoUrl && videoUrl !== "pending-upload" && /^https?:\/\//i.test(videoUrl);
     return `
-      <article class="card video-tile">
-        <span class="chip">${escapeHtml(reel.category)}</span>
-        <h2>${escapeHtml(reel.title)}</h2>
-        <p class="reel-meta">${escapeHtml(userName(reel.authorId))} · ${likes.length} likes · ${timeAgo(reel.createdAt)}</p>
-        <div class="reel-actions">
-          <button class="btn small" data-action="like-reel" data-id="${reel.id}">${liked ? "Liked" : "Like"}</button>
-          ${openable ? `<video class="media-tile" src="${escapeHtml(videoUrl)}" controls preload="metadata"></video>` : `<span class="muted" style="font-size:13px">Video pending upload</span>`}
+      <article class="reel-screen">
+        <div class="reel-media-shell">
+          ${openable
+            ? `<video class="reel-media" src="${escapeHtml(videoUrl)}" controls preload="metadata" playsinline></video>`
+            : `<div class="reel-media reel-media-empty">Video pending upload</div>`
+          }
+          <div class="reel-overlay">
+            <div class="reel-meta-block">
+              <span class="chip">${escapeHtml(reel.category)}</span>
+              <h2>${escapeHtml(reel.title)}</h2>
+              <p class="reel-meta">${escapeHtml(userName(reel.authorId))} · ${likes.length} likes · ${timeAgo(reel.createdAt)}</p>
+            </div>
+            <div class="reel-actions">
+              <button class="btn small ${liked ? "primary" : ""}" data-action="like-reel" data-id="${reel.id}">${liked ? "Liked" : "Like"}</button>
+            </div>
+          </div>
         </div>
       </article>
     `;
   }).join("");
   const grid = tiles || `<div class="empty-state">No reels yet. Add one below or ask classmates to share.</div>`;
-  return page("Reels", "Short vertical videos — upload file and stream directly in app.", `
+  return page("Reels", "Vertical snap feed for short videos.", `
     <section class="composer" style="margin-bottom:16px">
       <div class="grid two">
         <div class="field"><label>Title</label><input id="reel-title" placeholder="What is this reel about?" /></div>
@@ -863,7 +872,7 @@ function renderReels() {
       <div class="field"><label>Upload reel video (optional)</label><input id="reel-video-file" type="file" accept="video/*" /></div>
       <button class="btn primary" data-action="create-reel">Publish reel</button>
     </section>
-    <section class="grid three">${grid}</section>
+    <section class="reel-feed">${grid}</section>
   `);
 }
 
