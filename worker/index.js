@@ -551,18 +551,15 @@ async function handleApi(request, env, url, route) {
   if (method === "POST" && route === "/stories") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     if (authUser.status !== "verified" && authUser.role !== "admin") return json({ error: "Verification required" }, 403);
-    const text = String(body.text || "").trim();
-    const postId = String(body.postId || "").trim();
-    if (!text && !postId) return json({ error: "Story text or post is required" }, 400);
-    if (text && postId) return json({ error: "Only one story item is allowed (text or post)" }, 400);
-    if (postId) {
-      const post = await env.DB.prepare("select id from posts where id=? and deleted_at is null").bind(postId).first();
-      if (!post) return json({ error: "Selected post was not found" }, 404);
-    }
+    const caption = String(body.caption || body.text || "").trim().slice(0, MAX_TEXT_LEN);
+    const mediaUrl = String(body.mediaUrl || "").trim().slice(0, 1000);
+    const mediaType = String(body.mediaType || "").trim().slice(0, 120);
+    if (!caption && !mediaUrl) return json({ error: "Story needs a caption, a photo/video, or both" }, 400);
+    const packed = `__STORY__:${JSON.stringify({ caption, mediaUrl, mediaType })}`;
     const story = {
       id: id("sty"),
       author_id: authUser.id,
-      text: postId ? `__POST__:${postId}` : text.slice(0, MAX_TEXT_LEN),
+      text: packed,
       views: "[]",
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       archived_at: null,
@@ -707,9 +704,11 @@ async function handleApi(request, env, url, route) {
       const members = jsonArray(row.members);
       if (authUser.role !== "admin" && !members.includes(authUser.id)) continue;
       const msgRows = await env.DB.prepare("select * from messages where conversation_id = ? and deleted_at is null order by created_at asc").bind(row.id).all();
+      const convMeta = unpackConversationTitle(row.title);
       conversations.push({
         id: row.id,
-        title: row.title,
+        title: convMeta.title,
+        settings: convMeta.settings,
         members,
         group: Boolean(row.is_group),
         createdAt: row.created_at,
@@ -728,13 +727,15 @@ async function handleApi(request, env, url, route) {
 
     let title = String(body.title || "").trim();
     if (!title) title = group ? "Group chat" : "Direct message";
+    const settings = sanitizeConversationSettings(body.settings, members);
+    const packedTitle = packConversationTitle(title, settings);
 
-    const conversation = { id: id("cnv"), title, is_group: group ? 1 : 0, members: JSON.stringify(members), created_at: now() };
+    const conversation = { id: id("cnv"), title: packedTitle, is_group: group ? 1 : 0, members: JSON.stringify(members), created_at: now() };
     await env.DB.prepare("insert into conversations (id, title, is_group, members, created_at) values (?, ?, ?, ?, ?)")
       .bind(conversation.id, conversation.title, conversation.is_group, conversation.members, conversation.created_at)
       .run();
 
-    return json({ conversation: { id: conversation.id, title: conversation.title, members, group, messages: [], createdAt: conversation.created_at } }, 201);
+    return json({ conversation: { id: conversation.id, title, settings, members, group, messages: [], createdAt: conversation.created_at } }, 201);
   }
 
   const convMsgMatch = route.match(/^\/conversations\/([^/]+)\/messages$/);
@@ -914,14 +915,29 @@ async function handleApi(request, env, url, route) {
 
 function storyViewModel(row) {
   const text = String(row.text || "");
-  const isPost = text.startsWith("__POST__:");
-  const postId = isPost ? text.slice("__POST__:".length) : "";
+  if (text.startsWith("__STORY__:")) {
+    try {
+      const parsed = JSON.parse(text.slice("__STORY__:".length));
+      return {
+        ...row,
+        views: jsonArray(row.views),
+        storyType: "media",
+        caption: String(parsed?.caption || ""),
+        mediaUrl: String(parsed?.mediaUrl || ""),
+        mediaType: String(parsed?.mediaType || "")
+      };
+    } catch {
+      // fall through
+    }
+  }
   return {
     ...row,
     views: jsonArray(row.views),
-    storyType: isPost ? "post" : "text",
-    postId,
-    text: isPost ? "" : text
+    storyType: "text",
+    caption: text,
+    mediaUrl: "",
+    mediaType: "",
+    text
   };
 }
 
@@ -961,6 +977,46 @@ function messageViewModel(row) {
     createdAt: row.created_at,
     deletedAt: row.deleted_at
   };
+}
+
+function sanitizeConversationSettings(raw, members) {
+  const input = raw && typeof raw === "object" ? raw : {};
+  const memberList = Array.isArray(members) ? members.map((id) => String(id || "").trim()).filter(Boolean) : [];
+  const validMembers = new Set(memberList);
+  const rawAnonUsers = Array.isArray(input.anonUserIds) ? input.anonUserIds.map((id) => String(id || "").trim()).filter(Boolean) : [];
+  const anonUsers = memberList.length ? rawAnonUsers.filter((id) => validMembers.has(id)) : rawAnonUsers;
+  return {
+    forceAnonymousAll: Boolean(input.forceAnonymousAll),
+    anonUserIds: [...new Set(anonUsers)],
+    showMembers: input.showMembers !== false,
+    allowStatusChange: input.allowStatusChange !== false
+  };
+}
+
+function packConversationTitle(title, settings) {
+  return `__CNV__:${JSON.stringify({ title: String(title || "").slice(0, 120), settings: sanitizeConversationSettings(settings) })}`;
+}
+
+function unpackConversationTitle(rawTitle) {
+  const raw = String(rawTitle || "");
+  if (!raw.startsWith("__CNV__:")) {
+    return {
+      title: raw || "Conversation",
+      settings: sanitizeConversationSettings({}, [])
+    };
+  }
+  try {
+    const parsed = JSON.parse(raw.slice("__CNV__:".length));
+    return {
+      title: String(parsed?.title || "Conversation"),
+      settings: sanitizeConversationSettings(parsed?.settings || {}, [])
+    };
+  } catch {
+    return {
+      title: raw,
+      settings: sanitizeConversationSettings({}, [])
+    };
+  }
 }
 
 function fromDbPost(row) {

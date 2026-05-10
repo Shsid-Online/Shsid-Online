@@ -1062,7 +1062,7 @@ function renderFeed() {
 }
 
 function renderStoryMini(story) {
-  const label = story.storyType === "post" ? "Shared a post" : (story.text || "Story");
+  const label = story.caption || (story.mediaUrl ? "Photo/Video story" : (story.text || "Story"));
   return `<button class="story" data-action="view-story" data-id="${story.id}">${escapeHtml(userName(story.authorId))}<span style="font-size:12px">${escapeHtml(label)} · ${timeAgo(story.createdAt)}</span></button>`;
 }
 
@@ -1234,19 +1234,20 @@ function renderMessages() {
 }
 
 function renderStories() {
-  const postChoices = state.posts.filter((post) => post.authorId === currentUser().id && !post.deletedAt).slice(0, 50);
   return page("Stories", "24-hour stories with viewers and archives planned for production retention.", `
     <section class="composer" style="margin-bottom:16px">
-      <div class="field"><label>Story type</label><select id="story-type"><option value="text">Text</option><option value="post">Post</option></select></div>
-      <div class="field" id="story-text-wrap"><label>Story text</label><input id="story-text" placeholder="Add a short story"></div>
-      <div class="field hidden" id="story-post-wrap"><label>Select post</label><select id="story-post-id">${postChoices.map((post) => `<option value="${escapeHtml(post.id)}">${escapeHtml((post.text || "Media post").slice(0, 70))} · ${timeAgo(post.createdAt)}</option>`).join("") || `<option value="">No posts available</option>`}</select></div>
+      <div class="field"><label>Caption (optional)</label><input id="story-caption" placeholder="Add a caption (or leave empty)" /></div>
+      <div class="field"><label>Photo or video (optional)</label><input id="story-media-file" type="file" accept="image/*,video/*" /></div>
       <button class="btn primary" data-action="create-story">Post story</button>
     </section>
     <section class="grid three">${state.stories.map((story) => `
       <article class="story" style="min-height:220px;cursor:pointer" data-action="view-story" data-id="${story.id}">
-        <strong>${story.storyType === "post" ? "Shared Post" : escapeHtml(story.text || "Text story")}</strong>
+        <strong>${escapeHtml(story.caption || "Story")}</strong>
+        ${story.mediaUrl ? `${String(story.mediaType || "").startsWith("video/")
+          ? `<video src="${escapeHtml(story.mediaUrl)}" controls preload="metadata" style="margin-top:8px;width:100%;max-height:180px;border-radius:10px;border:1px solid var(--line)"></video>`
+          : `<img src="${escapeHtml(story.mediaUrl)}" alt="Story media" loading="lazy" style="margin-top:8px;width:100%;max-height:180px;object-fit:cover;border-radius:10px;border:1px solid var(--line)" />`
+        }` : ""}
         <span>${escapeHtml(userName(story.authorId))} · ${story.views.length} views</span>
-        ${story.storyType === "post" ? `<span class="muted">Post ID: ${escapeHtml(story.postId || "")}</span>` : ""}
         ${story.authorId === state.currentUserId || currentUser().role === "admin" ? `<button class="btn small danger" data-action="delete-story" data-id="${story.id}" style="margin-top:10px">Delete</button>` : ""}
       </article>
     `).join("")}</section>
@@ -1593,11 +1594,6 @@ function bindAuth() {
     }
   });
 
-  document.querySelector("#story-type")?.addEventListener("change", (event) => {
-    const isPost = event.target.value === "post";
-    document.querySelector("#story-text-wrap")?.classList.toggle("hidden", isPost);
-    document.querySelector("#story-post-wrap")?.classList.toggle("hidden", !isPost);
-  });
 }
 
 async function handleAction(action, id) {
@@ -1872,16 +1868,17 @@ async function handleAction(action, id) {
     if (user.role === "admin") await refreshReports();
   }
   if (action === "create-story") {
-    const type = String(document.querySelector("#story-type")?.value || "text");
-    const text = document.querySelector("#story-text")?.value?.trim() || "";
-    const postId = String(document.querySelector("#story-post-id")?.value || "");
-    if (type === "post") {
-      if (!postId) return toast("Choose one post");
-      await apiRequest("/stories", { method: "POST", body: JSON.stringify({ postId }) });
-    } else {
-      if (!text) return toast("Enter story text");
-      await apiRequest("/stories", { method: "POST", body: JSON.stringify({ text }) });
+    const caption = document.querySelector("#story-caption")?.value?.trim() || "";
+    const mediaFile = document.querySelector("#story-media-file")?.files?.[0];
+    let mediaUrl = "";
+    let mediaType = "";
+    if (mediaFile) {
+      const [uploaded] = await uploadFiles([mediaFile], { purpose: "story" });
+      mediaUrl = uploaded?.url || "";
+      mediaType = uploaded?.type || mediaFile.type || "";
     }
+    if (!caption && !mediaUrl) return toast("Add a caption, a photo/video, or both");
+    await apiRequest("/stories", { method: "POST", body: JSON.stringify({ caption, mediaUrl, mediaType }) });
     await refreshStories();
   }
   if (action === "view-story") {
@@ -1890,13 +1887,11 @@ async function handleAction(action, id) {
     const story = state.stories.find((item) => item.id === id);
     const views = story?.views?.length ?? 0;
     if (!story) return;
-    if (story.storyType === "post" && story.postId) {
-      deepLinkedPostId = story.postId;
-      view = "single-post";
-      render();
+    if (story.mediaUrl) {
+      openMediaViewer(story.mediaUrl, story.mediaType || "");
       return;
     }
-    showPopup("Story", `${story.text}\n\n${userName(story.authorId)} · ${views} views`);
+    showPopup("Story", `${story.caption || story.text || ""}\n\n${userName(story.authorId)} · ${views} views`);
   }
   if (action === "delete-story") {
     const ok = await askConfirmPopup("Delete Story", "This will remove your story immediately. Continue?", "Delete");
