@@ -3,7 +3,7 @@ const ALLOWED_ORIGINS = ["https://www.shsid.online", "https://shsid.online", "ht
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const EMAIL_CODE_TTL_SECONDS = 15 * 60;
 const EMAIL_CODE_MAX_ATTEMPTS = 5;
-const OTP_LENGTH = 8;
+const OTP_LENGTH = 6;
 const MAX_TEXT_LEN = 10000;
 const MAX_NAME_LEN = 100;
 const MAX_TITLE_LEN = 200;
@@ -180,7 +180,7 @@ async function handleApi(request, env, url, route) {
     const record = JSON.parse(raw);
     if (Date.now() > Number(record.expiresAt || 0)) return json({ error: "Verification code expired" }, 400);
 
-    const codeHash = await sha256Hex(String(body.code || ""));
+    const codeHash = await sha256Hex(String(body.code || "").trim());
     if (codeHash !== record.codeHash) return json({ error: "Invalid verification code" }, 400);
 
     const passwordHash = await hashPassword(password);

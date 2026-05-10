@@ -208,12 +208,14 @@ button {
   background: #fff;
   color: var(--ink);
   font-weight: 650;
+  transition: transform 120ms ease, box-shadow 180ms ease, background-color 180ms ease, border-color 180ms ease;
 }
 
 .btn.primary {
   border-color: var(--nav);
   background: var(--nav);
   color: #fff;
+  box-shadow: 0 8px 20px rgba(23, 32, 51, 0.22);
 }
 
 .btn.danger {
@@ -230,6 +232,22 @@ button {
   min-height: 32px;
   padding: 6px 10px;
   font-size: 13px;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(23, 32, 51, 0.12);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+.btn:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 .segmented {
@@ -275,6 +293,13 @@ button {
   padding: 10px 11px;
   background: #fff;
   color: var(--ink);
+}
+
+.field input:focus,
+.field textarea:focus,
+.field select:focus {
+  outline: 2px solid rgba(37, 99, 235, 0.18);
+  border-color: #7ea8ff;
 }
 
 .field textarea {
@@ -454,6 +479,7 @@ button {
   margin: auto;
   width: min(440px, calc(100vw - 32px));
   padding: 22px;
+  box-shadow: var(--shadow);
 }
 
 .auth-art {
@@ -491,6 +517,7 @@ button {
   background: var(--nav);
   color: #fff;
   box-shadow: var(--shadow);
+  border: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 .modal-backdrop {

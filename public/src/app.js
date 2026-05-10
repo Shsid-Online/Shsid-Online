@@ -534,7 +534,7 @@ function renderAuth() {
   const subtitle = step === "email"
     ? "Returning users can sign in immediately. New accounts get a verification email to any valid address."
     : step === "verify"
-      ? "Enter the verification code we sent to your email."
+      ? "Enter the 6-digit code we sent to your email. If you don't see it, check Spam/Junk."
       : step === "password" && mode === "register"
         ? "Set your password and confirm it to continue."
         : step === "password"
@@ -557,6 +557,7 @@ function renderAuth() {
     <form class="grid" id="auth-verify-form">
       <div class="field"><label>Email</label><input disabled value="${escapeHtml(state.pendingEmail || "")}"></div>
       <div class="field"><label>Verification code</label><input id="auth-code" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code from email" value="${escapeHtml(state.pendingCode || "")}" required></div>
+      <p class="muted" style="margin:-4px 0 6px">Tip: Check your Spam/Junk folder if email takes more than 30 seconds.</p>
       <div class="row">
         <button class="btn primary" type="submit">Continue</button>
         <button class="btn" type="button" data-auth="resend-code" ${resendSeconds > 0 ? "disabled" : ""}>${resendSeconds > 0 ? `Resend (${resendSeconds}s)` : "Resend code"}</button>
@@ -1011,8 +1012,6 @@ function bindAuth() {
     if (authRequestInFlight) return;
     const code = document.querySelector("#auth-code").value.trim();
     if (!code) return toast("Enter the verification code");
-    const confirmed = confirm(`Use this verification code?\n\n${code}`);
-    if (!confirmed) return;
     try {
       setAuthInFlight(true);
       await apiRequest("/auth/verify-code", {
@@ -1063,7 +1062,7 @@ function bindAuth() {
       saveState();
       render();
     } catch (error) {
-      toast(error.message);
+      toast(error.message || "Couldn't create password, please try again");
     }
   });
 
