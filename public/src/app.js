@@ -209,20 +209,13 @@ function normalizeConversation(conversation) {
 }
 
 function classifyConversations() {
-  const userId = currentUser()?.id;
   const all = state.conversations || [];
-  if (!userId) return { inbox: all, requests: [] };
+  if (!state.acceptedRequests || typeof state.acceptedRequests !== "object") state.acceptedRequests = {};
   const inbox = [];
   const requests = [];
   for (const conv of all) {
-    if (state.acceptedRequests?.[conv.id]) {
-      inbox.push(conv);
-      continue;
-    }
-    const mineCount = (conv.messages || []).filter((msg) => msg.authorId === userId).length;
-    const firstAuthor = conv.messages?.[0]?.authorId || "";
-    if (mineCount === 0 && firstAuthor && firstAuthor !== userId) requests.push(conv);
-    else inbox.push(conv);
+    if (state.acceptedRequests?.[conv.id]) inbox.push(conv);
+    else requests.push(conv);
   }
   return { inbox, requests };
 }
@@ -1217,6 +1210,10 @@ function renderMessages() {
   const receiverName = active ? conversationCounterpartName(active) : "No receiver";
   const identityMode = active ? getConversationIdentityMode(active.id) : "public";
   const requestView = conversationTab === "requests";
+  const accepted = active ? Boolean(state.acceptedRequests?.[active.id]) : false;
+  const firstAuthorId = active?.messages?.[0]?.authorId || "";
+  const isReceiverPending = requestView && active && !accepted && firstAuthorId && firstAuthorId !== currentUser().id;
+  const canSendInCurrentThread = !isReceiverPending;
   const counterpartId = active && !active.group ? (active.members || []).find((memberId) => memberId !== currentUser().id) : "";
   const counterpartRemark = counterpartId ? getRemarkForUser(counterpartId) : "";
   return page("Messages", "Real-time style direct and group messaging, anonymous sending, reporting, and admin monitoring.", `
@@ -1238,12 +1235,13 @@ function renderMessages() {
         <div class="grid chat-messages-scroll" style="margin:14px 0">${(active?.messages || []).map((message) => `
           <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} ${(message.media || []).map((item) => renderChatMediaItem(item)).join("")} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${message.authorId === currentUser().id ? `<span class="muted">· receiver sees: ${message.anonymous ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span>` : ""} ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
         `).join("")}</div>
-        ${requestView && active ? `<div class="row" style="margin-bottom:12px"><button class="btn primary" data-action="accept-request" data-id="${active.id}">Accept request</button></div>` : ""}
+        ${requestView && active && !accepted ? `<div class="row" style="margin-bottom:12px"><button class="btn primary" data-action="accept-request" data-id="${active.id}">Accept request</button></div>` : ""}
+        ${isReceiverPending ? `<p class="muted" style="margin:0 0 10px">Accept this request before sending messages.</p>` : ""}
         <div class="field"><label>Message</label><textarea id="message-text" placeholder="Type a message"></textarea></div>
         <div class="field"><label>Photo / Video</label><input id="message-media-file" type="file" accept="image/*,video/*" multiple /></div>
         <p class="muted" style="margin:0">Receiver will see you as: <span id="message-identity-preview">${identityMode === "anonymous" ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span></p>
         <div class="row">
-          <button class="btn primary" data-action="send-message" data-id="${active?.id || ""}">Send</button>
+          <button class="btn primary" data-action="send-message" data-id="${active?.id || ""}" ${canSendInCurrentThread ? "" : "disabled"}>Send</button>
           <button class="btn" data-action="report-message" data-id="${active?.id || ""}">Report</button>
         </div>
       </div>
@@ -1737,6 +1735,10 @@ async function handleAction(action, id) {
     view = "messages";
   }
   if (action === "send-message") {
+    const conversation = state.conversations.find((item) => item.id === id);
+    const accepted = Boolean(state.acceptedRequests?.[id]);
+    const firstAuthorId = conversation?.messages?.[0]?.authorId || "";
+    if (!accepted && firstAuthorId && firstAuthorId !== user.id) return toast("Accept request before replying");
     const text = document.querySelector("#message-text").value.trim();
     const mediaFiles = [...(document.querySelector("#message-media-file")?.files || [])];
     if ((!text && !mediaFiles.length) || !id) return toast("Enter a message or attach media");
