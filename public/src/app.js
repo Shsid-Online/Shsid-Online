@@ -1041,7 +1041,8 @@ function bindAuth() {
   document.querySelector("#auth-verify-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (authRequestInFlight) return;
-    const code = document.querySelector("#auth-code").value.trim();
+    const code = String(document.querySelector("#auth-code").value || "").replace(/[\s-]+/g, "");
+    document.querySelector("#auth-code").value = code;
     if (!code) return toast("Enter the verification code");
     try {
       setAuthInFlight(true);

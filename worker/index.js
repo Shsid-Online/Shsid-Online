@@ -147,7 +147,7 @@ async function handleApi(request, env, url, route) {
 
   if (method === "POST" && route === "/auth/verify-code") {
     const email = String(body.email || "").trim().toLowerCase();
-    const code = String(body.code || "").trim();
+    const code = normalizeVerificationCode(body.code);
     const key = `email:${email}`;
     const raw = await env.SESSIONS.get(key);
     if (!raw) return json({ error: "No verification code was requested for this email" }, 400);
@@ -156,6 +156,7 @@ async function handleApi(request, env, url, route) {
     if (Date.now() > Number(record.expiresAt || 0)) return json({ error: "Verification code expired" }, 400);
     if ((record.attempts || 0) >= EMAIL_CODE_MAX_ATTEMPTS) return json({ error: "Too many invalid attempts" }, 429);
 
+    if (code.length !== OTP_LENGTH) return json({ error: "Invalid verification code" }, 400);
     const codeHash = await sha256Hex(code);
     if (codeHash !== record.codeHash) {
       record.attempts = (record.attempts || 0) + 1;
@@ -180,7 +181,9 @@ async function handleApi(request, env, url, route) {
     const record = JSON.parse(raw);
     if (Date.now() > Number(record.expiresAt || 0)) return json({ error: "Verification code expired" }, 400);
 
-    const codeHash = await sha256Hex(String(body.code || "").trim());
+    const code = normalizeVerificationCode(body.code);
+    if (code.length !== OTP_LENGTH) return json({ error: "Invalid verification code" }, 400);
+    const codeHash = await sha256Hex(code);
     if (codeHash !== record.codeHash) return json({ error: "Invalid verification code" }, 400);
 
     const passwordHash = await hashPassword(password);
@@ -880,6 +883,10 @@ function requireUploadSigningSecret(env) {
     throw new Error("UPLOAD_SIGNING_SECRET is not configured");
   }
   return secret;
+}
+
+function normalizeVerificationCode(value) {
+  return String(value || "").replace(/[\s-]+/g, "");
 }
 
 async function hashPassword(password) {
