@@ -394,7 +394,9 @@ async function handleApi(request, env, url, route) {
 
   if (method === "GET" && route === "/posts") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
-    const postRows = await env.DB.prepare("select * from posts where deleted_at is null order by sticky desc, created_at desc limit 100").all();
+    const { limit, offset } = pageParams(url, 10, 30);
+    const postRows = await env.DB.prepare("select * from posts where deleted_at is null order by sticky desc, created_at desc limit ? offset ?").bind(limit, offset).all();
+    const totalRow = await env.DB.prepare("select count(*) as count from posts where deleted_at is null").first();
     const posts = [];
     for (const post of postRows.results || []) {
       const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
@@ -405,7 +407,8 @@ async function handleApi(request, env, url, route) {
         adminAuthor: authUser.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
       });
     }
-    return json({ posts, pagination: { limit: 100, offset: 0, total: posts.length, nextOffset: null } }, 200);
+    const total = Number(totalRow?.count || 0);
+    return json({ posts, pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null } }, 200);
   }
 
   if (method === "POST" && route === "/posts") {
@@ -563,7 +566,9 @@ async function handleApi(request, env, url, route) {
 
   if (method === "GET" && route === "/reels") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
-    const rows = await env.DB.prepare("select * from reels order by created_at desc limit 100").all();
+    const { limit, offset } = pageParams(url, 10, 30);
+    const rows = await env.DB.prepare("select * from reels order by created_at desc limit ? offset ?").bind(limit, offset).all();
+    const totalRow = await env.DB.prepare("select count(*) as count from reels").first();
     const reels = [];
     for (const r of rows.results || []) {
       const commentCountRow = await env.DB.prepare("select count(*) as count from reel_comments where reel_id=? and deleted_at is null").bind(r.id).first();
@@ -579,7 +584,8 @@ async function handleApi(request, env, url, route) {
         commentCount: Number(commentCountRow?.count || 0)
       });
     }
-    return json({ reels, pagination: { limit: 100, offset: 0, total: reels.length, nextOffset: null } }, 200);
+    const total = Number(totalRow?.count || 0);
+    return json({ reels, pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null } }, 200);
   }
 
   if (method === "POST" && route === "/reels") {
@@ -1105,6 +1111,14 @@ function requireUploadSigningSecret(env) {
     throw new Error("UPLOAD_SIGNING_SECRET is not configured");
   }
   return secret;
+}
+
+function pageParams(url, defaultLimit = 10, maxLimit = 30) {
+  const limitRaw = Number(url.searchParams.get("limit") || defaultLimit);
+  const offsetRaw = Number(url.searchParams.get("offset") || 0);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(maxLimit, Math.floor(limitRaw))) : defaultLimit;
+  const offset = Number.isFinite(offsetRaw) ? Math.max(0, Math.floor(offsetRaw)) : 0;
+  return { limit, offset };
 }
 
 function normalizeVerificationCode(value) {

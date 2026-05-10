@@ -415,6 +415,11 @@ button {
   display: block;
 }
 
+.media-video {
+  object-fit: contain;
+  background: #000;
+}
+
 .media-button {
   border: 0;
   padding: 0;

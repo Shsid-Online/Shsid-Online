@@ -36,6 +36,8 @@ let authEmailSubmitIntent = "login";
 let authRequestInFlight = false;
 let resendCooldownUntil = 0;
 let openCommentPostId = null;
+let postsNextOffset = null;
+let reelsNextOffset = null;
 
 hydrateAuthFromUrl();
 
@@ -194,11 +196,14 @@ function normalizeConversation(conversation) {
   return copy;
 }
 
-async function refreshPosts() {
+async function refreshPosts(reset = true) {
   if (!state.apiToken) return;
   try {
-    const result = await apiRequest("/posts");
-    state.posts = (result.posts || []).map(normalizePost);
+    const offset = reset ? 0 : (postsNextOffset ?? 0);
+    const result = await apiRequest(`/posts?limit=10&offset=${offset}`);
+    const next = (result.posts || []).map(normalizePost);
+    state.posts = reset ? next : [...state.posts, ...next];
+    postsNextOffset = result.pagination?.nextOffset ?? null;
     saveState();
   } catch (error) {
     console.error("refreshPosts failed", error);
@@ -230,15 +235,18 @@ async function refreshStories() {
   }
 }
 
-async function refreshReels() {
+async function refreshReels(reset = true) {
   if (!state.apiToken) return;
   try {
-    const result = await apiRequest("/reels");
-    state.reels = (result.reels || []).map((reel) => ({
+    const offset = reset ? 0 : (reelsNextOffset ?? 0);
+    const result = await apiRequest(`/reels?limit=10&offset=${offset}`);
+    const next = (result.reels || []).map((reel) => ({
       ...reel,
       createdAt: at(reel.createdAt),
       likes: Array.isArray(reel.likes) ? reel.likes : []
     }));
+    state.reels = reset ? next : [...state.reels, ...next];
+    reelsNextOffset = result.pagination?.nextOffset ?? null;
     saveState();
   } catch (error) {
     console.error("refreshReels failed", error);
@@ -864,6 +872,7 @@ function renderFeed() {
       <div class="story-strip">${storyStrip}</div>
     </section>
     <section class="grid">${postsHtml}</section>
+    ${postsNextOffset != null ? `<div class="row" style="justify-content:center"><button class="btn" data-action="load-more-posts">Load more posts</button></div>` : ""}
   `, `<button class="btn primary" data-view="post">New post</button>`);
 }
 
@@ -970,6 +979,7 @@ function renderReels() {
       <button class="btn primary" data-action="create-reel">Publish reel</button>
     </section>
     <section class="reel-feed">${grid}</section>
+    ${reelsNextOffset != null ? `<div class="row" style="justify-content:center"><button class="btn" data-action="load-more-reels">Load more reels</button></div>` : ""}
   `);
 }
 
@@ -1137,10 +1147,16 @@ function bindEvents() {
   document.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", async (event) => {
       event.stopPropagation();
+      if (button.dataset.busy === "1") return;
+      button.dataset.busy = "1";
+      button.disabled = true;
       try {
         await handleAction(button.dataset.action, button.dataset.id);
       } catch (error) {
         toast(error.message || "Action failed");
+      } finally {
+        button.dataset.busy = "0";
+        button.disabled = false;
       }
     });
   });
@@ -1370,6 +1386,10 @@ async function handleAction(action, id) {
     view = "feed";
     toast("Post published");
   }
+  if (action === "load-more-posts") {
+    if (postsNextOffset == null) return;
+    await refreshPosts(false);
+  }
   if (action === "like-post") {
     const result = await apiRequest(`/posts/${id}/like`, { method: "POST", body: JSON.stringify({}) });
     const idx = state.posts.findIndex((item) => item.id === id);
@@ -1501,6 +1521,10 @@ async function handleAction(action, id) {
     view = "reels";
     toast("Reel published");
   }
+  if (action === "load-more-reels") {
+    if (reelsNextOffset == null) return;
+    await refreshReels(false);
+  }
   if (action === "like-reel") {
     await apiRequest(`/reels/${id}/like`, { method: "POST", body: JSON.stringify({}) });
     await refreshReels();
@@ -1570,7 +1594,7 @@ function renderPostMedia(item) {
   const type = String(item?.type || "");
   if (!url) return `<div class="media-tile">Media</div>`;
   if (type.startsWith("image/")) return `<button class="media-tile media-button" data-action="open-media" data-id="${escapeHtml(url)}"><img class="media-content" src="${escapeHtml(url)}" alt="Post media" loading="lazy" /></button>`;
-  if (type.startsWith("video/")) return `<button class="media-tile media-button" data-action="open-media" data-id="${escapeHtml(url)}"><video class="media-content" src="${escapeHtml(url)}" preload="metadata" muted></video></button>`;
+  if (type.startsWith("video/")) return `<button class="media-tile media-button" data-action="open-media" data-id="${escapeHtml(url)}"><video class="media-content media-video" src="${escapeHtml(url)}" controls preload="metadata"></video></button>`;
   return `<a class="media-tile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open file</a>`;
 }
 
