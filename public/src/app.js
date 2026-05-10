@@ -218,6 +218,15 @@ function classifyConversations() {
   return { inbox, requests };
 }
 
+function conversationCounterpartName(conversation) {
+  const me = currentUser();
+  if (!conversation || !me) return "Unknown";
+  if (conversation.group) return conversation.title || "Group chat";
+  const members = Array.isArray(conversation.members) ? conversation.members : [];
+  const otherId = members.find((id) => id !== me.id);
+  return otherId ? userName(otherId) : (conversation.title || "Direct message");
+}
+
 async function ensureDeepLinkedPostLoaded() {
   if (!deepLinkedPostId || !state.apiToken) return;
   if (state.posts.some((post) => post.id === deepLinkedPostId)) return;
@@ -1125,6 +1134,7 @@ function renderMessages() {
   const { inbox, requests } = classifyConversations();
   const list = conversationTab === "requests" ? requests : inbox;
   const active = list.find((item) => item.id === activeConversationId) || list[0] || inbox[0] || requests[0];
+  const receiverName = active ? conversationCounterpartName(active) : "No receiver";
   return page("Messages", "Real-time style direct and group messaging, anonymous sending, reporting, and admin monitoring.", `
     <section class="grid two">
       <div class="panel">
@@ -1139,8 +1149,9 @@ function renderMessages() {
       </div>
       <div class="panel">
         <div class="between"><strong>${escapeHtml(active?.title || "No conversation")}</strong><span class="chip">Active</span></div>
+        <p class="muted" style="margin:8px 0 0">Receiver: ${escapeHtml(receiverName)}</p>
         <div class="grid" style="margin:14px 0">${(active?.messages || []).map((message) => `
-          <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
+          <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
         `).join("")}</div>
         <div class="field"><label>Message</label><textarea id="message-text" placeholder="Type a message"></textarea></div>
         <div class="row">
@@ -1593,6 +1604,8 @@ async function handleAction(action, id) {
     await refreshQnaForProfile(id);
   }
   if (action === "start-chat") {
+    const target = state.users.find((item) => item.id === id);
+    if (!target || target.role === "admin" || target.status !== "verified") return toast("Only verified students can be messaged");
     const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: [id], group: false }) });
     await refreshConversations();
     activeConversationId = result.conversation.id;
@@ -1620,15 +1633,21 @@ async function handleAction(action, id) {
     activeConversationId = next?.id || activeConversationId;
   }
   if (action === "open-create-convo") {
-    const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin");
+    const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified");
     const popup = showFormPopup("Create Conversation", `
       <form id="create-convo-form" class="grid">
         <div class="field"><label>Title (optional)</label><input id="create-convo-title" placeholder="Conversation title"></div>
         <div class="field">
-          <label>Members</label>
-          <select id="create-convo-members" multiple size="8" required>
-            ${choices.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.englishName)}</option>`).join("")}
-          </select>
+          <label>Find verified students</label>
+          <input id="create-convo-search" placeholder="Search by name, grade, class" />
+        </div>
+        <div id="create-convo-list" class="grid" style="max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px">
+          ${choices.map((item) => `
+            <label class="row" style="justify-content:flex-start;gap:10px;padding:6px;border-radius:8px">
+              <input type="checkbox" value="${escapeHtml(item.id)}" data-convo-member />
+              <span><strong>${escapeHtml(item.englishName)}</strong> <span class="muted">· G${item.grade} C${item.classNo}</span></span>
+            </label>
+          `).join("") || `<p class="muted">No verified students available.</p>`}
         </div>
         <div class="row">
           <button class="btn primary" type="submit">Create</button>
@@ -1637,9 +1656,17 @@ async function handleAction(action, id) {
       </form>
     `);
     popup.querySelector("[data-cancel]")?.addEventListener("click", () => popup.remove());
+    popup.querySelector("#create-convo-search")?.addEventListener("input", (event) => {
+      const query = String(event.target.value || "").trim().toLowerCase();
+      popup.querySelectorAll("[data-convo-member]").forEach((input) => {
+        const row = input.closest("label");
+        const text = row?.textContent?.toLowerCase() || "";
+        row.style.display = !query || text.includes(query) ? "" : "none";
+      });
+    });
     popup.querySelector("#create-convo-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const memberIds = [...popup.querySelector("#create-convo-members").selectedOptions].map((option) => option.value).filter(Boolean);
+      const memberIds = [...popup.querySelectorAll("[data-convo-member]:checked")].map((input) => input.value).filter(Boolean);
       if (!memberIds.length) return toast("Select at least one member");
       const title = String(popup.querySelector("#create-convo-title").value || "").trim();
       const payload = { memberIds, group: memberIds.length > 1, title: title || undefined };
