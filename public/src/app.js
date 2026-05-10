@@ -524,6 +524,36 @@ function openMediaViewer(url, type = "") {
   return popup;
 }
 
+function showSharePopup(url, text = "") {
+  const popup = showFormPopup("Share Post", `
+    <div class="grid">
+      <div class="field">
+        <label>Share link</label>
+        <input id="share-link-input" value="${escapeHtml(url)}" readonly />
+      </div>
+      ${text ? `<p class="muted" style="margin:0">${escapeHtml(text)}</p>` : ""}
+      <div class="row">
+        <button class="btn primary" type="button" data-copy-share>Copy link</button>
+        <a class="btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open</a>
+        ${navigator.share ? `<button class="btn" type="button" data-native-share>System Share</button>` : ""}
+      </div>
+    </div>
+  `);
+  popup.querySelector("[data-copy-share]")?.addEventListener("click", async () => {
+    const input = popup.querySelector("#share-link-input");
+    const value = input?.value || url;
+    await navigator.clipboard.writeText(value);
+    toast("Post link copied");
+  });
+  popup.querySelector("[data-native-share]")?.addEventListener("click", async () => {
+    try {
+      await navigator.share({ title: "SHSID Social Post", text, url });
+    } catch {
+      // user cancelled
+    }
+  });
+}
+
 function showFormPopup(title, bodyHtml) {
   document.querySelector("#site-form-popup")?.remove();
   const node = document.createElement("div");
@@ -1424,16 +1454,7 @@ async function handleAction(action, id) {
     const shareUrl = `${window.location.origin}/?post=${encodeURIComponent(id)}`;
     const post = state.posts.find((item) => item.id === id);
     const text = post?.text ? post.text.slice(0, 120) : "Check this post";
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: "SHSID Social Post", text, url: shareUrl });
-      } catch {
-        // user cancelled
-      }
-    } else {
-      await navigator.clipboard.writeText(shareUrl);
-      toast("Post link copied");
-    }
+    showSharePopup(shareUrl, text);
   }
   if (action === "toggle-sticky") {
     const post = state.posts.find((item) => item.id === id);
