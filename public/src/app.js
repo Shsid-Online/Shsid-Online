@@ -244,6 +244,17 @@ function getRemarkForUser(userId) {
   return String(state.contactRemarks?.[userId] || "").trim();
 }
 
+function shouldHideCounterpartIdentity(conversation) {
+  const me = currentUser();
+  if (!conversation || !me || me.role === "admin") return false;
+  const members = Array.isArray(conversation.members) ? conversation.members : [];
+  if (members.length !== 2) return false;
+  const latest = (conversation.messages || [])[conversation.messages.length - 1];
+  if (!latest) return false;
+  const sentByOther = latest.authorId && latest.authorId !== me.id;
+  return sentByOther && Boolean(latest.anonymous);
+}
+
 function setRemarkForUser(userId, remark) {
   if (!userId) return;
   if (!state.contactRemarks || typeof state.contactRemarks !== "object") state.contactRemarks = {};
@@ -257,6 +268,7 @@ function conversationCounterpartName(conversation) {
   const me = currentUser();
   if (!conversation || !me) return "Unknown";
   if (conversation.group) return conversation.title || "Group chat";
+  if (shouldHideCounterpartIdentity(conversation)) return "Anonymous student";
   const members = Array.isArray(conversation.members) ? conversation.members : [];
   const otherId = members.find((id) => id !== me.id);
   const baseName = otherId ? userName(otherId) : (conversation.title || "Direct message");
