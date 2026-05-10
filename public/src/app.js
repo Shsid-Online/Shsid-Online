@@ -145,7 +145,7 @@ function clearAuthDraftState() {
 
 function setAuthInFlight(isBusy) {
   authRequestInFlight = isBusy;
-  document.querySelectorAll("#auth-email-form button, #auth-verify-form button, #auth-password-form button").forEach((button) => {
+  document.querySelectorAll("#auth-email-form button, #auth-verify-form button, #auth-password-form button, #auth-profile-form button, #auth-video-form button").forEach((button) => {
     button.disabled = isBusy;
   });
 }
@@ -1120,10 +1120,12 @@ function bindAuth() {
   document.querySelector("#auth-video-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
+      setAuthInFlight(true);
       const videoFile = document.querySelector("#reg-video").files[0];
       if (!videoFile) return toast("Upload a verification video");
+      if (!(videoFile.type || "").startsWith("video/")) return toast("Please upload a valid video file.");
       state.pendingVideoName = videoFile.name;
-      const [uploadedVideo] = await uploadFiles([videoFile]);
+      const [uploadedVideo] = await uploadFiles([videoFile], { purpose: "verification" });
       const result = await apiRequest("/auth/complete-profile", {
         method: "POST",
         body: JSON.stringify({
@@ -1140,7 +1142,9 @@ function bindAuth() {
       render();
       toast("Submitted for admin review");
     } catch (error) {
-      toast(error.message);
+      toast(error.message || "Video upload failed. Please try again.");
+    } finally {
+      setAuthInFlight(false);
     }
   });
 }
@@ -1332,19 +1336,29 @@ function renderPostMedia(item) {
   return `<a class="media-tile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open file</a>`;
 }
 
-async function uploadFiles(files) {
+async function uploadFiles(files, options = {}) {
+  const purpose = options.purpose || "media";
   const uploaded = [];
   for (const file of files) {
     const sign = await apiRequest("/upload-url", {
       method: "POST",
-      body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream" })
+      body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", purpose })
     });
     const response = await fetch(sign.uploadUrl, {
       method: "PUT",
       headers: { "content-type": file.type || "application/octet-stream" },
       body: file
     });
-    if (!response.ok) throw new Error(`Upload failed for ${file.name}`);
+    if (!response.ok) {
+      let reason = "";
+      try {
+        const body = await response.json();
+        reason = body?.error || body?.detail || "";
+      } catch {
+        reason = await response.text();
+      }
+      throw new Error(reason ? `Upload failed (${file.name}): ${reason}` : `Upload failed (${file.name})`);
+    }
     uploaded.push({
       url: sign.mediaUrl,
       type: file.type || "application/octet-stream",

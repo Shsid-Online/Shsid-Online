@@ -11,6 +11,7 @@ const MAX_REASON_LEN = 1000;
 const MAX_CATEGORY_LEN = 50;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const UPLOAD_TTL_SECONDS = 10 * 60;
+const VERIFICATION_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 const ALLOWED_UPLOAD_TYPES = [
   "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
   "video/mp4", "video/webm", "video/quicktime",
@@ -55,11 +56,16 @@ async function handleApi(request, env, url, route) {
   if (method === "POST" && route === "/upload-url") {
     const fileName = safeName(String(body.fileName || "").trim());
     const contentType = String(body.contentType || "application/octet-stream").trim().toLowerCase();
+    const purpose = String(body.purpose || "media").trim().toLowerCase();
     if (!fileName) return json({ error: "fileName is required" }, 400);
-    if (!ALLOWED_UPLOAD_TYPES.includes(contentType)) return json({ error: "Unsupported file type" }, 415);
+    if (purpose === "verification") {
+      if (!contentType.startsWith("video/")) return json({ error: "Verification upload must be a video file" }, 415);
+    } else if (!ALLOWED_UPLOAD_TYPES.includes(contentType)) {
+      return json({ error: "Unsupported file type" }, 415);
+    }
 
-    const key = `uploads/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
-    const expiresAt = Math.floor(Date.now() / 1000) + UPLOAD_TTL_SECONDS;
+    const key = `${purpose === "verification" ? "verification" : "uploads"}/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+    const expiresAt = Math.floor(Date.now() / 1000) + (purpose === "verification" ? VERIFICATION_UPLOAD_TTL_SECONDS : UPLOAD_TTL_SECONDS);
     const uploadSecret = requireUploadSigningSecret(env);
     const token = await signToken(uploadSecret, `${key}:${expiresAt}`);
     const uploadUrl = `${url.origin}/upload/${encodeURIComponent(key)}?exp=${expiresAt}&token=${token}`;
@@ -78,10 +84,15 @@ async function handleApi(request, env, url, route) {
     const expected = await signToken(uploadSecret, `${key}:${exp}`);
     if (!timingSafeEqual(token, expected)) return json({ error: "Invalid upload signature" }, 401);
 
+    const isVerificationUpload = key.startsWith("verification/");
     const contentLength = Number(request.headers.get("content-length") || "0");
-    if (contentLength > MAX_UPLOAD_BYTES) return json({ error: "File too large. Max 25 MiB." }, 413);
+    if (!isVerificationUpload && contentLength > MAX_UPLOAD_BYTES) return json({ error: "File too large. Max 25 MiB." }, 413);
     const contentType = (request.headers.get("content-type") || "application/octet-stream").toLowerCase();
-    if (!ALLOWED_UPLOAD_TYPES.includes(contentType)) return json({ error: "Unsupported file type" }, 415);
+    if (isVerificationUpload) {
+      if (!contentType.startsWith("video/")) return json({ error: "Verification upload must be a video file" }, 415);
+    } else if (!ALLOWED_UPLOAD_TYPES.includes(contentType)) {
+      return json({ error: "Unsupported file type" }, 415);
+    }
 
     await env.R2_BUCKET.put(key, request.body, { httpMetadata: { contentType } });
     return json({ ok: true, key }, 200);

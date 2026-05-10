@@ -4,7 +4,9 @@
   --muted: #667085;
   --line: #d8deea;
   --paper: #ffffff;
-  --bg: #f5f7fb;
+  --bg: radial-gradient(1200px 700px at 10% -10%, #d9e7ff 0%, rgba(217, 231, 255, 0) 48%),
+    radial-gradient(1100px 640px at 100% 0%, #ffe8d6 0%, rgba(255, 232, 214, 0) 46%),
+    #f5f7fb;
   --nav: #172033;
   --gold: #f0b429;
   --green: #1f9d55;
@@ -178,9 +180,10 @@ button {
 .auth-card,
 .modal {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--paper);
-  box-shadow: 0 1px 0 rgba(23, 32, 51, 0.03);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.9));
+  box-shadow: 0 16px 34px rgba(23, 32, 51, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(8px);
 }
 
 .panel,
@@ -203,7 +206,7 @@ button {
   gap: 8px;
   min-height: 38px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 8px 12px;
   background: #fff;
   color: var(--ink);
@@ -215,7 +218,8 @@ button {
   border-color: var(--nav);
   background: var(--nav);
   color: #fff;
-  box-shadow: 0 8px 20px rgba(23, 32, 51, 0.22);
+  box-shadow: 0 10px 24px rgba(23, 32, 51, 0.25);
+  background-image: linear-gradient(135deg, #172033, #22385f);
 }
 
 .btn.danger {
@@ -486,15 +490,16 @@ button {
   display: grid;
   align-content: end;
   padding: 48px;
-  background: linear-gradient(135deg, #172033, #0f766e 52%, #f0b429);
+  background: linear-gradient(140deg, #0f1b32 0%, #124968 48%, #eaa945 100%);
   color: #fff;
 }
 
 .auth-art h1 {
   margin: 0;
   max-width: 720px;
-  font-size: 56px;
+  font-size: 58px;
   line-height: 1;
+  letter-spacing: -0.02em;
 }
 
 .auth-art p {
@@ -512,7 +517,7 @@ button {
   bottom: 22px;
   transform: translateX(-50%);
   z-index: 20;
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 12px 14px;
   background: var(--nav);
   color: #fff;
