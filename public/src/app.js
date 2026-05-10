@@ -878,11 +878,10 @@ function renderReels() {
 
 function renderStudents() {
   return page("Students", "Browse verified classmates, follow profiles, message students, and ask Q&A box questions.", `
-    <section class="grid two">${state.users.filter((u) => u.role !== "admin").map((user) => `
+    <section class="grid two">${state.users.filter((u) => u.role !== "admin" && u.status === "verified").map((user) => `
       <article class="panel" data-action="view-profile" data-id="${user.id}" style="cursor:pointer">
         <div class="between">
           <div class="row"><div class="avatar">${initials(user)}</div><div><strong>${escapeHtml(user.englishName)}</strong><div class="muted">Grade ${user.grade}, Class ${user.classNo} · ${escapeHtml(user.chineseName)}</div></div></div>
-          <span class="status ${user.status === "verified" ? "green" : "gold"}">${user.status}</span>
         </div>
         <p>${escapeHtml(user.bio)}</p>
         <div class="row">
