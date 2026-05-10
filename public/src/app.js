@@ -443,6 +443,27 @@ function toast(message) {
   setTimeout(() => node.remove(), 2200);
 }
 
+function showPopup(title, message) {
+  document.querySelector("#site-popup")?.remove();
+  const node = document.createElement("div");
+  node.id = "site-popup";
+  node.className = "modal-backdrop";
+  node.innerHTML = `
+    <div class="modal">
+      <div class="between" style="margin-bottom:10px">
+        <strong>${escapeHtml(title)}</strong>
+        <button class="btn small" type="button" data-close-popup>Close</button>
+      </div>
+      <p class="muted" style="margin:0">${escapeHtml(message)}</p>
+    </div>
+  `;
+  document.body.appendChild(node);
+  node.querySelector("[data-close-popup]")?.addEventListener("click", () => node.remove());
+  node.addEventListener("click", (event) => {
+    if (event.target === node) node.remove();
+  });
+}
+
 function startResendCooldown(seconds = 30) {
   resendCooldownUntil = Date.now() + seconds * 1000;
 }
@@ -476,7 +497,12 @@ async function handleEmailAuthIntent(intent) {
     saveState();
     render();
     startResendCooldown(30);
-    toast(result.devCode ? `Dev OTP: ${result.devCode}` : "Verification code sent to your email");
+    showPopup(
+      "Verification Code Sent",
+      result.devCode
+        ? `Dev mode code: ${result.devCode}`
+        : "We sent a verification code to your email. If you do not see it, check Spam/Junk."
+    );
     return;
   }
   state.pendingEmail = email;
@@ -975,7 +1001,12 @@ function bindAuth() {
           setAuthInFlight(true);
           const result = await apiRequest("/auth/start", { method: "POST", body: JSON.stringify({ email }) });
           startResendCooldown(30);
-          toast(result.devCode ? `Dev OTP: ${result.devCode}` : "Verification code resent to your email");
+          showPopup(
+            "Verification Code Resent",
+            result.devCode
+              ? `Dev mode code: ${result.devCode}`
+              : "A new verification code has been sent. Check Spam/Junk if it does not arrive soon."
+          );
           setAuthInFlight(false);
           render();
         }
