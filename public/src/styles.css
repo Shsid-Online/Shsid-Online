@@ -457,12 +457,13 @@ button {
   width: 100%;
   border-collapse: collapse;
   font-size: 14px;
+  min-width: 720px;
 }
 
 .table th,
 .table td {
   border-bottom: 1px solid var(--line);
-  padding: 10px 8px;
+  padding: 12px 10px;
   text-align: left;
   vertical-align: top;
 }
@@ -471,6 +472,33 @@ button {
   color: #475467;
   font-size: 12px;
   text-transform: uppercase;
+  position: sticky;
+  top: 0;
+  background: #f9fbff;
+  z-index: 1;
+}
+
+.admin-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-panel h2 {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .auth-screen {

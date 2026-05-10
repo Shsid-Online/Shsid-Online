@@ -875,29 +875,35 @@ function renderAdmin() {
   if (currentUser().role !== "admin") return page("Unavailable", "Admin access required.", "");
   const pending = state.adminVerifications || [];
   return page("Admin", "Verification, reports, bans, audit trails, anonymous author visibility, and compliance exports.", `
-    <section class="grid">
+    <section class="admin-grid">
       <div class="grid three">
         <div class="panel"><span class="muted">Pending verification</span><h2>${pending.length}</h2></div>
         <div class="panel"><span class="muted">Open reports</span><h2>${state.reports.filter((r) => r.status === "pending").length}</h2></div>
         <div class="panel"><span class="muted">Audit events</span><h2>${state.audit.length}</h2></div>
       </div>
-      <div class="panel">
+      <div class="panel admin-panel">
         <h2>Student Verification Queue</h2>
-        <table class="table"><thead><tr><th>Student</th><th>Status</th><th>Video</th><th>Actions</th></tr></thead><tbody>
-          ${pending.map((user) => `<tr><td>${escapeHtml(user.englishName)}<br><span class="muted">${escapeHtml(user.chineseName)} · G${user.grade} C${user.classNo}</span></td><td><span class="status gold">${user.status}</span></td><td>${user.verificationVideo ? `<span class="chip">${escapeHtml(user.verificationVideo)}</span>` : `<span class="muted">No video file</span>`}</td><td><button class="btn small primary" data-action="verify-user" data-id="${user.id}">Approve</button> <button class="btn small danger" data-action="reject-user" data-id="${user.id}">Reject</button></td></tr>`).join("") || `<tr><td colspan="4" class="muted">No pending students.</td></tr>`}
-        </tbody></table>
+        <div class="table-wrap">
+          <table class="table"><thead><tr><th>Student</th><th>Status</th><th>Video</th><th>Actions</th></tr></thead><tbody>
+            ${pending.map((user) => `<tr><td>${escapeHtml(user.englishName)}<br><span class="muted">${escapeHtml(user.chineseName)} · G${user.grade} C${user.classNo}</span></td><td><span class="status gold">${user.status}</span></td><td>${user.verificationVideo ? `<span class="chip">${escapeHtml(user.verificationVideo)}</span>` : `<span class="muted">No video file</span>`}</td><td><div class="admin-actions"><button class="btn small primary" data-action="verify-user" data-id="${user.id}">Approve</button><button class="btn small danger" data-action="reject-user" data-id="${user.id}">Reject</button></div></td></tr>`).join("") || `<tr><td colspan="4" class="muted">No pending students.</td></tr>`}
+          </tbody></table>
+        </div>
       </div>
-      <div class="panel">
+      <div class="panel admin-panel">
         <h2>Report Queue</h2>
-        <table class="table"><thead><tr><th>Type</th><th>Reason</th><th>Reporter</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-          ${state.reports.map((report) => `<tr><td>${escapeHtml(report.type)}</td><td>${escapeHtml(report.reason)}</td><td>${escapeHtml(userName(report.reporterId))}</td><td>${escapeHtml(report.status)}</td><td><button class="btn small" data-action="resolve-report" data-id="${report.id}">Resolve</button></td></tr>`).join("")}
-        </tbody></table>
+        <div class="table-wrap">
+          <table class="table"><thead><tr><th>Type</th><th>Reason</th><th>Reporter</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+            ${state.reports.map((report) => `<tr><td>${escapeHtml(report.type)}</td><td>${escapeHtml(report.reason)}</td><td>${escapeHtml(userName(report.reporterId))}</td><td>${escapeHtml(report.status)}</td><td><div class="admin-actions"><button class="btn small" data-action="resolve-report" data-id="${report.id}">Resolve</button></div></td></tr>`).join("")}
+          </tbody></table>
+        </div>
       </div>
-      <div class="panel">
+      <div class="panel admin-panel">
         <h2>Audit Trail</h2>
-        <table class="table"><thead><tr><th>User</th><th>Action</th><th>IP</th><th>Time</th></tr></thead><tbody>
-          ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}</td><td>${escapeHtml(item.action)}</td><td>${escapeHtml(item.ip)}</td><td>${timeAgo(item.createdAt)} ago</td></tr>`).join("")}
-        </tbody></table>
+        <div class="table-wrap">
+          <table class="table"><thead><tr><th>User</th><th>Action</th><th>IP</th><th>Time</th></tr></thead><tbody>
+            ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}</td><td>${escapeHtml(item.action)}</td><td>${escapeHtml(item.ip)}</td><td>${timeAgo(item.createdAt)} ago</td></tr>`).join("")}
+          </tbody></table>
+        </div>
       </div>
     </section>
   `);
