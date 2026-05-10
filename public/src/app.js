@@ -212,7 +212,11 @@ function normalizeConversation(conversation) {
 }
 
 function classifyConversations() {
-  const all = state.conversations || [];
+  const meId = currentUser()?.id;
+  const all = (state.conversations || []).filter((conv) => {
+    const members = Array.isArray(conv?.members) ? conv.members : [];
+    return !meId || members.includes(meId);
+  });
   if (!state.acceptedRequests || typeof state.acceptedRequests !== "object") state.acceptedRequests = {};
   const inbox = [];
   const requests = [];
