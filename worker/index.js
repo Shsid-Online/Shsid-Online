@@ -94,7 +94,16 @@ async function handleApi(request, env, url, route) {
       return json({ error: "Unsupported file type" }, 415);
     }
 
-    await env.R2_BUCKET.put(key, request.body, { httpMetadata: { contentType } });
+    try {
+      await env.R2_BUCKET.put(key, request.body, { httpMetadata: { contentType } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const lower = message.toLowerCase();
+      if (lower.includes("too large") || lower.includes("entity too large") || lower.includes("request body") || lower.includes("resource limits")) {
+        return json({ error: "Verification video is too large for current Cloudflare upload limits. Please compress the file and try again." }, 413);
+      }
+      return json({ error: "Upload storage failed", detail: message }, 502);
+    }
     return json({ ok: true, key }, 200);
   }
 
