@@ -476,6 +476,18 @@ async function handleApi(request, env, url, route) {
     return json({ comment: fromDbComment(comment) }, 201);
   }
 
+  const postCommentDeleteMatch = route.match(/^\/posts\/([^/]+)\/comments\/([^/]+)$/);
+  if (method === "DELETE" && postCommentDeleteMatch) {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    const postId = postCommentDeleteMatch[1];
+    const commentId = postCommentDeleteMatch[2];
+    const comment = await env.DB.prepare("select * from comments where id=? and post_id=? and deleted_at is null").bind(commentId, postId).first();
+    if (!comment) return json({ error: "Not found" }, 404);
+    await env.DB.prepare("update comments set deleted_at=? where id=?").bind(now(), comment.id).run();
+    await audit(env, authUser.id, "comment_deleted", { postId, commentId }, request);
+    return json({ ok: true }, 200);
+  }
+
   const postMatch = route.match(/^\/posts\/([^/]+)$/);
   if (postMatch && (method === "PATCH" || method === "DELETE")) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);

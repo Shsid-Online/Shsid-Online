@@ -899,7 +899,12 @@ function renderPost(post) {
       </div>
       <div class="post-text">${escapeHtml(post.text || "")}</div>
       ${media.length ? `<div class="media-grid">${media.slice(0, 9).map((item) => renderPostMedia(item)).join("")}</div>` : ""}
-      ${(post.comments || []).map((comment) => `<p class="comment"><strong>${escapeHtml(userName(comment.authorId, comment.anonymous))}:</strong> ${escapeHtml(comment.text)}</p>`).join("")}
+      ${(post.comments || []).map((comment) => `
+        <p class="comment">
+          <strong>${escapeHtml(userName(comment.authorId, comment.anonymous))}:</strong> ${escapeHtml(comment.text)}
+          ${currentUser().role === "admin" ? `<button class="btn small danger" style="margin-left:8px" data-action="delete-comment" data-id="${post.id}:${comment.id}">Delete</button>` : ""}
+        </p>
+      `).join("")}
       ${openCommentPostId === post.id ? `
         <div class="comment-composer">
           <textarea id="comment-text-${post.id}" placeholder="Write a comment..."></textarea>
@@ -1441,6 +1446,16 @@ async function handleAction(action, id) {
     if (!ok) return;
     await apiRequest(`/posts/${id}`, { method: "DELETE" });
     await refreshPosts();
+    toast("Post deleted");
+  }
+  if (action === "delete-comment") {
+    const [postId, commentId] = String(id || "").split(":");
+    if (!postId || !commentId) return;
+    const ok = await askConfirmPopup("Delete Comment", "This will remove the comment. Continue?", "Delete");
+    if (!ok) return;
+    await apiRequest(`/posts/${postId}/comments/${commentId}`, { method: "DELETE" });
+    await refreshPosts();
+    toast("Comment deleted");
   }
   if (action === "follow") {
     const result = await apiRequest(`/users/${id}/follow`, { method: "POST", body: JSON.stringify({}) });
