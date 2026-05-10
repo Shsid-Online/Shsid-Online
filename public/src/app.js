@@ -1188,9 +1188,10 @@ function renderPost(post) {
       <div class="post-text">${escapeHtml(post.text || "")}</div>
       ${media.length ? `
         <div class="media-carousel">
-          ${media.length > 1 ? `<button class="media-nav prev" data-action="media-prev" data-id="${post.id}">&#8249;</button>` : ""}
+          ${media.length > 1 ? `<button class="media-nav prev" type="button" data-action="media-prev" data-id="${post.id}" ${mediaIndex === 0 ? "disabled" : ""}>&#8249;</button>` : ""}
           <div class="media-stage">${renderPostMedia(activeMedia)}</div>
-          ${media.length > 1 ? `<button class="media-nav next" data-action="media-next" data-id="${post.id}">&#8250;</button>` : ""}
+          ${media.length > 1 ? `<button class="media-nav next" type="button" data-action="media-next" data-id="${post.id}" ${mediaIndex >= media.length - 1 ? "disabled" : ""}>&#8250;</button>` : ""}
+          ${media.length > 1 ? `<div class="media-dots">${media.map((_, idx) => `<span class="media-dot ${idx === mediaIndex ? "active" : ""}"></span>`).join("")}</div>` : ""}
         </div>
       ` : ""}
       ${(post.comments || []).map((comment) => `
@@ -1776,14 +1777,22 @@ async function handleAction(action, id) {
     const total = post?.media?.length || 0;
     if (!total) return;
     const current = postMediaIndexByPostId[id] || 0;
-    postMediaIndexByPostId[id] = (current - 1 + total) % total;
+    postMediaIndexByPostId[id] = Math.max(0, current - 1);
+    const y = window.scrollY;
+    render();
+    window.scrollTo({ top: y, behavior: "auto" });
+    return;
   }
   if (action === "media-next") {
     const post = state.posts.find((item) => item.id === id);
     const total = post?.media?.length || 0;
     if (!total) return;
     const current = postMediaIndexByPostId[id] || 0;
-    postMediaIndexByPostId[id] = (current + 1) % total;
+    postMediaIndexByPostId[id] = Math.min(total - 1, current + 1);
+    const y = window.scrollY;
+    render();
+    window.scrollTo({ top: y, behavior: "auto" });
+    return;
   }
   if (action === "comment-post") {
     openCommentPostId = openCommentPostId === id ? null : id;

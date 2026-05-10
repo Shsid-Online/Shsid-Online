@@ -454,6 +454,24 @@ button {
   right: 20px;
 }
 
+.media-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.media-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.media-dot.active {
+  background: #334155;
+}
+
 .media-viewer {
   width: min(92vw, 980px);
   max-height: 80vh;
