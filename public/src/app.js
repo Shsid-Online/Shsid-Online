@@ -622,7 +622,7 @@ function renderAuth() {
         </p>
       </div>
       <div class="field"><label>Verification video</label><input id="reg-video" type="file" accept="video/*" required></div>
-      <p class="muted">${state.pendingVideoName ? `Selected: ${escapeHtml(state.pendingVideoName)}` : "Please upload a 10-15 second video."}</p>
+      <p class="muted">${state.pendingVideoName ? `Selected: ${escapeHtml(state.pendingVideoName)}` : "Please upload your verification video."}</p>
       <div class="row">
         <button class="btn primary" type="submit">Submit verification</button>
       </div>
