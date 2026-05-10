@@ -48,6 +48,8 @@ let adminActiveConversationId = "";
 let liveChatTimer = null;
 let liveChatPollInFlight = false;
 let liveChatSnapshot = "";
+let uploadUi = { active: false, label: "", percent: 0 };
+const postMediaIndexByPostId = {};
 
 hydrateAuthFromUrl();
 
@@ -897,9 +899,34 @@ function render() {
         ${visibleNav.slice(0, 5).map(([id, icon, label]) => `<button class="${view === id ? "active" : ""}" data-view="${id}"><strong>${icon}</strong><br>${label}</button>`).join("")}
       </nav>
     </div>
+    ${uploadUi.active ? renderUploadOverlay() : ""}
   `;
   bindEvents();
   syncLiveChatLoop();
+}
+
+function renderUploadOverlay() {
+  const pct = Math.max(0, Math.min(100, Number(uploadUi.percent || 0)));
+  return `
+    <div class="upload-overlay">
+      <div class="upload-card">
+        <div class="upload-ring" style="--pct:${pct}">
+          <div class="upload-ring-inner">${Math.round(pct)}%</div>
+        </div>
+        <strong>${escapeHtml(uploadUi.label || "Uploading...")}</strong>
+      </div>
+    </div>
+  `;
+}
+
+function setUploadProgress(label, percent) {
+  uploadUi = { active: true, label: String(label || "Uploading..."), percent: Number(percent || 0) };
+  render();
+}
+
+function clearUploadProgress() {
+  uploadUi = { active: false, label: "", percent: 0 };
+  render();
 }
 
 function conversationsSnapshot() {
@@ -1021,7 +1048,12 @@ function renderAuth() {
           My 10 words are: ${escapeHtml((state.pendingVerificationWords || []).join(", "))}.
         </p>
       </div>
-      <div class="field"><label>Verification video</label><input id="reg-video" type="file" accept="video/*" required></div>
+      <div class="field">
+        <label>Verification video</label>
+        <div id="verify-dropzone" class="dropzone">Drag and drop verification video here, or click to pick file.</div>
+        <input id="reg-video" type="file" accept="video/*" required>
+        <div id="verify-file-chips" class="file-chips"></div>
+      </div>
       <p class="muted">${state.pendingVideoName ? `Selected: ${escapeHtml(state.pendingVideoName)}` : "Please upload your verification video."}</p>
       <div class="row">
         <button class="btn primary" type="submit">Submit verification</button>
@@ -1139,6 +1171,8 @@ function renderPost(post) {
   const likes = post.likes || [];
   const liked = likes.includes(state.currentUserId);
   const media = post.media || [];
+  const mediaIndex = Math.max(0, Math.min((postMediaIndexByPostId[post.id] || 0), Math.max(0, media.length - 1)));
+  const activeMedia = media.length ? media[mediaIndex] : null;
   return `
     <article class="card">
       <div class="post-head">
@@ -1152,7 +1186,13 @@ function renderPost(post) {
         </div>
       </div>
       <div class="post-text">${escapeHtml(post.text || "")}</div>
-      ${media.length ? `<div class="media-grid">${media.slice(0, 9).map((item) => renderPostMedia(item)).join("")}</div>` : ""}
+      ${media.length ? `
+        <div class="media-carousel">
+          ${media.length > 1 ? `<button class="media-nav prev" data-action="media-prev" data-id="${post.id}">&#8249;</button>` : ""}
+          <div class="media-stage">${renderPostMedia(activeMedia)}</div>
+          ${media.length > 1 ? `<button class="media-nav next" data-action="media-next" data-id="${post.id}">&#8250;</button>` : ""}
+        </div>
+      ` : ""}
       ${(post.comments || []).map((comment) => `
         <p class="comment">
           <strong>${escapeHtml(userName(comment.authorId, comment.anonymous))}:</strong> ${escapeHtml(comment.text)}
@@ -1191,7 +1231,12 @@ function renderComposer() {
         <div class="field"><label>Category</label><select id="post-category"><option>lifestyle</option><option>gaming</option><option>academic</option><option>school</option><option>shitpost</option></select></div>
         <div class="field"><label>Visibility</label><select id="post-anon"><option value="false">Public</option><option value="true">Anonymous</option></select></div>
       </div>
-      <div class="field"><label>Media uploads</label><input id="post-media" type="file" multiple accept="image/*,video/*"></div>
+      <div class="field">
+        <label>Media uploads</label>
+        <div id="post-dropzone" class="dropzone">Drag and drop photos/videos here, or click to pick files.</div>
+        <input id="post-media" type="file" multiple accept="image/*,video/*">
+        <div id="post-file-chips" class="file-chips"></div>
+      </div>
       <button class="btn primary" data-action="create-post">Publish</button>
     </section>
   `);
@@ -1311,7 +1356,12 @@ function renderStories() {
   return page("Stories", "24-hour stories with viewers and archives planned for production retention.", `
     <section class="composer" style="margin-bottom:16px">
       <div class="field"><label>Caption (optional)</label><input id="story-caption" placeholder="Add a caption (or leave empty)" /></div>
-      <div class="field"><label>Photo or video (optional)</label><input id="story-media-file" type="file" accept="image/*,video/*" /></div>
+      <div class="field">
+        <label>Photo or video (optional)</label>
+        <div id="story-dropzone" class="dropzone">Drag and drop a photo/video here, or click to pick file.</div>
+        <input id="story-media-file" type="file" accept="image/*,video/*" />
+        <div id="story-file-chips" class="file-chips"></div>
+      </div>
       <button class="btn primary" data-action="create-story">Post story</button>
     </section>
     <section class="grid three">${state.stories.map((story) => `
@@ -1474,6 +1524,11 @@ function bindEvents() {
       }
     });
   });
+
+  setupDropzone("post-dropzone", "post-media", true);
+  setupDropzone("story-dropzone", "story-media-file", false);
+  bindFileChips("post-media", "post-file-chips");
+  bindFileChips("story-media-file", "story-file-chips");
 
 }
 
@@ -1669,6 +1724,9 @@ function bindAuth() {
     }
   });
 
+  setupDropzone("verify-dropzone", "reg-video", false);
+  bindFileChips("reg-video", "verify-file-chips");
+
 }
 
 async function handleAction(action, id) {
@@ -1712,6 +1770,20 @@ async function handleAction(action, id) {
     const result = await apiRequest(`/posts/${id}/like`, { method: "POST", body: JSON.stringify({}) });
     const idx = state.posts.findIndex((item) => item.id === id);
     if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+  }
+  if (action === "media-prev") {
+    const post = state.posts.find((item) => item.id === id);
+    const total = post?.media?.length || 0;
+    if (!total) return;
+    const current = postMediaIndexByPostId[id] || 0;
+    postMediaIndexByPostId[id] = (current - 1 + total) % total;
+  }
+  if (action === "media-next") {
+    const post = state.posts.find((item) => item.id === id);
+    const total = post?.media?.length || 0;
+    if (!total) return;
+    const current = postMediaIndexByPostId[id] || 0;
+    postMediaIndexByPostId[id] = (current + 1) % total;
   }
   if (action === "comment-post") {
     openCommentPostId = openCommentPostId === id ? null : id;
@@ -2117,43 +2189,83 @@ function renderPostMedia(item) {
   return `<a class="media-tile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open file</a>`;
 }
 
+function bindFileChips(inputId, chipsId) {
+  const input = document.querySelector(`#${inputId}`);
+  const chips = document.querySelector(`#${chipsId}`);
+  if (!input || !chips) return;
+  const draw = () => {
+    const files = [...(input.files || [])];
+    chips.innerHTML = files.map((file) => `<span class="chip">${escapeHtml(file.name)}</span>`).join("");
+  };
+  input.addEventListener("change", draw);
+  draw();
+}
+
+function setupDropzone(zoneId, inputId, multiple) {
+  const zone = document.querySelector(`#${zoneId}`);
+  const input = document.querySelector(`#${inputId}`);
+  if (!zone || !input) return;
+  zone.addEventListener("click", () => input.click());
+  const prevent = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  ["dragenter", "dragover", "dragleave", "drop"].forEach((type) => zone.addEventListener(type, prevent));
+  zone.addEventListener("dragover", () => zone.classList.add("dragover"));
+  zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+  zone.addEventListener("drop", (event) => {
+    zone.classList.remove("dragover");
+    const files = [...(event.dataTransfer?.files || [])];
+    if (!files.length) return;
+    const dt = new DataTransfer();
+    (multiple ? files : files.slice(0, 1)).forEach((file) => dt.items.add(file));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
 async function uploadFiles(files, options = {}) {
   const purpose = options.purpose || "media";
   const uploaded = [];
-  for (const file of files) {
-    const shouldUseMultipart = file.size > 20 * 1024 * 1024 || (file.type || "").startsWith("video/");
-    if (shouldUseMultipart) {
-      const mediaUrl = await uploadFileMultipart(file, purpose);
-      uploaded.push({ url: mediaUrl, type: file.type || "application/octet-stream", name: file.name });
-      continue;
-    }
-    const sign = await apiRequest("/upload-url", {
-      method: "POST",
-      body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", purpose })
-    });
-    const response = await fetch(sign.uploadUrl, {
-      method: "PUT",
-      headers: { "content-type": file.type || "application/octet-stream" },
-      body: file
-    });
-    if (!response.ok) {
-      let reason = "";
-      try {
-        const body = await response.json();
-        reason = body?.error || body?.detail || "";
-      } catch {
-        reason = await response.text();
+  setUploadProgress("Uploading media", 0);
+  try {
+    for (const file of files) {
+      const shouldUseMultipart = file.size > 20 * 1024 * 1024 || (file.type || "").startsWith("video/");
+      if (shouldUseMultipart) {
+        const mediaUrl = await uploadFileMultipart(file, purpose);
+        uploaded.push({ url: mediaUrl, type: file.type || "application/octet-stream", name: file.name });
+        continue;
       }
-      const detail = typeof reason === "string" && reason.trim().length ? ` ${reason.trim()}` : "";
-      throw new Error(`Upload failed (${file.name}):${detail || " Unknown upload error."}`);
+      const sign = await apiRequest("/upload-url", {
+        method: "POST",
+        body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", purpose })
+      });
+      const response = await fetch(sign.uploadUrl, {
+        method: "PUT",
+        headers: { "content-type": file.type || "application/octet-stream" },
+        body: file
+      });
+      if (!response.ok) {
+        let reason = "";
+        try {
+          const body = await response.json();
+          reason = body?.error || body?.detail || "";
+        } catch {
+          reason = await response.text();
+        }
+        const detail = typeof reason === "string" && reason.trim().length ? ` ${reason.trim()}` : "";
+        throw new Error(`Upload failed (${file.name}):${detail || " Unknown upload error."}`);
+      }
+      uploaded.push({
+        url: sign.mediaUrl,
+        type: file.type || "application/octet-stream",
+        name: file.name
+      });
     }
-    uploaded.push({
-      url: sign.mediaUrl,
-      type: file.type || "application/octet-stream",
-      name: file.name
-    });
+    return uploaded;
+  } finally {
+    clearUploadProgress();
   }
-  return uploaded;
 }
 
 async function uploadFileMultipart(file, purpose = "media") {
@@ -2171,7 +2283,8 @@ async function uploadFileMultipart(file, purpose = "media") {
     chunkSize,
     endpointPrefix: "/multipart",
     uploadId: init.uploadId,
-    key: init.key
+    key: init.key,
+    onProgress: (percent) => setUploadProgress("Uploading media", percent)
   });
   const completed = await apiRequest("/multipart/complete", {
     method: "POST",
@@ -2181,35 +2294,42 @@ async function uploadFileMultipart(file, purpose = "media") {
 }
 
 async function uploadVerificationVideoMultipart(file) {
-  const init = await apiRequest("/verification-upload/init", {
-    method: "POST",
-    body: JSON.stringify({
-      fileName: file.name,
-      contentType: file.type || "application/octet-stream"
-    })
-  });
+  setUploadProgress("Uploading verification video", 0);
+  try {
+    const init = await apiRequest("/verification-upload/init", {
+      method: "POST",
+      body: JSON.stringify({
+        fileName: file.name,
+        contentType: file.type || "application/octet-stream"
+      })
+    });
 
-  const chunkSize = Number(init.chunkSize || 8 * 1024 * 1024);
-  const parts = await uploadMultipartPartsInParallel({
-    file,
-    chunkSize,
-    endpointPrefix: "/verification-upload",
-    uploadId: init.uploadId,
-    key: init.key
-  });
+    const chunkSize = Number(init.chunkSize || 8 * 1024 * 1024);
+    const parts = await uploadMultipartPartsInParallel({
+      file,
+      chunkSize,
+      endpointPrefix: "/verification-upload",
+      uploadId: init.uploadId,
+      key: init.key,
+      onProgress: (percent) => setUploadProgress("Uploading verification video", percent)
+    });
 
-  const completed = await apiRequest("/verification-upload/complete", {
-    method: "POST",
-    body: JSON.stringify({ key: init.key, uploadId: init.uploadId, parts })
-  });
-  return completed.mediaUrl;
+    const completed = await apiRequest("/verification-upload/complete", {
+      method: "POST",
+      body: JSON.stringify({ key: init.key, uploadId: init.uploadId, parts })
+    });
+    return completed.mediaUrl;
+  } finally {
+    clearUploadProgress();
+  }
 }
 
-async function uploadMultipartPartsInParallel({ file, chunkSize, endpointPrefix, uploadId, key }) {
+async function uploadMultipartPartsInParallel({ file, chunkSize, endpointPrefix, uploadId, key, onProgress = null }) {
   const totalParts = Math.ceil(file.size / chunkSize);
   const concurrency = 4;
   const nextPart = { value: 1 };
   const results = new Array(totalParts);
+  let finished = 0;
 
   async function worker() {
     while (nextPart.value <= totalParts) {
@@ -2231,6 +2351,8 @@ async function uploadMultipartPartsInParallel({ file, chunkSize, endpointPrefix,
         throw new Error(detail || `Chunk upload failed (part ${partNumber})`);
       }
       results[partNumber - 1] = { partNumber, etag: body.etag };
+      finished += 1;
+      if (onProgress) onProgress((finished / totalParts) * 100);
     }
   }
 
