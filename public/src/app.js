@@ -1151,9 +1151,10 @@ function renderMessages() {
         <div class="between"><strong>${escapeHtml(active?.title || "No conversation")}</strong><span class="chip">Active</span></div>
         <p class="muted" style="margin:8px 0 0">Receiver: ${escapeHtml(receiverName)}</p>
         <div class="grid" style="margin:14px 0">${(active?.messages || []).map((message) => `
-          <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
+          <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${message.authorId === currentUser().id ? `<span class="muted">· receiver sees: ${message.anonymous ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span>` : ""} ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
         `).join("")}</div>
         <div class="field"><label>Message</label><textarea id="message-text" placeholder="Type a message"></textarea></div>
+        <p class="muted" style="margin:0">Receiver will see you as: <span id="message-identity-preview">${escapeHtml(userName(currentUser().id))}</span></p>
         <div class="row">
           <select id="message-anon" class="btn"><option value="false">Public</option><option value="true">Anonymous</option></select>
           <button class="btn primary" data-action="send-message" data-id="${active?.id || ""}">Send</button>
@@ -1298,6 +1299,12 @@ function bindEvents() {
         button.disabled = false;
       }
     });
+  });
+
+  document.querySelector("#message-anon")?.addEventListener("change", (event) => {
+    const preview = document.querySelector("#message-identity-preview");
+    if (!preview) return;
+    preview.textContent = event.target.value === "true" ? "Anonymous student" : userName(currentUser().id);
   });
 }
 
