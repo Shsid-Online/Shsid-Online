@@ -481,6 +481,41 @@ function showPopup(title, message) {
   });
 }
 
+function askConfirmPopup(title, message, confirmLabel = "Confirm") {
+  return new Promise((resolve) => {
+    const popup = showFormPopup(title, `
+      <div class="grid">
+        <p class="muted" style="margin:0">${escapeHtml(message)}</p>
+        <div class="row">
+          <button class="btn danger" type="button" data-confirm>${escapeHtml(confirmLabel)}</button>
+          <button class="btn" type="button" data-cancel>Cancel</button>
+        </div>
+      </div>
+    `);
+    popup.querySelector("[data-cancel]")?.addEventListener("click", () => {
+      popup.remove();
+      resolve(false);
+    });
+    popup.querySelector("[data-confirm]")?.addEventListener("click", () => {
+      popup.remove();
+      resolve(true);
+    });
+  });
+}
+
+function openMediaViewer(url, type = "") {
+  const isVideo = String(type || "").startsWith("video/");
+  const popup = showFormPopup("Media Viewer", `
+    <div class="media-viewer">
+      ${isVideo
+        ? `<video src="${escapeHtml(url)}" controls autoplay playsinline></video>`
+        : `<img src="${escapeHtml(url)}" alt="Media preview" />`
+      }
+    </div>
+  `);
+  return popup;
+}
+
 function showFormPopup(title, bodyHtml) {
   document.querySelector("#site-form-popup")?.remove();
   const node = document.createElement("div");
@@ -990,6 +1025,7 @@ function renderStories() {
       <article class="story" style="min-height:220px;cursor:pointer" data-action="view-story" data-id="${story.id}">
         <strong>${escapeHtml(story.text)}</strong>
         <span>${escapeHtml(userName(story.authorId))} · ${story.views.length} views</span>
+        ${story.authorId === state.currentUserId || currentUser().role === "admin" ? `<button class="btn small danger" data-action="delete-story" data-id="${story.id}" style="margin-top:10px">Delete</button>` : ""}
       </article>
     `).join("")}</section>
   `);
@@ -1032,7 +1068,7 @@ function renderAdmin() {
         <h2>Student Verification Queue</h2>
         <div class="table-wrap">
           <table class="table"><thead><tr><th>Student</th><th>Status</th><th>Video</th><th>Actions</th></tr></thead><tbody>
-            ${pending.map((user) => `<tr><td>${escapeHtml(user.englishName)}<br><span class="muted">${escapeHtml(user.chineseName)} · G${user.grade} C${user.classNo}</span></td><td><span class="status gold">${user.status}</span></td><td>${user.verificationVideo ? `<span class="chip">${escapeHtml(user.verificationVideo)}</span>` : `<span class="muted">No video file</span>`}</td><td><div class="admin-actions"><button class="btn small primary" data-action="verify-user" data-id="${user.id}">Approve</button><button class="btn small danger" data-action="reject-user" data-id="${user.id}">Reject</button></div></td></tr>`).join("") || `<tr><td colspan="4" class="muted">No pending students.</td></tr>`}
+            ${pending.map((user) => `<tr><td>${escapeHtml(user.englishName)}<br><span class="muted">${escapeHtml(user.chineseName)} · G${user.grade} C${user.classNo}</span></td><td><span class="status gold">${user.status}</span></td><td>${user.verificationVideo ? `<span class="chip">${escapeHtml(user.verificationVideo)}</span>` : `<span class="muted">No video file</span>`}</td><td><div class="admin-actions"><button class="btn small primary" data-action="verify-user" data-id="${user.id}">Approve</button><button class="btn small danger" data-action="reject-user" data-id="${user.id}">Reject</button><button class="btn small danger" data-action="ban-user" data-id="${user.id}">Ban</button></div></td></tr>`).join("") || `<tr><td colspan="4" class="muted">No pending students.</td></tr>`}
           </tbody></table>
         </div>
       </div>
@@ -1381,6 +1417,8 @@ async function handleAction(action, id) {
     await refreshPosts();
   }
   if (action === "delete-post") {
+    const ok = await askConfirmPopup("Delete Post", "This will delete the post from feed. Continue?", "Delete");
+    if (!ok) return;
     await apiRequest(`/posts/${id}`, { method: "DELETE" });
     await refreshPosts();
   }
@@ -1439,6 +1477,12 @@ async function handleAction(action, id) {
     const views = story?.views?.length ?? 0;
     if (story) showPopup("Story", `${story.text}\n\n${userName(story.authorId)} · ${views} views`);
   }
+  if (action === "delete-story") {
+    const ok = await askConfirmPopup("Delete Story", "This will remove your story immediately. Continue?", "Delete");
+    if (!ok) return;
+    await apiRequest(`/stories/${id}`, { method: "DELETE" });
+    await refreshStories();
+  }
   if (action === "create-reel") {
     const title = document.querySelector("#reel-title").value.trim();
     if (!title) return toast("Add a reel title");
@@ -1477,10 +1521,19 @@ async function handleAction(action, id) {
     await refreshStudents();
   }
   if (action === "reject-user") {
+    const ok = await askConfirmPopup("Reject Verification", "Reject this student's verification submission?", "Reject");
+    if (!ok) return;
     await apiRequest(`/admin/verifications/${id}`, {
       method: "POST",
       body: JSON.stringify({ decision: "reject" })
     });
+    await refreshAdminVerifications();
+    await refreshStudents();
+  }
+  if (action === "ban-user") {
+    const ok = await askConfirmPopup("Ban User", "This will ban the account and block access. Continue?", "Ban User");
+    if (!ok) return;
+    await apiRequest(`/admin/users/${id}/ban`, { method: "POST", body: JSON.stringify({}) });
     await refreshAdminVerifications();
     await refreshStudents();
   }
@@ -1503,6 +1556,10 @@ async function handleAction(action, id) {
     if (!entry) return;
     showPopup("Q&A", `${entry.question}\n\n${entry.answer || "Waiting for answer"}`);
   }
+  if (action === "open-media") {
+    const media = state.posts.flatMap((p) => p.media || []).find((m) => typeof m === "object" && m.url === id);
+    openMediaViewer(id, media?.type || "");
+  }
   saveState();
   render();
 }
@@ -1512,8 +1569,8 @@ function renderPostMedia(item) {
   const url = String(item?.url || "");
   const type = String(item?.type || "");
   if (!url) return `<div class="media-tile">Media</div>`;
-  if (type.startsWith("image/")) return `<div class="media-tile"><img class="media-content" src="${escapeHtml(url)}" alt="Post media" loading="lazy" /></div>`;
-  if (type.startsWith("video/")) return `<div class="media-tile"><video class="media-content" src="${escapeHtml(url)}" controls preload="metadata"></video></div>`;
+  if (type.startsWith("image/")) return `<button class="media-tile media-button" data-action="open-media" data-id="${escapeHtml(url)}"><img class="media-content" src="${escapeHtml(url)}" alt="Post media" loading="lazy" /></button>`;
+  if (type.startsWith("video/")) return `<button class="media-tile media-button" data-action="open-media" data-id="${escapeHtml(url)}"><video class="media-content" src="${escapeHtml(url)}" preload="metadata" muted></video></button>`;
   return `<a class="media-tile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open file</a>`;
 }
 

@@ -490,6 +490,17 @@ async function handleApi(request, env, url, route) {
     return json({ story }, 200);
   }
 
+  const storyDeleteMatch = route.match(/^\/stories\/([^/]+)$/);
+  if (method === "DELETE" && storyDeleteMatch) {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const story = await env.DB.prepare("select * from stories where id=? and archived_at is null").bind(storyDeleteMatch[1]).first();
+    if (!story) return json({ error: "Not found" }, 404);
+    if (authUser.role !== "admin" && story.author_id !== authUser.id) return json({ error: "Forbidden" }, 403);
+    await env.DB.prepare("update stories set archived_at=? where id=?").bind(now(), story.id).run();
+    await audit(env, authUser.id, "story_deleted", { storyId: story.id }, request);
+    return json({ ok: true }, 200);
+  }
+
   if (method === "GET" && route === "/reels") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     const rows = await env.DB.prepare("select * from reels order by created_at desc limit 100").all();
@@ -751,6 +762,21 @@ async function handleApi(request, env, url, route) {
       .run();
     const updated = await getUserById(env, user.id);
     await audit(env, authUser.id, "verification_reviewed", { userId: user.id, decision }, request);
+    return json({ user: await userView(env, updated, authUser) }, 200);
+  }
+
+  const adminBanMatch = route.match(/^\/admin\/users\/([^/]+)\/ban$/);
+  if (method === "POST" && adminBanMatch) {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    const user = await getUserById(env, adminBanMatch[1]);
+    if (!user) return json({ error: "Not found" }, 404);
+    if (user.role === "admin") return json({ error: "Cannot ban admin account" }, 400);
+    await env.DB.prepare("update users set status='banned', updated_at=? where id=?").bind(now(), user.id).run();
+    await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
+      .bind(id("ntf"), user.id, "moderation", "Your account has been banned by admin review.", null, now())
+      .run();
+    await audit(env, authUser.id, "user_banned", { userId: user.id }, request);
+    const updated = await getUserById(env, user.id);
     return json({ user: await userView(env, updated, authUser) }, 200);
   }
 
