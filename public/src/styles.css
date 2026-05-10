@@ -398,20 +398,39 @@ button {
 .media-tile {
   width: 100%;
   aspect-ratio: 4 / 5;
-  max-height: 260px;
+  max-height: 300px;
   border-radius: 8px;
   background: linear-gradient(135deg, #d8e3f8, #f8d8df);
   display: grid;
   place-items: center;
   color: #344054;
   font-weight: 800;
-  object-fit: cover;
   overflow: hidden;
 }
 
-video.media-tile,
-img.media-tile {
+.media-content {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   display: block;
+}
+
+.comment-composer {
+  margin: 10px 14px 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.comment-composer textarea {
+  width: 100%;
+  min-height: 72px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  resize: vertical;
+  margin-bottom: 8px;
 }
 
 .post-actions {

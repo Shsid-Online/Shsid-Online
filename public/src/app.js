@@ -35,6 +35,7 @@ let activeConversationId = state.conversations[0]?.id;
 let authEmailSubmitIntent = "login";
 let authRequestInFlight = false;
 let resendCooldownUntil = 0;
+let openCommentPostId = null;
 
 hydrateAuthFromUrl();
 
@@ -541,35 +542,6 @@ function askQnaPopup() {
   });
 }
 
-function askCommentPopup() {
-  return new Promise((resolve) => {
-    const popup = showFormPopup("Add Comment", `
-      <form id="site-comment-form" class="grid">
-        <div class="field"><label>Comment</label><textarea id="site-comment-text" placeholder="Write your comment" required></textarea></div>
-        <div class="row">
-          <label><input id="site-comment-anon" type="checkbox"> Post anonymously</label>
-        </div>
-        <div class="row">
-          <button class="btn primary" type="submit">Submit</button>
-          <button class="btn" type="button" data-cancel>Cancel</button>
-        </div>
-      </form>
-    `);
-    popup.querySelector("[data-cancel]")?.addEventListener("click", () => {
-      popup.remove();
-      resolve(null);
-    });
-    popup.querySelector("#site-comment-form")?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const text = String(popup.querySelector("#site-comment-text")?.value || "").trim();
-      if (!text) return;
-      const anonymous = Boolean(popup.querySelector("#site-comment-anon")?.checked);
-      popup.remove();
-      resolve({ text, anonymous });
-    });
-  });
-}
-
 function startResendCooldown(seconds = 30) {
   resendCooldownUntil = Date.now() + seconds * 1000;
 }
@@ -839,6 +811,19 @@ function renderPost(post) {
       <div class="post-text">${escapeHtml(post.text || "")}</div>
       ${media.length ? `<div class="media-grid">${media.slice(0, 9).map((item) => renderPostMedia(item)).join("")}</div>` : ""}
       ${(post.comments || []).map((comment) => `<p class="comment"><strong>${escapeHtml(userName(comment.authorId, comment.anonymous))}:</strong> ${escapeHtml(comment.text)}</p>`).join("")}
+      ${openCommentPostId === post.id ? `
+        <div class="comment-composer">
+          <textarea id="comment-text-${post.id}" placeholder="Write a comment..."></textarea>
+          <div class="row">
+            <select id="comment-anon-${post.id}" class="btn small">
+              <option value="false">Public</option>
+              <option value="true">Anonymous</option>
+            </select>
+            <button class="btn small primary" data-action="submit-comment" data-id="${post.id}">Send</button>
+            <button class="btn small" data-action="close-comment" data-id="${post.id}">Cancel</button>
+          </div>
+        </div>
+      ` : ""}
       <div class="post-actions">
         <button class="btn small" data-action="like-post" data-id="${post.id}">${liked ? "Liked" : "Like"} · ${likes.length}</button>
         <button class="btn small" data-action="comment-post" data-id="${post.id}">Comment</button>
@@ -1307,9 +1292,17 @@ async function handleAction(action, id) {
     if (idx >= 0) state.posts[idx] = normalizePost(result.post);
   }
   if (action === "comment-post") {
-    const payload = await askCommentPopup();
-    if (!payload) return;
-    await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify(payload) });
+    openCommentPostId = openCommentPostId === id ? null : id;
+  }
+  if (action === "close-comment") {
+    openCommentPostId = null;
+  }
+  if (action === "submit-comment") {
+    const text = String(document.querySelector(`#comment-text-${id}`)?.value || "").trim();
+    const anonymous = document.querySelector(`#comment-anon-${id}`)?.value === "true";
+    if (!text) return toast("Enter a comment");
+    await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous }) });
+    openCommentPostId = null;
     await refreshPosts();
   }
   if (action === "report-post") {
@@ -1444,8 +1437,8 @@ function renderPostMedia(item) {
   const url = String(item?.url || "");
   const type = String(item?.type || "");
   if (!url) return `<div class="media-tile">Media</div>`;
-  if (type.startsWith("image/")) return `<img class="media-tile" src="${escapeHtml(url)}" alt="Post media" loading="lazy" />`;
-  if (type.startsWith("video/")) return `<video class="media-tile" src="${escapeHtml(url)}" controls preload="metadata"></video>`;
+  if (type.startsWith("image/")) return `<div class="media-tile"><img class="media-content" src="${escapeHtml(url)}" alt="Post media" loading="lazy" /></div>`;
+  if (type.startsWith("video/")) return `<div class="media-tile"><video class="media-content" src="${escapeHtml(url)}" controls preload="metadata"></video></div>`;
   return `<a class="media-tile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open file</a>`;
 }
 
