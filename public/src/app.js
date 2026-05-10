@@ -26,7 +26,9 @@ const initialState = {
   pendingGrade: 10,
   pendingClassNo: 1,
   pendingVerificationWords: [],
-  selectedProfileId: null
+  selectedProfileId: null,
+  conversationIdentityMode: {},
+  acceptedRequests: {}
 };
 
 let state = loadState();
@@ -210,12 +212,27 @@ function classifyConversations() {
   const inbox = [];
   const requests = [];
   for (const conv of all) {
+    if (state.acceptedRequests?.[conv.id]) {
+      inbox.push(conv);
+      continue;
+    }
     const mineCount = (conv.messages || []).filter((msg) => msg.authorId === userId).length;
     const firstAuthor = conv.messages?.[0]?.authorId || "";
     if (mineCount === 0 && firstAuthor && firstAuthor !== userId) requests.push(conv);
     else inbox.push(conv);
   }
   return { inbox, requests };
+}
+
+function getConversationIdentityMode(conversationId) {
+  return state.conversationIdentityMode?.[conversationId] === "anonymous" ? "anonymous" : "public";
+}
+
+function setConversationIdentityMode(conversationId, mode) {
+  if (!conversationId) return;
+  if (!state.conversationIdentityMode || typeof state.conversationIdentityMode !== "object") state.conversationIdentityMode = {};
+  state.conversationIdentityMode[conversationId] = mode === "anonymous" ? "anonymous" : "public";
+  saveState();
 }
 
 function conversationCounterpartName(conversation) {
@@ -1135,28 +1152,30 @@ function renderMessages() {
   const list = conversationTab === "requests" ? requests : inbox;
   const active = list.find((item) => item.id === activeConversationId) || list[0] || inbox[0] || requests[0];
   const receiverName = active ? conversationCounterpartName(active) : "No receiver";
+  const identityMode = active ? getConversationIdentityMode(active.id) : "public";
+  const requestView = conversationTab === "requests";
   return page("Messages", "Real-time style direct and group messaging, anonymous sending, reporting, and admin monitoring.", `
-    <section class="grid two">
-      <div class="panel">
-        <div class="between" style="margin-bottom:12px"><strong>Conversations</strong><button class="btn small" data-action="open-create-convo">Create convo</button></div>
+    <section class="grid two chat-layout">
+      <div class="panel chat-panel chat-panel-list">
+        <div class="between" style="margin-bottom:12px"><strong>Conversations</strong><div class="row"><button class="btn small" data-action="open-start-direct">Direct</button><button class="btn small" data-action="open-create-convo">Create convo</button></div></div>
         <div class="row" style="margin-bottom:12px">
           <button class="btn ${conversationTab === "inbox" ? "primary" : ""}" data-action="chat-tab-inbox">Inbox (${inbox.length})</button>
           <button class="btn ${conversationTab === "requests" ? "primary" : ""}" data-action="chat-tab-requests">Requests (${requests.length})</button>
         </div>
-        <div class="grid">${list.length
-          ? list.map((conv) => `<button class="btn ${active?.id === conv.id ? "primary" : ""}" data-action="open-conv" data-id="${conv.id}">${escapeHtml(conv.title)} · ${conv.group ? "group" : "direct"}</button>`).join("")
+        <div class="grid chat-list-scroll">${list.length
+          ? list.map((conv) => `<button class="btn ${active?.id === conv.id ? "primary" : ""}" data-action="open-conv" data-id="${conv.id}">${escapeHtml(conversationCounterpartName(conv))} + ${getConversationIdentityMode(conv.id) === "anonymous" ? "anon" : "public"}</button>`).join("")
           : `<p class="muted">No conversations in this tab yet.</p>`}</div>
       </div>
-      <div class="panel">
-        <div class="between"><strong>${escapeHtml(active?.title || "No conversation")}</strong><span class="chip">Active</span></div>
+      <div class="panel chat-panel chat-panel-thread">
+        <div class="between"><strong>${escapeHtml(active ? `${conversationCounterpartName(active)} + ${identityMode === "anonymous" ? "anon" : "public"}` : "No conversation")}</strong><span class="chip">Active</span></div>
         <p class="muted" style="margin:8px 0 0">Receiver: ${escapeHtml(receiverName)}</p>
-        <div class="grid" style="margin:14px 0">${(active?.messages || []).map((message) => `
+        <div class="grid chat-messages-scroll" style="margin:14px 0">${(active?.messages || []).map((message) => `
           <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${message.authorId === currentUser().id ? `<span class="muted">· receiver sees: ${message.anonymous ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span>` : ""} ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
         `).join("")}</div>
+        ${requestView && active ? `<div class="row" style="margin-bottom:12px"><button class="btn primary" data-action="accept-request" data-id="${active.id}">Accept request</button></div>` : ""}
         <div class="field"><label>Message</label><textarea id="message-text" placeholder="Type a message"></textarea></div>
-        <p class="muted" style="margin:0">Receiver will see you as: <span id="message-identity-preview">${escapeHtml(userName(currentUser().id))}</span></p>
+        <p class="muted" style="margin:0">Receiver will see you as: <span id="message-identity-preview">${identityMode === "anonymous" ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span></p>
         <div class="row">
-          <select id="message-anon" class="btn"><option value="false">Public</option><option value="true">Anonymous</option></select>
           <button class="btn primary" data-action="send-message" data-id="${active?.id || ""}">Send</button>
           <button class="btn" data-action="report-message" data-id="${active?.id || ""}">Report</button>
         </div>
@@ -1301,11 +1320,6 @@ function bindEvents() {
     });
   });
 
-  document.querySelector("#message-anon")?.addEventListener("change", (event) => {
-    const preview = document.querySelector("#message-identity-preview");
-    if (!preview) return;
-    preview.textContent = event.target.value === "true" ? "Anonymous student" : userName(currentUser().id);
-  });
 }
 
 function bindAuth() {
@@ -1613,7 +1627,11 @@ async function handleAction(action, id) {
   if (action === "start-chat") {
     const target = state.users.find((item) => item.id === id);
     if (!target || target.role === "admin" || target.status !== "verified") return toast("Only verified students can be messaged");
+    const mode = await askIdentityModePopup(target.englishName || "student");
+    if (!mode) return;
     const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: [id], group: false }) });
+    setConversationIdentityMode(result.conversation.id, mode);
+    conversationTab = "requests";
     await refreshConversations();
     activeConversationId = result.conversation.id;
     view = "messages";
@@ -1621,9 +1639,10 @@ async function handleAction(action, id) {
   if (action === "send-message") {
     const text = document.querySelector("#message-text").value.trim();
     if (!text || !id) return toast("Enter a message");
+    const anonymous = getConversationIdentityMode(id) === "anonymous";
     await apiRequest(`/conversations/${id}/messages`, {
       method: "POST",
-      body: JSON.stringify({ text, anonymous: document.querySelector("#message-anon").value === "true" })
+      body: JSON.stringify({ text, anonymous })
     });
     document.querySelector("#message-text").value = "";
     await refreshConversations();
@@ -1638,6 +1657,52 @@ async function handleAction(action, id) {
     conversationTab = "requests";
     const next = classifyConversations().requests[0];
     activeConversationId = next?.id || activeConversationId;
+  }
+  if (action === "accept-request") {
+    if (!id) return;
+    if (!state.acceptedRequests || typeof state.acceptedRequests !== "object") state.acceptedRequests = {};
+    state.acceptedRequests[id] = true;
+    saveState();
+    conversationTab = "inbox";
+    activeConversationId = id;
+    toast("Request accepted");
+  }
+  if (action === "open-start-direct") {
+    const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified");
+    if (!choices.length) return toast("No verified students available");
+    const popup = showFormPopup("Start Direct Message", `
+      <form id="direct-start-form" class="grid">
+        <div class="field"><label>Search verified students</label><input id="direct-search" placeholder="Search by name, grade, class" /></div>
+        <div id="direct-list" class="grid" style="max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px">
+          ${choices.map((item) => `<button class="btn" type="button" data-direct-target="${escapeHtml(item.id)}">${escapeHtml(item.englishName)} <span class="muted">· G${item.grade} C${item.classNo}</span></button>`).join("")}
+        </div>
+        <div class="row"><button class="btn" type="button" data-cancel>Cancel</button></div>
+      </form>
+    `);
+    popup.querySelector("[data-cancel]")?.addEventListener("click", () => popup.remove());
+    popup.querySelector("#direct-search")?.addEventListener("input", (event) => {
+      const query = String(event.target.value || "").trim().toLowerCase();
+      popup.querySelectorAll("[data-direct-target]").forEach((button) => {
+        const text = button.textContent?.toLowerCase() || "";
+        button.style.display = !query || text.includes(query) ? "" : "none";
+      });
+    });
+    popup.querySelectorAll("[data-direct-target]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const targetId = button.getAttribute("data-direct-target");
+        const target = choices.find((item) => item.id === targetId);
+        const mode = await askIdentityModePopup(target?.englishName || "student");
+        if (!mode) return;
+        const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: [targetId], group: false }) });
+        setConversationIdentityMode(result.conversation.id, mode);
+        conversationTab = "requests";
+        await refreshConversations();
+        activeConversationId = result.conversation.id;
+        popup.remove();
+        render();
+      });
+    });
+    return;
   }
   if (action === "open-create-convo") {
     const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified");
@@ -1680,7 +1745,7 @@ async function handleAction(action, id) {
       await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
       popup.remove();
       await refreshConversations();
-      conversationTab = "inbox";
+      conversationTab = "requests";
       activeConversationId = state.conversations[0]?.id;
       toast("Conversation created");
       render();
@@ -1805,6 +1870,29 @@ async function handleAction(action, id) {
   }
   saveState();
   render();
+}
+
+function askIdentityModePopup(receiverName) {
+  return new Promise((resolve) => {
+    const popup = showFormPopup("Choose Identity", `
+      <div class="grid">
+        <p class="muted" style="margin:0">Receiver: ${escapeHtml(receiverName)}</p>
+        <p class="muted" style="margin:0">How should this receiver see your messages?</p>
+        <div class="row">
+          <button class="btn primary" type="button" data-mode="public">Public (your name)</button>
+          <button class="btn" type="button" data-mode="anonymous">Anonymous student</button>
+        </div>
+      </div>
+    `);
+    popup.querySelectorAll("[data-mode]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const mode = button.getAttribute("data-mode") === "anonymous" ? "anonymous" : "public";
+        popup.remove();
+        resolve(mode);
+      });
+    });
+    popup.querySelector("[data-close-popup]")?.addEventListener("click", () => resolve(null));
+  });
 }
 
 function renderPostMedia(item) {

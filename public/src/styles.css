@@ -551,6 +551,36 @@ button {
   gap: 8px;
 }
 
+.chat-layout {
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.6fr);
+  align-items: start;
+}
+
+.chat-panel {
+  height: min(72vh, 760px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat-panel-list,
+.chat-panel-thread {
+  overflow: hidden;
+}
+
+.chat-list-scroll {
+  flex: 1;
+  overflow-y: auto;
+  align-content: start;
+}
+
+.chat-messages-scroll {
+  flex: 1;
+  overflow-y: auto;
+  align-content: start;
+  padding-right: 4px;
+}
+
 .auth-screen {
   min-height: 100vh;
   display: grid;
@@ -649,6 +679,20 @@ button {
   .grid.two,
   .grid.three {
     grid-template-columns: 1fr;
+  }
+
+  .chat-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-panel {
+    height: auto;
+    max-height: none;
+  }
+
+  .chat-list-scroll,
+  .chat-messages-scroll {
+    max-height: 42vh;
   }
 
   .topbar {
