@@ -1609,7 +1609,7 @@ function renderPostMedia(item) {
   const type = String(item?.type || "");
   if (!url) return `<div class="media-tile">Media</div>`;
   if (type.startsWith("image/")) return `<button class="media-tile media-button" data-action="open-media" data-id="${escapeHtml(url)}"><img class="media-content" src="${escapeHtml(url)}" alt="Post media" loading="lazy" /></button>`;
-  if (type.startsWith("video/")) return `<button class="media-tile media-button" data-action="open-media" data-id="${escapeHtml(url)}"><video class="media-content media-video" src="${escapeHtml(url)}" controls preload="metadata"></video></button>`;
+  if (type.startsWith("video/")) return `<div class="media-tile"><video class="media-content media-video" src="${escapeHtml(url)}" controls preload="metadata"></video></div>`;
   return `<a class="media-tile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open file</a>`;
 }
 
