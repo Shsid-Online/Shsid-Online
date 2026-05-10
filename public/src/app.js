@@ -2093,26 +2093,13 @@ async function uploadFileMultipart(file, purpose = "media") {
     })
   });
   const chunkSize = Number(init.chunkSize || 8 * 1024 * 1024);
-  const parts = [];
-  let partNumber = 1;
-  for (let offset = 0; offset < file.size; offset += chunkSize) {
-    const chunk = file.slice(offset, offset + chunkSize);
-    const response = await fetch(`${API_BASE}/multipart/${encodeURIComponent(init.uploadId)}/${partNumber}?key=${encodeURIComponent(init.key)}`, {
-      method: "PUT",
-      headers: {
-        "content-type": file.type || "application/octet-stream",
-        ...(state.apiToken ? { authorization: `Bearer ${state.apiToken}` } : {})
-      },
-      body: chunk
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      const detail = [body?.error, body?.detail].filter(Boolean).join(" - ");
-      throw new Error(detail || `Chunk upload failed (part ${partNumber})`);
-    }
-    parts.push({ partNumber, etag: body.etag });
-    partNumber += 1;
-  }
+  const parts = await uploadMultipartPartsInParallel({
+    file,
+    chunkSize,
+    endpointPrefix: "/multipart",
+    uploadId: init.uploadId,
+    key: init.key
+  });
   const completed = await apiRequest("/multipart/complete", {
     method: "POST",
     body: JSON.stringify({ key: init.key, uploadId: init.uploadId, parts })
@@ -2130,32 +2117,53 @@ async function uploadVerificationVideoMultipart(file) {
   });
 
   const chunkSize = Number(init.chunkSize || 8 * 1024 * 1024);
-  const parts = [];
-  let partNumber = 1;
-  for (let offset = 0; offset < file.size; offset += chunkSize) {
-    const chunk = file.slice(offset, offset + chunkSize);
-    const response = await fetch(`${API_BASE}/verification-upload/${encodeURIComponent(init.uploadId)}/${partNumber}?key=${encodeURIComponent(init.key)}`, {
-      method: "PUT",
-      headers: {
-        "content-type": file.type || "application/octet-stream",
-        ...(state.apiToken ? { authorization: `Bearer ${state.apiToken}` } : {})
-      },
-      body: chunk
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      const detail = [body?.error, body?.detail].filter(Boolean).join(" - ");
-      throw new Error(detail || `Chunk upload failed (part ${partNumber})`);
-    }
-    parts.push({ partNumber, etag: body.etag });
-    partNumber += 1;
-  }
+  const parts = await uploadMultipartPartsInParallel({
+    file,
+    chunkSize,
+    endpointPrefix: "/verification-upload",
+    uploadId: init.uploadId,
+    key: init.key
+  });
 
   const completed = await apiRequest("/verification-upload/complete", {
     method: "POST",
     body: JSON.stringify({ key: init.key, uploadId: init.uploadId, parts })
   });
   return completed.mediaUrl;
+}
+
+async function uploadMultipartPartsInParallel({ file, chunkSize, endpointPrefix, uploadId, key }) {
+  const totalParts = Math.ceil(file.size / chunkSize);
+  const concurrency = 4;
+  const nextPart = { value: 1 };
+  const results = new Array(totalParts);
+
+  async function worker() {
+    while (nextPart.value <= totalParts) {
+      const partNumber = nextPart.value;
+      nextPart.value += 1;
+      const offset = (partNumber - 1) * chunkSize;
+      const chunk = file.slice(offset, offset + chunkSize);
+      const response = await fetch(`${API_BASE}${endpointPrefix}/${encodeURIComponent(uploadId)}/${partNumber}?key=${encodeURIComponent(key)}`, {
+        method: "PUT",
+        headers: {
+          "content-type": file.type || "application/octet-stream",
+          ...(state.apiToken ? { authorization: `Bearer ${state.apiToken}` } : {})
+        },
+        body: chunk
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        const detail = [body?.error, body?.detail].filter(Boolean).join(" - ");
+        throw new Error(detail || `Chunk upload failed (part ${partNumber})`);
+      }
+      results[partNumber - 1] = { partNumber, etag: body.etag };
+    }
+  }
+
+  const workerCount = Math.min(concurrency, totalParts);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
 }
 
 bootstrapSession();
