@@ -565,6 +565,24 @@ function formatActionLabel(action) {
   return String(action || "").replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
+function metadataTargetLabel(metadata = {}) {
+  const m = metadata || {};
+  if (m.userId) return `User ${userName(m.userId)}`;
+  if (m.postId) return `Post ${m.postId}`;
+  if (m.commentId) return `Comment ${m.commentId}`;
+  if (m.storyId) return `Story ${m.storyId}`;
+  if (m.reelId) return `Reel ${m.reelId}`;
+  if (m.conversationId) return `Conversation ${m.conversationId}`;
+  if (m.reportId) return `Report ${m.reportId}`;
+  return "System";
+}
+
+function metadataDetailsLabel(metadata = {}) {
+  const entries = Object.entries(metadata || {}).filter(([key]) => !["userId", "postId", "commentId", "storyId", "reelId", "conversationId", "reportId"].includes(key));
+  if (!entries.length) return "No extra details";
+  return entries.slice(0, 4).map(([key, value]) => `${key}: ${value}`).join(" | ");
+}
+
 function toast(message) {
   const existing = document.querySelector(".toast");
   existing?.remove();
@@ -1325,16 +1343,16 @@ function renderAdmin() {
       <div class="panel admin-panel">
         <h2>Report Queue</h2>
         <div class="table-wrap">
-          <table class="table"><thead><tr><th>Type</th><th>Reason</th><th>Reporter</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-            ${state.reports.map((report) => `<tr><td>${escapeHtml(report.type)}</td><td>${escapeHtml(report.reason)}</td><td>${escapeHtml(userName(report.reporterId))}</td><td>${escapeHtml(report.status)}</td><td><div class="admin-actions"><button class="btn small" data-action="resolve-report" data-id="${report.id}">Resolve</button></div></td></tr>`).join("")}
+          <table class="table"><thead><tr><th>Reporter</th><th>Target</th><th>Reason</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+            ${state.reports.map((report) => `<tr><td>${escapeHtml(userName(report.reporterId))}<br><span class="muted">${escapeHtml(report.reporterId || "-")}</span></td><td>${escapeHtml(report.type)}<br><span class="muted">${escapeHtml(report.targetId || "-")}</span></td><td>${escapeHtml(report.reason)}</td><td>${escapeHtml(report.status)}</td><td><div class="admin-actions"><button class="btn small" data-action="resolve-report" data-id="${report.id}">Resolve</button></div></td></tr>`).join("")}
           </tbody></table>
         </div>
       </div>
       <div class="panel admin-panel">
         <h2>Audit Trail</h2>
         <div class="table-wrap">
-          <table class="table"><thead><tr><th>User</th><th>Action</th><th>IP</th><th>Time</th></tr></thead><tbody>
-            ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}</td><td>${escapeHtml(formatActionLabel(item.action))}<br><span class="muted">${escapeHtml(Object.entries(item.metadata || {}).slice(0, 2).map(([k, v]) => `${k}: ${v}`).join(" · ") || "No metadata")}</span></td><td>${escapeHtml(item.ip || "-")}</td><td>${new Date(item.createdAt).toLocaleString()}<br><span class="muted">${timeAgo(item.createdAt)} ago</span></td></tr>`).join("")}
+          <table class="table"><thead><tr><th>Actor</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th><th>Time</th></tr></thead><tbody>
+            ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}<br><span class="muted">${escapeHtml(item.userId || "-")}</span></td><td>${escapeHtml(formatActionLabel(item.action))}</td><td>${escapeHtml(metadataTargetLabel(item.metadata || {}))}</td><td><span class="muted">${escapeHtml(metadataDetailsLabel(item.metadata || {}))}</span></td><td>${escapeHtml(item.ip || "-")}</td><td>${new Date(item.createdAt).toLocaleString()}<br><span class="muted">${timeAgo(item.createdAt)} ago</span></td></tr>`).join("")}
           </tbody></table>
         </div>
       </div>
