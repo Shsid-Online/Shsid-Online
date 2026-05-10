@@ -28,7 +28,8 @@ const initialState = {
   pendingVerificationWords: [],
   selectedProfileId: null,
   conversationIdentityMode: {},
-  acceptedRequests: {}
+  acceptedRequests: {},
+  contactRemarks: {}
 };
 
 let state = loadState();
@@ -42,6 +43,8 @@ let postsNextOffset = null;
 let reelsNextOffset = null;
 let deepLinkedPostId = "";
 let conversationTab = "inbox";
+let adminChatMonitorFilter = "all";
+let adminActiveConversationId = "";
 
 hydrateAuthFromUrl();
 
@@ -235,13 +238,54 @@ function setConversationIdentityMode(conversationId, mode) {
   saveState();
 }
 
+function getRemarkForUser(userId) {
+  return String(state.contactRemarks?.[userId] || "").trim();
+}
+
+function setRemarkForUser(userId, remark) {
+  if (!userId) return;
+  if (!state.contactRemarks || typeof state.contactRemarks !== "object") state.contactRemarks = {};
+  const clean = String(remark || "").trim().slice(0, 60);
+  if (!clean) delete state.contactRemarks[userId];
+  else state.contactRemarks[userId] = clean;
+  saveState();
+}
+
 function conversationCounterpartName(conversation) {
   const me = currentUser();
   if (!conversation || !me) return "Unknown";
   if (conversation.group) return conversation.title || "Group chat";
   const members = Array.isArray(conversation.members) ? conversation.members : [];
   const otherId = members.find((id) => id !== me.id);
-  return otherId ? userName(otherId) : (conversation.title || "Direct message");
+  const baseName = otherId ? userName(otherId) : (conversation.title || "Direct message");
+  const remark = otherId ? getRemarkForUser(otherId) : "";
+  return remark ? `${remark} (${baseName})` : baseName;
+}
+
+function participantIdentityMode(conversation, userId) {
+  const mine = (conversation?.messages || []).filter((message) => message.authorId === userId);
+  if (!mine.length) return "public";
+  const last = mine[mine.length - 1];
+  return last.anonymous ? "anon" : "public";
+}
+
+function directConversationTitle(conversation) {
+  const members = Array.isArray(conversation?.members) ? conversation.members : [];
+  if (members.length < 2) return conversation?.title || "Direct message";
+  const [a, b] = members.slice(0, 2);
+  const nameA = userName(a);
+  const nameB = userName(b);
+  const modeA = participantIdentityMode(conversation, a);
+  const modeB = participantIdentityMode(conversation, b);
+  if (modeA === "public" && modeB === "public") return `${nameA} and ${nameB}`;
+  return `${nameA}(${modeA})->${nameB}(${modeB})`;
+}
+
+function conversationDisplayTitle(conversation, forAdmin = false) {
+  if (!conversation) return "Conversation";
+  if (conversation.group) return conversation.title || "Group chat";
+  if (forAdmin) return directConversationTitle(conversation);
+  return conversationCounterpartName(conversation);
 }
 
 async function ensureDeepLinkedPostLoaded() {
@@ -1155,6 +1199,8 @@ function renderMessages() {
   const receiverName = active ? conversationCounterpartName(active) : "No receiver";
   const identityMode = active ? getConversationIdentityMode(active.id) : "public";
   const requestView = conversationTab === "requests";
+  const counterpartId = active && !active.group ? (active.members || []).find((memberId) => memberId !== currentUser().id) : "";
+  const counterpartRemark = counterpartId ? getRemarkForUser(counterpartId) : "";
   return page("Messages", "Real-time style direct and group messaging, anonymous sending, reporting, and admin monitoring.", `
     <section class="grid two chat-layout">
       <div class="panel chat-panel chat-panel-list">
@@ -1164,17 +1210,19 @@ function renderMessages() {
           <button class="btn ${conversationTab === "requests" ? "primary" : ""}" data-action="chat-tab-requests">Requests (${requests.length})</button>
         </div>
         <div class="grid chat-list-scroll">${list.length
-          ? list.map((conv) => `<button class="btn ${active?.id === conv.id ? "primary" : ""}" data-action="open-conv" data-id="${conv.id}">${escapeHtml(conversationCounterpartName(conv))} + ${getConversationIdentityMode(conv.id) === "anonymous" ? "anon" : "public"}</button>`).join("")
+          ? list.map((conv) => `<button class="btn ${active?.id === conv.id ? "primary" : ""}" data-action="open-conv" data-id="${conv.id}">${escapeHtml(conversationDisplayTitle(conv))} + ${getConversationIdentityMode(conv.id) === "anonymous" ? "anon" : "public"}</button>`).join("")
           : `<p class="muted">No conversations in this tab yet.</p>`}</div>
       </div>
       <div class="panel chat-panel chat-panel-thread">
-        <div class="between"><strong>${escapeHtml(active ? `${conversationCounterpartName(active)} + ${identityMode === "anonymous" ? "anon" : "public"}` : "No conversation")}</strong><span class="chip">Active</span></div>
+        <div class="between"><strong>${escapeHtml(active ? `${conversationDisplayTitle(active)} + ${identityMode === "anonymous" ? "anon" : "public"}` : "No conversation")}</strong><span class="chip">Active</span></div>
         <p class="muted" style="margin:8px 0 0">Receiver: ${escapeHtml(receiverName)}</p>
+        ${counterpartId ? `<p class="muted" style="margin:6px 0 0">Remark: ${escapeHtml(counterpartRemark || "None")} <button class="btn small" data-action="edit-remark" data-id="${counterpartId}">Edit</button></p>` : ""}
         <div class="grid chat-messages-scroll" style="margin:14px 0">${(active?.messages || []).map((message) => `
-          <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${message.authorId === currentUser().id ? `<span class="muted">· receiver sees: ${message.anonymous ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span>` : ""} ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
+          <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} ${(message.media || []).map((item) => renderChatMediaItem(item)).join("")} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${message.authorId === currentUser().id ? `<span class="muted">· receiver sees: ${message.anonymous ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span>` : ""} ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
         `).join("")}</div>
         ${requestView && active ? `<div class="row" style="margin-bottom:12px"><button class="btn primary" data-action="accept-request" data-id="${active.id}">Accept request</button></div>` : ""}
         <div class="field"><label>Message</label><textarea id="message-text" placeholder="Type a message"></textarea></div>
+        <div class="field"><label>Photo / Video</label><input id="message-media-file" type="file" accept="image/*,video/*" multiple /></div>
         <p class="muted" style="margin:0">Receiver will see you as: <span id="message-identity-preview">${identityMode === "anonymous" ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span></p>
         <div class="row">
           <button class="btn primary" data-action="send-message" data-id="${active?.id || ""}">Send</button>
@@ -1231,8 +1279,35 @@ function renderProfile() {
 function renderAdmin() {
   if (currentUser().role !== "admin") return page("Unavailable", "Admin access required.", "");
   const pending = state.adminVerifications || [];
+  const conversations = (state.conversations || []).slice().sort((a, b) => at(b.createdAt) - at(a.createdAt));
+  const filteredConversations = conversations.filter((conversation) => {
+    if (adminChatMonitorFilter === "direct") return !conversation.group;
+    if (adminChatMonitorFilter === "group") return conversation.group;
+    return true;
+  });
+  const activeMonitored = filteredConversations.find((conversation) => conversation.id === adminActiveConversationId) || filteredConversations[0];
   return page("Admin", "Verification, reports, bans, audit trails, anonymous author visibility, and compliance exports.", `
     <section class="admin-grid">
+      <div class="panel admin-panel">
+        <h2>Chat Monitor</h2>
+        <div class="row" style="margin-bottom:12px">
+          <button class="btn ${adminChatMonitorFilter === "all" ? "primary" : ""}" data-action="admin-chat-filter" data-id="all">All</button>
+          <button class="btn ${adminChatMonitorFilter === "direct" ? "primary" : ""}" data-action="admin-chat-filter" data-id="direct">Direct</button>
+          <button class="btn ${adminChatMonitorFilter === "group" ? "primary" : ""}" data-action="admin-chat-filter" data-id="group">Convo</button>
+        </div>
+        <div class="grid two">
+          <div class="grid" style="max-height:360px;overflow:auto;align-content:start">
+            ${filteredConversations.length
+              ? filteredConversations.map((conversation) => `<button class="btn ${activeMonitored?.id === conversation.id ? "primary" : ""}" data-action="admin-open-chat" data-id="${conversation.id}">${escapeHtml(conversationDisplayTitle(conversation, true))} · ${conversation.group ? "convo" : "direct"}</button>`).join("")
+              : `<p class="muted">No chats for this filter.</p>`
+            }
+          </div>
+          <div class="grid" style="max-height:360px;overflow:auto;align-content:start">
+            <strong>${escapeHtml(activeMonitored ? conversationDisplayTitle(activeMonitored, true) : "No chat selected")}</strong>
+            ${(activeMonitored?.messages || []).map((message) => `<div class="comment"><strong>${escapeHtml(userName(message.authorId, false))}</strong> <span class="muted">(${message.anonymous ? "anon" : "public"})</span><br>${escapeHtml(message.text || "")}</div>`).join("") || `<p class="muted">No messages yet.</p>`}
+          </div>
+        </div>
+      </div>
       <div class="grid three">
         <div class="panel"><span class="muted">Pending verification</span><h2>${pending.length}</h2></div>
         <div class="panel"><span class="muted">Open reports</span><h2>${state.reports.filter((r) => r.status === "pending").length}</h2></div>
@@ -1649,14 +1724,25 @@ async function handleAction(action, id) {
   }
   if (action === "send-message") {
     const text = document.querySelector("#message-text").value.trim();
-    if (!text || !id) return toast("Enter a message");
+    const mediaFiles = [...(document.querySelector("#message-media-file")?.files || [])];
+    if ((!text && !mediaFiles.length) || !id) return toast("Enter a message or attach media");
+    const media = mediaFiles.length ? await uploadFiles(mediaFiles) : [];
     const anonymous = getConversationIdentityMode(id) === "anonymous";
     await apiRequest(`/conversations/${id}/messages`, {
       method: "POST",
-      body: JSON.stringify({ text, anonymous })
+      body: JSON.stringify({ text, media, anonymous })
     });
     document.querySelector("#message-text").value = "";
+    if (document.querySelector("#message-media-file")) document.querySelector("#message-media-file").value = "";
     await refreshConversations();
+  }
+  if (action === "edit-remark") {
+    const existing = getRemarkForUser(id);
+    const next = await askTextPopup("Set Remark", "Remark name", existing || "Enter remark");
+    if (next == null) return;
+    setRemarkForUser(id, next);
+    render();
+    return;
   }
   if (action === "open-conv") activeConversationId = id;
   if (action === "chat-tab-inbox") {
@@ -1762,6 +1848,13 @@ async function handleAction(action, id) {
       render();
     });
     return;
+  }
+  if (action === "admin-chat-filter") {
+    adminChatMonitorFilter = id || "all";
+    adminActiveConversationId = "";
+  }
+  if (action === "admin-open-chat") {
+    adminActiveConversationId = id || "";
   }
   if (action === "new-group") {
     const memberIds = [...new Set(state.users.filter((item) => item.id !== user.id && item.role !== "admin").map((item) => item.id))];
@@ -1917,6 +2010,15 @@ function askIdentityModePopup(receiverName) {
     });
     popup.querySelector("[data-close-popup]")?.addEventListener("click", () => resolve(null));
   });
+}
+
+function renderChatMediaItem(item) {
+  const url = String(item?.url || "");
+  const type = String(item?.type || "");
+  if (!url) return "";
+  if (type.startsWith("image/")) return `<div style="margin-top:8px"><img src="${escapeHtml(url)}" alt="Chat image" style="max-width:260px;border-radius:10px;border:1px solid var(--line)" loading="lazy" /></div>`;
+  if (type.startsWith("video/")) return `<div style="margin-top:8px"><video src="${escapeHtml(url)}" controls preload="metadata" style="max-width:260px;border-radius:10px;border:1px solid var(--line)"></video></div>`;
+  return `<div style="margin-top:8px"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Attachment</a></div>`;
 }
 
 function renderPostMedia(item) {

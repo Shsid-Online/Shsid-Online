@@ -713,7 +713,7 @@ async function handleApi(request, env, url, route) {
         members,
         group: Boolean(row.is_group),
         createdAt: row.created_at,
-        messages: (msgRows.results || []).map((m) => ({ id: m.id, authorId: m.author_id, text: m.text, anonymous: Boolean(m.anonymous), createdAt: m.created_at, deletedAt: m.deleted_at }))
+        messages: (msgRows.results || []).map(messageViewModel)
       });
     }
     return json({ conversations, pagination: { limit: 100, offset: 0, total: conversations.length, nextOffset: null } }, 200);
@@ -749,18 +749,19 @@ async function handleApi(request, env, url, route) {
       const msgRows = await env.DB.prepare("select * from messages where conversation_id = ? and deleted_at is null order by created_at asc limit 500")
         .bind(conversation.id)
         .all();
-      return json({ messages: (msgRows.results || []).map((m) => ({ id: m.id, authorId: m.author_id, text: m.text, anonymous: Boolean(m.anonymous), createdAt: m.created_at, deletedAt: m.deleted_at })), pagination: { limit: 500, offset: 0, total: (msgRows.results || []).length, nextOffset: null } }, 200);
+      return json({ messages: (msgRows.results || []).map(messageViewModel), pagination: { limit: 500, offset: 0, total: (msgRows.results || []).length, nextOffset: null } }, 200);
     }
 
     const text = String(body.text || "").trim();
-    if (!text) return json({ error: "Message text is required" }, 400);
-    const message = { id: id("msg"), conversation_id: conversation.id, author_id: authUser.id, text: text.slice(0, MAX_TEXT_LEN), anonymous: body.anonymous ? 1 : 0, deleted_at: null, created_at: now() };
+    const media = Array.isArray(body.media) ? body.media.slice(0, 5) : [];
+    if (!text && !media.length) return json({ error: "Message text or media is required" }, 400);
+    const message = { id: id("msg"), conversation_id: conversation.id, author_id: authUser.id, text: packMessagePayload(text, media), anonymous: body.anonymous ? 1 : 0, deleted_at: null, created_at: now() };
     await env.DB.prepare("insert into messages (id, conversation_id, author_id, text, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?)")
       .bind(message.id, message.conversation_id, message.author_id, message.text, message.anonymous, message.deleted_at, message.created_at)
       .run();
     await audit(env, authUser.id, "message_created", { conversationId: conversation.id, messageId: message.id }, request);
 
-    return json({ message: { id: message.id, authorId: message.author_id, text: message.text, anonymous: Boolean(message.anonymous), createdAt: message.created_at, deletedAt: null } }, 201);
+    return json({ message: messageViewModel(message) }, 201);
   }
 
   const followMatch = route.match(/^\/users\/([^/]+)\/follow$/);
@@ -921,6 +922,44 @@ function storyViewModel(row) {
     storyType: isPost ? "post" : "text",
     postId,
     text: isPost ? "" : text
+  };
+}
+
+function packMessagePayload(text, media) {
+  const cleanText = String(text || "").trim().slice(0, MAX_TEXT_LEN);
+  const normalizedMedia = (media || []).map((item) => ({
+    url: String(item?.url || "").trim().slice(0, 1000),
+    type: String(item?.type || "application/octet-stream").trim().slice(0, 120),
+    name: String(item?.name || "").trim().slice(0, 260)
+  })).filter((item) => item.url);
+  if (!normalizedMedia.length) return cleanText;
+  return `__MSG__:${JSON.stringify({ text: cleanText, media: normalizedMedia })}`;
+}
+
+function unpackMessagePayload(rawText) {
+  const source = String(rawText || "");
+  if (!source.startsWith("__MSG__:")) return { text: source, media: [] };
+  try {
+    const parsed = JSON.parse(source.slice("__MSG__:".length));
+    return {
+      text: String(parsed?.text || ""),
+      media: Array.isArray(parsed?.media) ? parsed.media : []
+    };
+  } catch {
+    return { text: source, media: [] };
+  }
+}
+
+function messageViewModel(row) {
+  const unpacked = unpackMessagePayload(row.text);
+  return {
+    id: row.id,
+    authorId: row.author_id,
+    text: unpacked.text,
+    media: unpacked.media,
+    anonymous: Boolean(row.anonymous),
+    createdAt: row.created_at,
+    deletedAt: row.deleted_at
   };
 }
 
