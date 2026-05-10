@@ -541,6 +541,35 @@ function askQnaPopup() {
   });
 }
 
+function askCommentPopup() {
+  return new Promise((resolve) => {
+    const popup = showFormPopup("Add Comment", `
+      <form id="site-comment-form" class="grid">
+        <div class="field"><label>Comment</label><textarea id="site-comment-text" placeholder="Write your comment" required></textarea></div>
+        <div class="row">
+          <label><input id="site-comment-anon" type="checkbox"> Post anonymously</label>
+        </div>
+        <div class="row">
+          <button class="btn primary" type="submit">Submit</button>
+          <button class="btn" type="button" data-cancel>Cancel</button>
+        </div>
+      </form>
+    `);
+    popup.querySelector("[data-cancel]")?.addEventListener("click", () => {
+      popup.remove();
+      resolve(null);
+    });
+    popup.querySelector("#site-comment-form")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = String(popup.querySelector("#site-comment-text")?.value || "").trim();
+      if (!text) return;
+      const anonymous = Boolean(popup.querySelector("#site-comment-anon")?.checked);
+      popup.remove();
+      resolve({ text, anonymous });
+    });
+  });
+}
+
 function startResendCooldown(seconds = 30) {
   resendCooldownUntil = Date.now() + seconds * 1000;
 }
@@ -925,7 +954,7 @@ function renderStories() {
       <button class="btn primary" data-action="create-story">Post story</button>
     </section>
     <section class="grid three">${state.stories.map((story) => `
-      <article class="story" style="min-height:220px">
+      <article class="story" style="min-height:220px;cursor:pointer" data-action="view-story" data-id="${story.id}">
         <strong>${escapeHtml(story.text)}</strong>
         <span>${escapeHtml(userName(story.authorId))} · ${story.views.length} views</span>
       </article>
@@ -1278,9 +1307,9 @@ async function handleAction(action, id) {
     if (idx >= 0) state.posts[idx] = normalizePost(result.post);
   }
   if (action === "comment-post") {
-    const text = await askTextPopup("Add Comment", "Comment text", "Write your comment");
-    if (!text) return;
-    await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous: false }) });
+    const payload = await askCommentPopup();
+    if (!payload) return;
+    await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify(payload) });
     await refreshPosts();
   }
   if (action === "report-post") {
@@ -1352,7 +1381,7 @@ async function handleAction(action, id) {
     await refreshStories();
     const story = state.stories.find((item) => item.id === id);
     const views = story?.views?.length ?? 0;
-    if (story) toast(`${story.text} · ${views} views`);
+    if (story) showPopup("Story", `${story.text}\n\n${userName(story.authorId)} · ${views} views`);
   }
   if (action === "create-reel") {
     const title = document.querySelector("#reel-title").value.trim();
