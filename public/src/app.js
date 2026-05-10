@@ -524,7 +524,8 @@ function openMediaViewer(url, type = "") {
   return popup;
 }
 
-function showSharePopup(url, text = "") {
+function showSharePopup(url, text = "", postId = "") {
+  const conversations = (state.conversations || []).slice(0, 50);
   const popup = showFormPopup("Share Post", `
     <div class="grid">
       <div class="field">
@@ -532,9 +533,19 @@ function showSharePopup(url, text = "") {
         <input id="share-link-input" value="${escapeHtml(url)}" readonly />
       </div>
       ${text ? `<p class="muted" style="margin:0">${escapeHtml(text)}</p>` : ""}
+      <div class="field">
+        <label>Send to chat</label>
+        <select id="share-conversation-id" ${conversations.length ? "" : "disabled"}>
+          ${conversations.length
+            ? conversations.map((conv) => `<option value="${escapeHtml(conv.id)}">${escapeHtml(conv.title || "Conversation")}</option>`).join("")
+            : `<option value="">No conversation available</option>`
+          }
+        </select>
+      </div>
       <div class="row">
         <button class="btn primary" type="button" data-copy-share>Copy link</button>
         <a class="btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open</a>
+        <button class="btn" type="button" data-share-chat ${conversations.length ? "" : "disabled"}>Send to chat</button>
         ${navigator.share ? `<button class="btn" type="button" data-native-share>System Share</button>` : ""}
       </div>
     </div>
@@ -550,6 +561,21 @@ function showSharePopup(url, text = "") {
       await navigator.share({ title: "SHSID Social Post", text, url });
     } catch {
       // user cancelled
+    }
+  });
+  popup.querySelector("[data-share-chat]")?.addEventListener("click", async () => {
+    try {
+      const conversationId = String(popup.querySelector("#share-conversation-id")?.value || "");
+      if (!conversationId) return;
+      const messageText = [`Shared post${postId ? ` (${postId})` : ""}:`, text || "", url].filter(Boolean).join("\n");
+      await apiRequest(`/conversations/${conversationId}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ text: messageText, anonymous: false })
+      });
+      toast("Shared to chat");
+      popup.remove();
+    } catch (error) {
+      toast(error.message || "Could not share to chat");
     }
   });
 }
@@ -1454,7 +1480,7 @@ async function handleAction(action, id) {
     const shareUrl = `${window.location.origin}/?post=${encodeURIComponent(id)}`;
     const post = state.posts.find((item) => item.id === id);
     const text = post?.text ? post.text.slice(0, 120) : "Check this post";
-    showSharePopup(shareUrl, text);
+    showSharePopup(shareUrl, text, id);
     return;
   }
   if (action === "toggle-sticky") {
