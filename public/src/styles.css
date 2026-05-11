@@ -747,6 +747,7 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 
 .chat-panel-list,
@@ -755,9 +756,11 @@ button {
 }
 
 .chat-panel-list {
+  max-width: 132px;
   width: 100%;
   min-width: 0;
   padding: 8px;
+  justify-self: stretch;
 }
 
 .chat-panel-list .between {
@@ -895,6 +898,10 @@ body.modal-open {
   .chat-layout {
     grid-template-columns: 112px minmax(0, 1fr);
     gap: 6px;
+  }
+
+  .chat-panel-list {
+    max-width: 112px;
   }
 }
 

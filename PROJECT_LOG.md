@@ -224,3 +224,7 @@
   - Tightened `.chat-panel-list` internal density (panel padding, row spacing, and button size) so controls use less horizontal/vertical space.
   - Targets the exact block: "Conversations / Direct / Create convo / Inbox / Requests / No conversations..."
   - Validation: `npm run check` passed.
+- 2026-05-11: Forced actual Conversations panel window width cap.
+  - Added `min-width: 0` to `.chat-panel` and explicit `max-width` caps on `.chat-panel-list` (132px desktop, 112px <=1120px).
+  - This targets the panel/window width directly to prevent grid/content expansion from making the left block appear unchanged.
+  - Validation: `npm run check` passed.
