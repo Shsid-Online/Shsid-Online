@@ -794,13 +794,11 @@ function askConfirmPopup(title, message, confirmLabel = "Confirm") {
 
 function openMediaViewer(url, type = "") {
   const isVideo = String(type || "").startsWith("video/");
+  if (!isVideo) return null;
   const popup = showFormPopup("Media Viewer", `
     <div class="media-viewer">
       <div class="media-viewer-frame">
-        ${isVideo
-          ? `<video src="${escapeHtml(url)}" controls autoplay playsinline></video>`
-          : `<img src="${escapeHtml(url)}" alt="Media preview" />`
-        }
+        <video src="${escapeHtml(url)}" controls autoplay playsinline></video>
       </div>
     </div>
   `, "media-modal");
@@ -2313,7 +2311,11 @@ async function handleAction(action, id) {
     const views = story?.views?.length ?? 0;
     if (!story) return;
     if (story.mediaUrl) {
-      openMediaViewer(story.mediaUrl, story.mediaType || "");
+      if (String(story.mediaType || "").startsWith("video/")) {
+        openMediaViewer(story.mediaUrl, story.mediaType || "");
+        return;
+      }
+      showPopup("Story", `${story.caption || story.text || ""}\n\n${userName(story.authorId)} · ${views} views`);
       return;
     }
     showPopup("Story", `${story.caption || story.text || ""}\n\n${userName(story.authorId)} · ${views} views`);
@@ -2401,11 +2403,6 @@ async function handleAction(action, id) {
     if (!entry) return;
     showPopup("Q&A", `${entry.question}\n\n${entry.answer || "Waiting for answer"}`);
   }
-  if (action === "open-media") {
-    const media = state.posts.flatMap((p) => p.media || []).find((m) => typeof m === "object" && m.url === id);
-    openMediaViewer(id, media?.type || "");
-    return;
-  }
   saveState();
   render();
 }
@@ -2450,10 +2447,10 @@ function renderPostMedia(item) {
   if (type.startsWith("image/")) {
     const loaded = loadedMediaUrls.has(url);
     return `
-      <button type="button" class="media-tile media-button media-image-tile ${loaded ? "is-loaded" : "is-loading"}" data-action="open-media" data-id="${escapeHtml(url)}">
+      <div class="media-tile media-image-tile ${loaded ? "is-loaded" : "is-loading"}">
         <img class="media-content" src="${escapeHtml(url)}" alt="Post media" loading="lazy" />
         <span class="media-loading-indicator" aria-hidden="true">Loading...</span>
-      </button>
+      </div>
     `;
   }
   if (type.startsWith("video/")) return `<div class="media-tile"><video class="media-content media-video" src="${escapeHtml(url)}" controls preload="metadata"></video></div>`;

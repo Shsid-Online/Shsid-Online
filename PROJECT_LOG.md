@@ -93,3 +93,9 @@
   - Added runtime guard in share submit to reject any non-member conversation IDs.
   - Direct chat labels in share popup now show counterpart name (or remark) instead of generic "Direct message" for student UX clarity.
   - Validation: `npm run check` passed.
+- 2026-05-11: Removed photo magnification behavior and cleaned related action path.
+  - Post feed photos are no longer clickable/magnifiable; they render as static media tiles.
+  - Story media viewer now opens only for video stories; photo stories no longer open magnified.
+  - Removed unused `open-media` action handling branch in `handleAction`.
+  - Kept core popup system intact for share/confirm/forms and kept video viewer behavior.
+  - Validation: `npm run check` passed.
