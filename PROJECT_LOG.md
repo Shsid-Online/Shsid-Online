@@ -391,3 +391,12 @@
   - `userName(..., anonymous=true)` now returns `Anonymous` (was `Anonymous student`).
   - This ensures anonymous post/comment labels show `Anonymous` instead of any unknown/fallback wording.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added optional post title support and updated composer wording.
+  - Replaced previous note with explicit fields:
+    - `Title (not required)`
+    - `Post text (not required)`
+  - Frontend now sends optional `title` in post create payload.
+  - Backend now stores/returns post title (`posts.title`) with auto column migration fallback for existing DBs.
+  - Feed post cards now render title when present.
+  - Updated D1 schema for new environments with `posts.title` column.
+  - Validation: `npm run check` passed.

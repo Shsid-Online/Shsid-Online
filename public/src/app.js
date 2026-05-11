@@ -2549,6 +2549,7 @@ async function handleAction(action, id) {
     deepLinkedPostId = id;
     view = "single-post";
     await ensureDeepLinkedPostLoaded();
+    render();
     return;
   }
   if (action === "back-feed") {
