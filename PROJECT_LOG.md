@@ -340,3 +340,10 @@
   - Worker now auto-detects/adds `users.profile_photo` safely via pragma/alter table fallback.
   - Updated D1 schema with `profile_photo` column for new environments.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added user/media preloading cache and fixed Suggestions visibility.
+  - Suggestions view is now accessible even when account is still pending verification.
+  - Added warm cache function to preload user profile photos, post media, and chat media URLs.
+  - Triggered cache warmup after refreshing students, posts, and conversations.
+  - Wired profile photo rendering into major avatar surfaces (posts, students list, profile view, chat detail previews).
+  - Added avatar image styling for circular cover display.
+  - Validation: `npm run check` passed.
