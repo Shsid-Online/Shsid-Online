@@ -8,7 +8,6 @@ const initialState = {
   authMode: "login",
   users: [],
   posts: [],
-  stories: [],
   reels: [],
   conversations: [],
   reports: [],
@@ -90,7 +89,6 @@ const navItems = [
   ["reels", "RL", "Reels"],
   ["students", "ST", "Students"],
   ["messages", "MS", "Messages"],
-  ["stories", "SR", "Stories"],
   ["profile", "PR", "Profile"],
   ["admin", "AD", "Admin"]
 ];
@@ -468,17 +466,6 @@ async function refreshConversations() {
   }
 }
 
-async function refreshStories() {
-  if (!state.apiToken) return;
-  try {
-    const result = await apiRequest("/stories");
-    state.stories = (result.stories || []).map((story) => ({ ...normalizeStory(story), createdAt: at(story.createdAt) }));
-    saveState();
-  } catch (error) {
-    console.error("refreshStories failed", error);
-  }
-}
-
 async function refreshReels(reset = true) {
   if (!state.apiToken) return;
   try {
@@ -611,7 +598,6 @@ async function bootstrapSession() {
     await refreshPosts();
     await ensureDeepLinkedPostLoaded();
     await refreshConversations();
-    await refreshStories();
     await refreshReels();
     await refreshNotifications();
     await refreshSuggestions();
@@ -698,35 +684,6 @@ function parseJsonObject(value) {
   }
 }
 
-function normalizeStory(story) {
-  const base = story && typeof story === "object" ? { ...story } : {};
-  const rawText = String(base.text || "");
-  const caption = String(base.caption || "");
-  const mediaUrl = String(base.mediaUrl || "");
-  const mediaType = String(base.mediaType || "");
-  if (!caption && !mediaUrl && rawText.startsWith("__STORY__:")) {
-    try {
-      const parsed = JSON.parse(rawText.slice("__STORY__:".length));
-      return {
-        ...base,
-        storyType: "media",
-        caption: String(parsed?.caption || ""),
-        mediaUrl: String(parsed?.mediaUrl || ""),
-        mediaType: String(parsed?.mediaType || "")
-      };
-    } catch {
-      // fall through to safe fallback
-    }
-  }
-  return {
-    ...base,
-    storyType: base.storyType || (mediaUrl ? "media" : "text"),
-    caption: caption || rawText,
-    mediaUrl,
-    mediaType
-  };
-}
-
 function formatActionLabel(action) {
   return String(action || "").replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase());
 }
@@ -756,7 +713,6 @@ function resolveAdminSourceTarget(targetType = "", targetId = "", metadata = {})
   const conversationId = String(m.conversationId || "").trim();
   const postId = String(m.postId || "").trim();
   const commentId = String(m.commentId || "").trim();
-  const storyId = String(m.storyId || "").trim();
   const reelId = String(m.reelId || "").trim();
   const userId = String(m.userId || "").trim();
   if (conversationId || normalizedType === "conversation" || normalizedType === "chat") {
@@ -767,9 +723,6 @@ function resolveAdminSourceTarget(targetType = "", targetId = "", metadata = {})
   }
   if (commentId || normalizedType === "comment") {
     return { kind: "comment", id: commentId || normalizedId, postId: postId || "" };
-  }
-  if (storyId || normalizedType === "story") {
-    return { kind: "story", id: storyId || normalizedId };
   }
   if (reelId || normalizedType === "reel") {
     return { kind: "reel", id: reelId || normalizedId };
@@ -798,18 +751,6 @@ async function openAdminSource(target) {
     deepLinkedPostId = target.postId || target.id;
     await refreshPosts();
     if (target.kind === "comment" && deepLinkedPostId) openCommentPostId = deepLinkedPostId;
-    return;
-  }
-  if (target.kind === "story") {
-    view = "stories";
-    await refreshStories();
-    const story = state.stories.find((item) => item.id === target.id);
-    if (story) {
-      const views = story?.views?.length ?? 0;
-      showPopup("Story Source", `${story.caption || story.text || ""}\n\n${userName(story.authorId)} · ${views} views`);
-    } else {
-      toast("Story source opened in Stories view");
-    }
     return;
   }
   if (target.kind === "reel") {
@@ -1597,7 +1538,7 @@ function renderAuth() {
       </div>
       <div class="auth-art">
         <h1>Private social networking for verified SHSID students.</h1>
-        <p>Feed, reels, stories, messaging, profiles, reports, verification, and admin moderation in one school-only platform.</p>
+        <p>Feed, reels, messaging, profiles, reports, verification, and admin moderation in one school-only platform.</p>
       </div>
     </section>
   `;
@@ -1626,7 +1567,6 @@ function renderView() {
     reels: renderReels,
     students: renderStudents,
     messages: renderMessages,
-    stories: renderStories,
     profile: renderProfile,
     admin: renderAdmin
   };
@@ -1653,24 +1593,13 @@ function renderSinglePost() {
 
 function renderFeed() {
   const posts = [...state.posts].sort((a, b) => Number(b.sticky) - Number(a.sticky) || b.createdAt - a.createdAt);
-  const storyStrip = state.stories.length
-    ? state.stories.map(renderStoryMini).join("")
-    : `<span class="empty-hint">No active stories — open <strong>Stories</strong> to post one.</span>`;
   const postsHtml = posts.length
     ? posts.map(renderPost).join("")
     : `<div class="empty-state">No posts yet. Share something positive or helpful to get the feed started.</div>`;
   return page("Feed", "Posts from followed students, categories, sticky announcements, comments, likes, and reports.", `
-    <section class="panel" style="margin-bottom:16px">
-      <div class="story-strip">${storyStrip}</div>
-    </section>
     <section class="grid">${postsHtml}</section>
     ${postsNextOffset != null ? `<div class="row" style="justify-content:center"><button class="btn" data-action="load-more-posts">Load more posts</button></div>` : ""}
   `, `<button class="btn primary" data-view="post">New post</button>`);
-}
-
-function renderStoryMini(story) {
-  const label = story.caption || (story.mediaUrl ? "Photo/Video story" : (story.text || "Story"));
-  return `<button class="story" data-action="view-story" data-id="${story.id}">${escapeHtml(userName(story.authorId))}<span style="font-size:12px">${escapeHtml(label)} · ${timeAgo(story.createdAt)}</span></button>`;
 }
 
 function renderPost(post) {
@@ -1962,32 +1891,6 @@ async function renameConversation(conversationId) {
   toast("Chat title updated");
 }
 
-function renderStories() {
-  return page("Stories", "24-hour stories with viewers and archives planned for production retention.", `
-    <section class="composer" style="margin-bottom:16px">
-      <div class="field"><label>Caption (optional)</label><input id="story-caption" placeholder="Add a caption (or leave empty)" /></div>
-      <div class="field">
-        <label>Photo or video (optional)</label>
-        <div id="story-dropzone" class="dropzone">Drag and drop a photo/video here, or click to pick file.</div>
-        <input id="story-media-file" type="file" accept="image/*,video/*" />
-        <div id="story-file-chips" class="file-chips"></div>
-      </div>
-      <button class="btn primary" data-action="create-story">Post story</button>
-    </section>
-    <section class="grid three">${state.stories.map((story) => `
-      <article class="story" style="min-height:220px;cursor:pointer" data-action="view-story" data-id="${story.id}">
-        <strong>${escapeHtml(story.caption || "Story")}</strong>
-        ${story.mediaUrl ? `${String(story.mediaType || "").startsWith("video/")
-          ? `<video src="${escapeHtml(story.mediaUrl)}" controls preload="metadata" style="margin-top:8px;width:100%;max-height:180px;border-radius:10px;border:1px solid var(--line)"></video>`
-          : `<img src="${escapeHtml(story.mediaUrl)}" alt="Story media" loading="lazy" style="margin-top:8px;width:100%;max-height:180px;object-fit:cover;border-radius:10px;border:1px solid var(--line)" />`
-        }` : ""}
-        <span>${escapeHtml(userName(story.authorId))} · ${story.views.length} views</span>
-        ${story.authorId === state.currentUserId || currentUser().role === "admin" ? `<button class="btn small danger" data-action="delete-story" data-id="${story.id}" style="margin-top:10px">Delete</button>` : ""}
-      </article>
-    `).join("")}</section>
-  `);
-}
-
 function renderProfile() {
   const me = currentUser();
   if (!me) return page("Profile", "Loading profile…", `<section class="panel"><p class="muted">Please wait.</p></section>`);
@@ -2180,11 +2083,7 @@ function bindEvents() {
     }
   });
 
-  setupDropzone("post-dropzone", "post-media", true);
-  setupDropzone("story-dropzone", "story-media-file", false);
-  bindFileChips("post-media", "post-file-chips");
-  bindFileChips("story-media-file", "story-file-chips");
-
+  setupDropzone("post-dropzone", "post-media", true);  bindFileChips("post-media", "post-file-chips");
 }
 
 function bindAuth() {
@@ -2719,42 +2618,6 @@ async function handleAction(action, id) {
     if (!reason) return;
     await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "conversation", targetId: id, reason }) });
     if (user.role === "admin") await refreshReports();
-  }
-  if (action === "create-story") {
-    const caption = document.querySelector("#story-caption")?.value?.trim() || "";
-    const mediaFile = document.querySelector("#story-media-file")?.files?.[0];
-    let mediaUrl = "";
-    let mediaType = "";
-    if (mediaFile) {
-      const [uploaded] = await uploadFiles([mediaFile], { purpose: "story" });
-      mediaUrl = uploaded?.url || "";
-      mediaType = uploaded?.type || mediaFile.type || "";
-    }
-    if (!caption && !mediaUrl) return toast("Add a caption, a photo/video, or both");
-    await apiRequest("/stories", { method: "POST", body: JSON.stringify({ caption, mediaUrl, mediaType }) });
-    await refreshStories();
-  }
-  if (action === "view-story") {
-    await apiRequest(`/stories/${id}/view`, { method: "POST", body: JSON.stringify({}) });
-    await refreshStories();
-    const story = state.stories.find((item) => item.id === id);
-    const views = story?.views?.length ?? 0;
-    if (!story) return;
-    if (story.mediaUrl) {
-      if (String(story.mediaType || "").startsWith("video/")) {
-        openMediaViewer(story.mediaUrl, story.mediaType || "");
-        return;
-      }
-      showPopup("Story", `${story.caption || story.text || ""}\n\n${userName(story.authorId)} · ${views} views`);
-      return;
-    }
-    showPopup("Story", `${story.caption || story.text || ""}\n\n${userName(story.authorId)} · ${views} views`);
-  }
-  if (action === "delete-story") {
-    const ok = await askConfirmPopup("Delete Story", "This will remove your story immediately. Continue?", "Delete");
-    if (!ok) return;
-    await apiRequest(`/stories/${id}`, { method: "DELETE" });
-    await refreshStories();
   }
   if (action === "create-reel") {
     const title = document.querySelector("#reel-title").value.trim();

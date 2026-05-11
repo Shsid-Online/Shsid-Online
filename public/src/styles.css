@@ -592,26 +592,6 @@ button {
   font-size: 14px;
 }
 
-.story-strip {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 92px;
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-
-.story {
-  display: grid;
-  align-content: end;
-  min-height: 128px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px;
-  background: linear-gradient(160deg, #172033, #0f766e 56%, #f0b429);
-  color: #fff;
-  font-weight: 750;
-}
 
 .video-tile {
   min-height: 280px;
@@ -1132,10 +1112,4 @@ body.modal-open {
 
 .video-tile .reel-link:hover {
   text-decoration: underline;
-}
-
-.story-strip .empty-hint {
-  font-size: 13px;
-  color: var(--muted);
-  padding: 8px 4px;
 }

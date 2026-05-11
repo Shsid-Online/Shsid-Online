@@ -277,3 +277,11 @@
   - Added profile-level `Posts` panel showing that user’s posts (newest first) using existing post cards.
   - Added empty-state copy: `This user has no posts.` when profile has no posts.
   - Validation: `npm run check` passed.
+- 2026-05-11: Removed Stories from the app UI flow.
+  - Removed Stories from navigation and route map.
+  - Removed feed story strip and story mini components.
+  - Removed stories page renderer and all story action handlers (`create/view/delete`).
+  - Removed story composer bindings from event/dropzone wiring.
+  - Removed story-specific CSS blocks (`.story-strip`, `.story`, related empty hint).
+  - Kept legacy story references only in admin metadata labeling for historical audit/report readability.
+  - Validation: `npm run check` passed.
