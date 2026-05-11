@@ -1992,27 +1992,20 @@ function renderSuggestions() {
       </section>
     `);
   }
-  return page("Suggestions", "Submit suggestions to admins and track replies.", `
-    <section class="grid">
-      <div class="panel">
-        <h2 style="margin-top:0">Send Suggestion</h2>
-        <div class="field"><label>Your suggestion</label><textarea id="suggestion-text" placeholder="Share feedback, bug reports, or ideas."></textarea></div>
-        <div class="row"><button class="btn primary" data-action="submit-suggestion">Submit</button></div>
-      </div>
-      <div class="panel">
-        <h2 style="margin-top:0">Your Suggestion History</h2>
-        <div class="grid">
-          ${rows.length ? rows.map((item) => {
-            const parsed = parseSuggestionStatus(item.status);
-            return `
-              <article class="comment" style="margin:0">
-                <p style="margin:0 0 6px">${escapeHtml(item.text || "")}</p>
-                <p class="muted" style="margin:0">Status: ${escapeHtml(parsed.stage)}</p>
-                ${parsed.response ? `<p class="muted" style="margin:6px 0 0"><strong>Admin response:</strong> ${escapeHtml(parsed.response)}</p>` : ""}
-              </article>
-            `;
-          }).join("") : `<p class="muted">No suggestions submitted yet.</p>`}
-        </div>
+  return page("Suggestions", "View your suggestion history and admin responses.", `
+    <section class="panel">
+      <h2 style="margin-top:0">Your Suggestion History</h2>
+      <div class="grid">
+        ${rows.length ? rows.map((item) => {
+          const parsed = parseSuggestionStatus(item.status);
+          return `
+            <article class="comment" style="margin:0">
+              <p style="margin:0 0 6px">${escapeHtml(item.text || "")}</p>
+              <p class="muted" style="margin:0">Status: ${escapeHtml(parsed.stage)}</p>
+              ${parsed.response ? `<p class="muted" style="margin:6px 0 0"><strong>Admin response:</strong> ${escapeHtml(parsed.response)}</p>` : ""}
+            </article>
+          `;
+        }).join("") : `<p class="muted">No suggestions submitted yet.</p>`}
       </div>
     </section>
   `);
@@ -2144,7 +2137,7 @@ function renderAdmin() {
         <h2>Audit Trail</h2>
         <div class="table-wrap">
           <table class="table"><thead><tr><th>Actor</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th><th>Time</th></tr></thead><tbody>
-            ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}<br><span class="muted">${escapeHtml(item.userId || "-")}</span></td><td>${escapeHtml(formatActionLabel(item.action))}</td><td>${escapeHtml(metadataTargetLabel(item.metadata || {}))}<br><button class="btn small" data-action="open-audit-source" data-id="${item.id}">Open Source</button></td><td><span class="muted">${escapeHtml(metadataDetailsLabel(item.metadata || {}))}</span></td><td>${escapeHtml(item.ip || "-")}</td><td>${new Date(item.createdAt).toLocaleString()}<br><span class="muted">${timeAgo(item.createdAt)} ago</span></td></tr>`).join("")}
+            ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}<br><span class="muted">${escapeHtml(item.userId || "-")}</span></td><td>${escapeHtml(formatActionLabel(item.action))}</td><td>${escapeHtml(metadataTargetLabel(item.metadata || {}))}</td><td><span class="muted">${escapeHtml(metadataDetailsLabel(item.metadata || {}))}</span></td><td>${escapeHtml(item.ip || "-")}</td><td>${new Date(item.createdAt).toLocaleString()}<br><span class="muted">${timeAgo(item.createdAt)} ago</span></td></tr>`).join("")}
           </tbody></table>
         </div>
       </div>
