@@ -137,3 +137,8 @@
   - Blocks most action handlers during active upload/publish (except local media-prev/next controls).
   - Prevents users from skipping ahead mid-upload and causing inconsistent flow state.
   - Validation: `npm run check` passed.
+- 2026-05-11: Fixed post video seek/scrub interaction issue.
+  - Added `media-video-tile` path and removed absolute positioning behavior for video media content in feed cards.
+  - Kept fixed frame layout while ensuring native video controls remain fully interactive (including timeline seeking).
+  - Added `playsinline` on post videos for better mobile control behavior.
+  - Validation: `npm run check` passed.

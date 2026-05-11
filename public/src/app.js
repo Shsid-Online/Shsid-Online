@@ -2470,7 +2470,7 @@ function renderPostMedia(item) {
       </div>
     `;
   }
-  if (type.startsWith("video/")) return `<div class="media-tile"><video class="media-content media-video" src="${escapeHtml(url)}" controls preload="metadata"></video></div>`;
+  if (type.startsWith("video/")) return `<div class="media-tile media-video-tile"><video class="media-content media-video" src="${escapeHtml(url)}" controls preload="metadata" playsinline></video></div>`;
   return `<a class="media-tile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open file</a>`;
 }
 

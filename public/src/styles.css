@@ -418,6 +418,14 @@ button {
   background: #000;
 }
 
+.media-video-tile .media-content {
+  position: static;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .media-button {
   border: 0;
   padding: 0;
