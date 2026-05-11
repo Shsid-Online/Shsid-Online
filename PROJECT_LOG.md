@@ -272,3 +272,8 @@
     - user profile source
   - Goal: one-click traceability from report/audit row to underlying content.
   - Validation: `npm run check` passed.
+- 2026-05-11: Improved Profile Q&A usability and added profile Posts window.
+  - Profile Q&A panel now includes `Ask Question` action when viewing another user profile, so Q&A flow is directly accessible from profile.
+  - Added profile-level `Posts` panel showing that user’s posts (newest first) using existing post cards.
+  - Added empty-state copy: `This user has no posts.` when profile has no posts.
+  - Validation: `npm run check` passed.

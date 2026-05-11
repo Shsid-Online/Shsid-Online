@@ -1994,6 +1994,10 @@ function renderProfile() {
   const selected = state.users.find((u) => u.id === state.selectedProfileId);
   const user = selected || me;
   const questions = state.qna.filter((q) => q.profileId === user.id);
+  const userPosts = (state.posts || [])
+    .filter((post) => post.authorId === user.id && !post.deletedAt)
+    .sort((a, b) => at(b.createdAt) - at(a.createdAt));
+  const isOwnProfile = user.id === me.id;
   return page("Profile", "Your public profile, verification status, Q&A box, notification settings, and privacy controls.", `
     <section class="grid two">
       <div class="panel">
@@ -2002,11 +2006,21 @@ function renderProfile() {
         <span class="status ${user.status === "verified" ? "green" : "gold"}">${user.status}</span>
       </div>
       <div class="panel">
-        <h3>Q&A Box</h3>
+        <div class="between" style="margin-bottom:10px">
+          <h3 style="margin:0">Q&A Box</h3>
+          ${!isOwnProfile ? `<button class="btn small" data-action="ask-qna" data-id="${user.id}">Ask Question</button>` : ""}
+        </div>
         ${questions.length ? questions.map((q) => `<button class="comment qna-item" data-action="open-qna" data-id="${q.id}" style="text-align:left"><strong>${escapeHtml(q.question)}</strong><br>${escapeHtml(q.answer || "Waiting for answer")}</button>`).join("") : `<p class="muted">No questions yet.</p>`}
         <h3>Suggestion Box</h3>
         ${state.suggestions.map((s) => `<p class="comment">${escapeHtml(s.text)} · ${escapeHtml(s.status)}</p>`).join("")}
       </div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h3 style="margin-top:0">Posts</h3>
+      ${userPosts.length
+        ? `<div class="grid">${userPosts.map(renderPost).join("")}</div>`
+        : `<p class="muted">This user has no posts.</p>`
+      }
     </section>
   `);
 }
