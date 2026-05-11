@@ -64,3 +64,7 @@
   - Progress now eases to 100% on successful completion, then overlay closes.
   - On upload failure, overlay clears immediately instead of faking completion.
   - Validation: `npm run check` passed.
+- 2026-05-11: Hotfix for blank-page risk after progress update rollout.
+  - Fixed variable shadow/reassignment bug in `uploadVerificationVideoMultipart` (`const` completion response vs completion flag).
+  - This prevents runtime failure in verification upload flow and stabilizes script execution path.
+  - Validation: `npm run check` passed.

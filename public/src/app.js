@@ -2636,7 +2636,7 @@ async function uploadFileMultipart(file, purpose = "media") {
 
 async function uploadVerificationVideoMultipart(file) {
   setUploadProgress("Uploading verification video", 0);
-  let completed = false;
+  let uploadDone = false;
   try {
     const init = await apiRequest("/verification-upload/init", {
       method: "POST",
@@ -2656,14 +2656,14 @@ async function uploadVerificationVideoMultipart(file) {
       onProgress: (percent) => setUploadProgress("Uploading verification video", percent)
     });
 
-    const completed = await apiRequest("/verification-upload/complete", {
+    const completedUpload = await apiRequest("/verification-upload/complete", {
       method: "POST",
       body: JSON.stringify({ key: init.key, uploadId: init.uploadId, parts })
     });
-    completed = true;
-    return completed.mediaUrl;
+    uploadDone = true;
+    return completedUpload.mediaUrl;
   } finally {
-    clearUploadProgress({ immediate: !completed });
+    clearUploadProgress({ immediate: !uploadDone });
   }
 }
 
