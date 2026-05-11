@@ -27,3 +27,21 @@
 - 2026-05-08: Created '/Users/xy-inv/shsid-social-platform/api doc' containing all currently visible API keys/tokens and usage notes.
 - 2026-05-09: Worker deployed successfully via wrangler. All routes (api/*, upload-url, upload/*, health) on www.shsid.online + shsid.online verified and active. Domain currently suspended at Namecheap (clientHold) — awaiting reactivation to test live endpoints.
 - 2026-05-09: Security audit completed. Fixed: user enumeration in /api/auth/start (now returns same response regardless of account state), weak 6-digit OTP upgraded to 8-digit, rate limiting on all auth endpoints (20 req/15min, 5 OTP attempts/15min per IP), input length limits (10k text, 100 name, 200 title, 1k reason), CORS changed from wildcard to explicit origin list, added HSTS/x-xss-protection/referrer-policy headers, file type whitelist on Worker uploads, per-IP rate limiting on Worker (30 req/min), content-type validation. All checks pass. Worker redeployed. Version ID: 1e2f8d9e-3ab0-4ff4-ac3b-be0fc5c22952.
+- 2026-05-11: Fixed post media UX issues in feed.
+  - Enlarged media viewer now opens in a fixed-size modal frame (`.media-modal`) while images/videos scale proportionally with `object-fit: contain`.
+  - Post carousel arrows (`media-prev`/`media-next`) no longer trigger full `render()`; they now update only the target post's media DOM in place.
+  - Added neighbor media preloading (previous/next items) so arrow navigation feels instant without full-screen refresh behavior.
+  - Validation: `npm run check` passed.
+- 2026-05-11: Follow-up fix for post media issues after user retest.
+  - Fixed root cause of fullscreen-refresh feel on media open: `open-media` now returns early, preventing global `saveState(); render();` rerender cycle.
+  - Added strict modal background scroll lock (`body.modal-open`) and automatic unlock on popup removal.
+  - Added feed render-time media neighbor prewarm (`preloadVisiblePostMedia`) so carousel next/prev is preloaded even before first click.
+  - Kept carousel arrows as targeted in-place DOM update only (`updatePostMediaCarousel`) with no full app rerender.
+- 2026-05-11: Implemented second-round fixes for media jump + preload depth + magnified frame scaling.
+  - Backend: added category filtering support for `GET /api/posts` and `GET /api/reels` via `?category=`.
+  - Frontend preload policy:
+    - Added category warm pools that fetch 10 posts and 10 reels for each category (`school`, `lifestyle`, `gaming`, `academic`, `shitpost`) after session bootstrap.
+    - Added ahead-buffer logic to keep at least 20 loaded in main feed/reels (visible 10 + 10 ahead).
+  - Fixed media open top-jump risk: post-image media button now explicitly uses `type="button"`.
+  - Updated magnified viewer geometry: introduced fixed `.media-viewer-frame` and tightened modal dimensions so the background/frame scales consistently while media remains proportional (`object-fit: contain`).
+  - Validation: `npm run check` passed.

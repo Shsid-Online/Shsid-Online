@@ -1,5 +1,6 @@
 const STORAGE_KEY = "shsid-social-state-v2";
 const API_BASE = window.SHSID_API_BASE || (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost" ? "http://127.0.0.1:4174/api" : "https://www.shsid.online/api");
+const CONTENT_CATEGORIES = ["school", "lifestyle", "gaming", "academic", "shitpost"];
 
 const initialState = {
   currentUserId: null,
@@ -51,6 +52,14 @@ let liveChatPollInFlight = false;
 let liveChatSnapshot = "";
 let uploadUi = { active: false, label: "", percent: 0 };
 const postMediaIndexByPostId = {};
+const preloadedMediaUrls = new Set();
+let feedAheadPrefetchInFlight = false;
+let reelsAheadPrefetchInFlight = false;
+let categoryPrefetchInFlight = false;
+let feedCategoryWarmDone = false;
+let reelsCategoryWarmDone = false;
+const prefetchedCategoryPosts = Object.fromEntries(CONTENT_CATEGORIES.map((category) => [category, []]));
+const prefetchedCategoryReels = Object.fromEntries(CONTENT_CATEGORIES.map((category) => [category, []]));
 
 hydrateAuthFromUrl();
 
@@ -318,15 +327,107 @@ async function ensureDeepLinkedPostLoaded() {
   }
 }
 
+async function fetchPostsPage({ offset = 0, limit = 10, category = "" } = {}) {
+  const query = new URLSearchParams();
+  query.set("limit", String(limit));
+  query.set("offset", String(Math.max(0, Number(offset) || 0)));
+  if (category) query.set("category", String(category).trim().toLowerCase());
+  const result = await apiRequest(`/posts?${query.toString()}`);
+  return {
+    posts: (result.posts || []).map(normalizePost),
+    pagination: result.pagination || {}
+  };
+}
+
+async function fetchReelsPage({ offset = 0, limit = 10, category = "" } = {}) {
+  const query = new URLSearchParams();
+  query.set("limit", String(limit));
+  query.set("offset", String(Math.max(0, Number(offset) || 0)));
+  if (category) query.set("category", String(category).trim().toLowerCase());
+  const result = await apiRequest(`/reels?${query.toString()}`);
+  return {
+    reels: (result.reels || []).map((reel) => ({
+      ...reel,
+      createdAt: at(reel.createdAt),
+      likes: Array.isArray(reel.likes) ? reel.likes : []
+    })),
+    pagination: result.pagination || {}
+  };
+}
+
+async function warmCategoryPools() {
+  if (!state.apiToken || categoryPrefetchInFlight) return;
+  categoryPrefetchInFlight = true;
+  try {
+    if (!feedCategoryWarmDone) {
+      await Promise.all(CONTENT_CATEGORIES.map(async (category) => {
+        const { posts } = await fetchPostsPage({ category, limit: 10, offset: 0 });
+        prefetchedCategoryPosts[category] = posts.slice(0, 10);
+      }));
+      feedCategoryWarmDone = true;
+    }
+    if (!reelsCategoryWarmDone) {
+      await Promise.all(CONTENT_CATEGORIES.map(async (category) => {
+        const { reels } = await fetchReelsPage({ category, limit: 10, offset: 0 });
+        prefetchedCategoryReels[category] = reels.slice(0, 10);
+      }));
+      reelsCategoryWarmDone = true;
+    }
+  } catch (error) {
+    console.error("warmCategoryPools failed", error);
+  } finally {
+    categoryPrefetchInFlight = false;
+  }
+}
+
+async function ensurePostsAhead() {
+  if (!state.apiToken || feedAheadPrefetchInFlight || postsNextOffset == null) return;
+  const currentCount = (state.posts || []).length;
+  if (currentCount >= 20) return;
+  feedAheadPrefetchInFlight = true;
+  try {
+    while ((state.posts || []).length < 20 && postsNextOffset != null) {
+      const { posts, pagination } = await fetchPostsPage({ offset: postsNextOffset, limit: 10 });
+      state.posts = [...state.posts, ...posts];
+      postsNextOffset = pagination.nextOffset ?? null;
+    }
+    saveState();
+  } catch (error) {
+    console.error("ensurePostsAhead failed", error);
+  } finally {
+    feedAheadPrefetchInFlight = false;
+  }
+}
+
+async function ensureReelsAhead() {
+  if (!state.apiToken || reelsAheadPrefetchInFlight || reelsNextOffset == null) return;
+  const currentCount = (state.reels || []).length;
+  if (currentCount >= 20) return;
+  reelsAheadPrefetchInFlight = true;
+  try {
+    while ((state.reels || []).length < 20 && reelsNextOffset != null) {
+      const { reels, pagination } = await fetchReelsPage({ offset: reelsNextOffset, limit: 10 });
+      state.reels = [...state.reels, ...reels];
+      reelsNextOffset = pagination.nextOffset ?? null;
+    }
+    saveState();
+  } catch (error) {
+    console.error("ensureReelsAhead failed", error);
+  } finally {
+    reelsAheadPrefetchInFlight = false;
+  }
+}
+
 async function refreshPosts(reset = true) {
   if (!state.apiToken) return;
   try {
     const offset = reset ? 0 : (postsNextOffset ?? 0);
-    const result = await apiRequest(`/posts?limit=10&offset=${offset}`);
-    const next = (result.posts || []).map(normalizePost);
+    const { posts: next, pagination } = await fetchPostsPage({ offset, limit: 10 });
     state.posts = reset ? next : [...state.posts, ...next];
-    postsNextOffset = result.pagination?.nextOffset ?? null;
+    postsNextOffset = pagination?.nextOffset ?? null;
     saveState();
+    void ensurePostsAhead();
+    void warmCategoryPools();
   } catch (error) {
     console.error("refreshPosts failed", error);
   }
@@ -361,15 +462,12 @@ async function refreshReels(reset = true) {
   if (!state.apiToken) return;
   try {
     const offset = reset ? 0 : (reelsNextOffset ?? 0);
-    const result = await apiRequest(`/reels?limit=10&offset=${offset}`);
-    const next = (result.reels || []).map((reel) => ({
-      ...reel,
-      createdAt: at(reel.createdAt),
-      likes: Array.isArray(reel.likes) ? reel.likes : []
-    }));
+    const { reels: next, pagination } = await fetchReelsPage({ offset, limit: 10 });
     state.reels = reset ? next : [...state.reels, ...next];
-    reelsNextOffset = result.pagination?.nextOffset ?? null;
+    reelsNextOffset = pagination?.nextOffset ?? null;
     saveState();
+    void ensureReelsAhead();
+    void warmCategoryPools();
   } catch (error) {
     console.error("refreshReels failed", error);
   }
@@ -656,12 +754,14 @@ function openMediaViewer(url, type = "") {
   const isVideo = String(type || "").startsWith("video/");
   const popup = showFormPopup("Media Viewer", `
     <div class="media-viewer">
-      ${isVideo
-        ? `<video src="${escapeHtml(url)}" controls autoplay playsinline></video>`
-        : `<img src="${escapeHtml(url)}" alt="Media preview" />`
-      }
+      <div class="media-viewer-frame">
+        ${isVideo
+          ? `<video src="${escapeHtml(url)}" controls autoplay playsinline></video>`
+          : `<img src="${escapeHtml(url)}" alt="Media preview" />`
+        }
+      </div>
     </div>
-  `);
+  `, "media-modal");
   return popup;
 }
 
@@ -724,13 +824,19 @@ function showSharePopup(url, text = "", postId = "") {
   });
 }
 
-function showFormPopup(title, bodyHtml) {
+function showFormPopup(title, bodyHtml, modalClass = "") {
   document.querySelector("#site-form-popup")?.remove();
   const node = document.createElement("div");
   node.id = "site-form-popup";
   node.className = "modal-backdrop";
+  const safeModalClass = String(modalClass || "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
+  const nativeRemove = node.remove.bind(node);
+  node.remove = () => {
+    document.body.classList.remove("modal-open");
+    nativeRemove();
+  };
   node.innerHTML = `
-    <div class="modal">
+    <div class="modal ${safeModalClass}">
       <div class="between" style="margin-bottom:10px">
         <strong>${escapeHtml(title)}</strong>
         <button class="btn small" type="button" data-close-popup>Close</button>
@@ -739,6 +845,7 @@ function showFormPopup(title, bodyHtml) {
     </div>
   `;
   document.body.appendChild(node);
+  document.body.classList.add("modal-open");
   node.querySelector("[data-close-popup]")?.addEventListener("click", () => node.remove());
   node.addEventListener("click", (event) => {
     if (event.target === node) node.remove();
@@ -914,6 +1021,7 @@ function render() {
     ${uploadUi.active ? renderUploadOverlay() : ""}
   `;
   bindEvents();
+  preloadVisiblePostMedia();
   syncLiveChatLoop();
 }
 
@@ -1186,7 +1294,7 @@ function renderPost(post) {
   const mediaIndex = Math.max(0, Math.min((postMediaIndexByPostId[post.id] || 0), Math.max(0, media.length - 1)));
   const activeMedia = media.length ? media[mediaIndex] : null;
   return `
-    <article class="card">
+    <article class="card" data-post-id="${post.id}">
       <div class="post-head">
         <div class="avatar ${author?.role === "admin" ? "admin" : ""}">${post.anonymous ? "AN" : initials(author)}</div>
         <div style="min-width:0">
@@ -1790,9 +1898,7 @@ async function handleAction(action, id) {
     if (!total) return;
     const current = postMediaIndexByPostId[id] || 0;
     postMediaIndexByPostId[id] = Math.max(0, current - 1);
-    const y = window.scrollY;
-    render();
-    window.scrollTo({ top: y, behavior: "auto" });
+    updatePostMediaCarousel(id);
     return;
   }
   if (action === "media-next") {
@@ -1801,9 +1907,7 @@ async function handleAction(action, id) {
     if (!total) return;
     const current = postMediaIndexByPostId[id] || 0;
     postMediaIndexByPostId[id] = Math.min(total - 1, current + 1);
-    const y = window.scrollY;
-    render();
-    window.scrollTo({ top: y, behavior: "auto" });
+    updatePostMediaCarousel(id);
     return;
   }
   if (action === "comment-post") {
@@ -2172,6 +2276,7 @@ async function handleAction(action, id) {
   if (action === "open-media") {
     const media = state.posts.flatMap((p) => p.media || []).find((m) => typeof m === "object" && m.url === id);
     openMediaViewer(id, media?.type || "");
+    return;
   }
   saveState();
   render();
@@ -2214,9 +2319,61 @@ function renderPostMedia(item) {
   const url = String(item?.url || "");
   const type = String(item?.type || "");
   if (!url) return `<div class="media-tile">Media</div>`;
-  if (type.startsWith("image/")) return `<button class="media-tile media-button" data-action="open-media" data-id="${escapeHtml(url)}"><img class="media-content" src="${escapeHtml(url)}" alt="Post media" loading="lazy" /></button>`;
+  if (type.startsWith("image/")) return `<button type="button" class="media-tile media-button" data-action="open-media" data-id="${escapeHtml(url)}"><img class="media-content" src="${escapeHtml(url)}" alt="Post media" loading="lazy" /></button>`;
   if (type.startsWith("video/")) return `<div class="media-tile"><video class="media-content media-video" src="${escapeHtml(url)}" controls preload="metadata"></video></div>`;
   return `<a class="media-tile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open file</a>`;
+}
+
+function preloadMediaByType(url, type = "") {
+  const safeUrl = String(url || "").trim();
+  if (!safeUrl || preloadedMediaUrls.has(safeUrl)) return;
+  preloadedMediaUrls.add(safeUrl);
+  if (String(type || "").startsWith("video/")) {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.src = safeUrl;
+    return;
+  }
+  const image = new Image();
+  image.src = safeUrl;
+}
+
+function preloadPostMediaAround(postId) {
+  const post = state.posts.find((item) => item.id === postId);
+  if (!post) return;
+  const media = Array.isArray(post.media) ? post.media : [];
+  const current = Math.max(0, Math.min(postMediaIndexByPostId[postId] || 0, Math.max(0, media.length - 1)));
+  [current - 1, current + 1].forEach((idx) => {
+    const item = media[idx];
+    if (!item || typeof item === "string") return;
+    preloadMediaByType(item.url, item.type || "");
+  });
+}
+
+function updatePostMediaCarousel(postId) {
+  const post = state.posts.find((item) => item.id === postId);
+  const card = document.querySelector(`article.card[data-post-id="${postId}"]`);
+  if (!post || !card) return;
+  const media = Array.isArray(post.media) ? post.media : [];
+  if (!media.length) return;
+  const current = Math.max(0, Math.min(postMediaIndexByPostId[postId] || 0, media.length - 1));
+  postMediaIndexByPostId[postId] = current;
+  const stage = card.querySelector(".media-stage");
+  if (stage) stage.innerHTML = renderPostMedia(media[current]);
+  const prevButton = card.querySelector('[data-action="media-prev"]');
+  if (prevButton) prevButton.disabled = current === 0;
+  const nextButton = card.querySelector('[data-action="media-next"]');
+  if (nextButton) nextButton.disabled = current >= media.length - 1;
+  const dots = card.querySelectorAll(".media-dot");
+  dots.forEach((dot, idx) => dot.classList.toggle("active", idx === current));
+  preloadPostMediaAround(postId);
+}
+
+function preloadVisiblePostMedia() {
+  for (const post of state.posts || []) {
+    if (!post?.id) continue;
+    preloadPostMediaAround(post.id);
+  }
 }
 
 function bindFileChips(inputId, chipsId) {

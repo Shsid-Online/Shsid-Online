@@ -697,7 +697,13 @@ async function handleApi(req, res, url) {
   if (method === "GET" && url.pathname === "/api/posts") {
     const user = requireAuth(req, res);
     if (!user) return;
-    const { items, pagination } = paginate(store.data.posts.filter((post) => !post.deletedAt), url, { limit: 25, maxLimit: 100 });
+    const categoryFilter = String(url.searchParams.get("category") || "").trim().toLowerCase();
+    const visiblePosts = store.data.posts.filter((post) => {
+      if (post.deletedAt) return false;
+      if (!categoryFilter) return true;
+      return String(post.category || "").trim().toLowerCase() === categoryFilter;
+    });
+    const { items, pagination } = paginate(visiblePosts, url, { limit: 25, maxLimit: 100 });
     const posts = items.map((post) => ({
       ...post,
       author: post.anonymous && user.role !== "admin" ? null : userView(store.findUserById(post.authorId), user),
@@ -935,7 +941,12 @@ async function handleApi(req, res, url) {
   if (method === "GET" && url.pathname === "/api/reels") {
     const user = requireAuth(req, res);
     if (!user) return;
-    const { items, pagination } = paginate(store.data.reels, url, { limit: 30, maxLimit: 100 });
+    const categoryFilter = String(url.searchParams.get("category") || "").trim().toLowerCase();
+    const visibleReels = store.data.reels.filter((reel) => {
+      if (!categoryFilter) return true;
+      return String(reel.category || "").trim().toLowerCase() === categoryFilter;
+    });
+    const { items, pagination } = paginate(visibleReels, url, { limit: 30, maxLimit: 100 });
     return sendJson(res, 200, { reels: items, pagination });
   }
 
