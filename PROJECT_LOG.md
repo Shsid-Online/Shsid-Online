@@ -404,3 +404,12 @@
   - `open-post-day` action was returning before the normal bottom-of-handler `render()` path.
   - Added explicit `render()` before return in `open-post-day` branch so click immediately opens single-post view.
   - Validation: `npm run check` passed.
+- 2026-05-11: Replaced Profile nav marker with user avatar/initials.
+  - Sidebar `Profile` tab now uses current user's profile photo as icon when available.
+  - Fallback behavior: shows user initials if no profile photo is set.
+  - Added nav profile-icon styles for proper crop/fit.
+  - Validation: `npm run check` passed.
+- 2026-05-11: Refined initials formatting.
+  - Initials now prioritize first-name + last-name initials (2 letters) when multiple name tokens exist.
+  - Single-token names now use first 2 letters.
+  - Validation: `npm run check` passed.

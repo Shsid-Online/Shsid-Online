@@ -604,7 +604,12 @@ function userName(id, anonymous = false) {
 function initials(user) {
   const name = String(user?.englishName || "").trim();
   if (!name) return "??";
-  return name.split(/\s+/).map((part) => part[0] || "").join("").slice(0, 2).toUpperCase() || "??";
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (!parts.length) return "??";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase() || "??";
+  const first = parts[0][0] || "";
+  const last = parts[parts.length - 1][0] || "";
+  return `${first}${last}`.toUpperCase() || "??";
 }
 
 function renderAvatar(user, extraClass = "") {
