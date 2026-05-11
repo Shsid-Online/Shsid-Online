@@ -650,7 +650,9 @@ function userName(id, anonymous = false) {
 }
 
 function initials(user) {
-  return user.englishName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const name = String(user?.englishName || "").trim();
+  if (!name) return "??";
+  return name.split(/\s+/).map((part) => part[0] || "").join("").slice(0, 2).toUpperCase() || "??";
 }
 
 function timeAgo(ts) {

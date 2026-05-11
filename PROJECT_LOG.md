@@ -80,3 +80,7 @@
   - Added global `window.onerror` and `unhandledrejection` handlers to render a visible in-app fatal panel with reload action.
   - Purpose: avoid blank page with no signal when a client runtime error occurs (including post-flow regressions).
   - Validation: `npm run check` passed.
+- 2026-05-11: Fixed feed crash from missing author object in `initials()`.
+  - `initials(user)` now handles undefined/null user and empty names safely, returning fallback `??`.
+  - Prevents `Cannot read properties of undefined (reading 'englishName')` during `renderPost` when user cache is temporarily incomplete.
+  - Validation: `npm run check` passed.
