@@ -2632,7 +2632,9 @@ async function uploadFiles(files, options = {}) {
       const file = files[index];
       const basePct = Math.floor((index / totalFiles) * 100);
       setUploadProgress("Uploading media", Math.max(1, basePct + 2));
-      const shouldUseMultipart = file.size > 20 * 1024 * 1024 || (file.type || "").startsWith("video/");
+      // Avoid multipart unless necessary. Direct signed PUT is more reliable for
+      // normal-size files and prevents /api/multipart part failures on some runtimes.
+      const shouldUseMultipart = file.size > 24 * 1024 * 1024;
       if (shouldUseMultipart) {
         setUploadProgress("Uploading media", Math.max(uploadUi.percent, basePct + 8));
         const mediaUrl = await uploadFileMultipart(file, purpose);

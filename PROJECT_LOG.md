@@ -126,3 +126,8 @@
   - Added `/multipart/` to binary PUT bypass so request body is not read/parsing attempts are skipped.
   - This prevents `ReadableStream ... has been locked to a reader` errors in multipart upload path.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added client-side multipart bypass for normal-size uploads after 502 chunk failure report.
+  - Post/media uploads now use direct signed PUT for files up to 24 MiB (including most videos), avoiding `/api/multipart/*` path.
+  - Multipart is now reserved only for larger files (>24 MiB).
+  - Goal: bypass unstable chunk endpoint path for common uploads while retaining large-file support.
+  - Validation: `npm run check` passed.
