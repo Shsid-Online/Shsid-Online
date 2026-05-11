@@ -54,3 +54,7 @@
   - Applied same append behavior to drag-and-drop in multi-file zones.
   - Single-file zones (e.g. story/verification) still replace with latest single file as expected.
   - Validation: `npm run check` passed.
+- 2026-05-11: Follow-up fix for file selection persistence (single-file selection path included).
+  - Preserved stored file selections across UI re-renders by restoring `input.files` from in-memory store during `bindFileChips`.
+  - Prevents first selected file from disappearing when selecting additional files after a re-render.
+  - Validation: `npm run check` passed.

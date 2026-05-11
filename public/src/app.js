@@ -2461,7 +2461,13 @@ function bindFileChips(inputId, chipsId) {
   const chips = document.querySelector(`#${chipsId}`);
   if (!input || !chips) return;
   const isMultiple = input.hasAttribute("multiple");
-  inputFileStore[inputId] = [...(input.files || [])];
+  if (inputFileStore[inputId]?.length) {
+    inputFileSyncLock.add(inputId);
+    setInputFiles(input, inputFileStore[inputId]);
+    inputFileSyncLock.delete(inputId);
+  } else {
+    inputFileStore[inputId] = [...(input.files || [])];
+  }
   const draw = () => {
     const files = inputFileStore[inputId] || [...(input.files || [])];
     chips.innerHTML = files.map((file) => `<span class="chip">${escapeHtml(file.name)}</span>`).join("");
