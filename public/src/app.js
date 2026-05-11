@@ -254,13 +254,20 @@ function classifyConversations() {
   if (!state.acceptedRequests || typeof state.acceptedRequests !== "object") state.acceptedRequests = {};
   if (!state.rejectedRequests || typeof state.rejectedRequests !== "object") state.rejectedRequests = {};
   const inbox = [];
-  const requests = [];
+  const requestsReceived = [];
+  const requestsSent = [];
   for (const conv of all) {
     if (state.rejectedRequests?.[conv.id]) continue;
     if (state.acceptedRequests?.[conv.id]) inbox.push(conv);
-    else requests.push(conv);
+    else {
+      const otherId = (conv.members || []).find((m) => m !== meId);
+      const firstMessage = (conv.messages || [])[0];
+      const isSender = firstMessage && firstMessage.authorId === meId;
+      if (isSender) requestsSent.push(conv);
+      else requestsReceived.push(conv);
+    }
   }
-  return { inbox, requests };
+  return { inbox, requests: requestsReceived, requestsSent };
 }
 
 function getConversationIdentityMode(conversationId) {
@@ -1783,12 +1790,14 @@ function renderStudents() {
 }
 
 function renderMessages() {
-  const { inbox, requests } = classifyConversations();
-  const list = conversationTab === "requests" ? requests : inbox;
-  const active = list.find((item) => item.id === activeConversationId) || list[0] || inbox[0] || requests[0];
+  const { inbox, requests, requestsSent } = classifyConversations();
+  const list = conversationTab === "requests" ? requests : (conversationTab === "sent" ? requestsSent : inbox);
+  const active = list.find((item) => item.id === activeConversationId) || list[0] || inbox[0] || requests[0] || requestsSent[0];
   const requestView = conversationTab === "requests";
+  const sentView = conversationTab === "sent";
   const accepted = active ? Boolean(state.acceptedRequests?.[active.id]) : false;
   const firstAuthorId = active?.messages?.[0]?.authorId || "";
+  const isMeSender = active && firstAuthorId === currentUser().id;
   const isReceiverPending = requestView && active && !accepted && firstAuthorId && firstAuthorId !== currentUser().id;
   const canSendInCurrentThread = !isReceiverPending;
   return page("Messages", "Real-time style direct and group messaging, anonymous sending, reporting, and admin monitoring.", `
@@ -1801,9 +1810,10 @@ function renderMessages() {
         <div class="chat-section chat-tab-section row" style="margin-bottom:12px">
           <button class="btn chat-tab-btn ${conversationTab === "inbox" ? "primary" : ""}" data-action="chat-tab-inbox">Inbox (${inbox.length})</button>
           <button class="btn chat-tab-btn ${conversationTab === "requests" ? "primary" : ""}" data-action="chat-tab-requests">Requests (${requests.length})</button>
+          <button class="btn chat-tab-btn ${conversationTab === "sent" ? "primary" : ""}" data-action="chat-tab-sent">Sent (${requestsSent.length})</button>
         </div>
         <div class="grid chat-list-scroll">${list.length
-          ? list.map((conv) => `<button class="btn ${active?.id === conv.id ? "primary" : ""}" data-action="open-conv" data-id="${conv.id}">${escapeHtml(conversationDisplayTitle(conv))}</button>`).join("")
+          ? list.map((conv) => `<button class="btn ${active?.id === conv.id ? "conv-selected" : ""}" data-action="open-conv" data-id="${conv.id}">${escapeHtml(conversationDisplayTitle(conv))}</button>`).join("")
           : `<p class="muted">No conversations in this tab yet.</p>`}</div>
       </div>
       <div class="panel chat-panel chat-panel-thread">
@@ -1818,22 +1828,23 @@ function renderMessages() {
         <div class="grid chat-messages-scroll" style="margin:14px 0">${(active?.messages || []).map((message) => `
           <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} ${(message.media || []).map((item) => renderChatMediaItem(item)).join("")} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
         `).join("")}</div>
-        ${requestView && active && !accepted ? `<div class="row" style="margin-bottom:12px"><button class="btn primary" data-action="accept-request" data-id="${active.id}">Accept request</button><button class="btn danger" data-action="reject-request" data-id="${active.id}">Reject request</button></div>` : ""}
-        ${isReceiverPending ? `<p class="muted" style="margin:0 0 10px">Accept this request before sending messages.</p>` : ""}
+        ${sentView ? `<p class="muted" style="margin:0 0 12px">Waiting for the other person to accept your request.</p>` : ""}
+        ${requestView && active && !accepted && isReceiverPending ? `<div class="row" style="margin-bottom:12px"><button class="btn primary" data-action="accept-request" data-id="${active.id}">Accept</button><button class="btn danger" data-action="reject-request" data-id="${active.id}">Reject</button></div>` : ""}
+        ${isReceiverPending && !sentView ? `<p class="muted" style="margin:0 0 10px">Accept this request before sending messages.</p>` : ""}
         <div id="message-attach-strip" class="chat-attach-strip"></div>
-        <div class="field chat-message-field"><label>Message</label><textarea id="message-text" class="chat-message-input" placeholder="Type a message"></textarea></div>
+        <div class="field chat-message-field"><label>Message</label><textarea id="message-text" class="chat-message-input" placeholder="Type a message" ${sentView ? "disabled" : ""}></textarea></div>
         <div class="row chat-compose-row">
           <label class="btn small icon-btn" title="Attach photo or video">
-            <input id="message-media-file" type="file" accept="image/*,video/*" multiple />
+            <input id="message-media-file" type="file" accept="image/*,video/*" multiple ${sentView ? "disabled" : ""} />
             <span aria-hidden="true">🖼</span>
           </label>
           <label class="btn small icon-btn" title="Attach file">
-            <input id="message-doc-file" type="file" accept=".pdf,application/pdf" multiple />
+            <input id="message-doc-file" type="file" accept=".pdf,application/pdf" multiple ${sentView ? "disabled" : ""} />
             <span aria-hidden="true">📄</span>
           </label>
         </div>
         <div class="row">
-          <button class="btn primary" data-action="send-message" data-id="${active?.id || ""}" ${canSendInCurrentThread ? "" : "disabled"}>Send</button>
+          <button class="btn primary" data-action="send-message" data-id="${active?.id || ""}" ${canSendInCurrentThread && !sentView ? "" : "disabled"}>Send</button>
         </div>
       </div>
     </section>
@@ -1866,12 +1877,29 @@ function showConversationDetailsPopup(conversation) {
         <div class="grid">${memberRows}</div>
         <div class="row">
           <button class="btn small" type="button" data-rename-conversation="${conversation.id}">Rename Chat</button>
+          <button class="btn small danger" type="button" data-delete-conversation="${conversation.id}">Delete Chat</button>
         </div>
       </div>
     `);
     popup.querySelector('[data-rename-conversation]')?.addEventListener("click", async () => {
       popup.remove();
       await renameConversation(conversation.id);
+    });
+    popup.querySelector('[data-delete-conversation]')?.addEventListener("click", async () => {
+      popup.remove();
+      const ok = await askConfirmPopup("Delete Chat", "Delete this chat for you? Others will still see it.", "Delete");
+      if (!ok) return;
+      if (!state.acceptedRequests || typeof state.acceptedRequests !== "object") state.acceptedRequests = {};
+      state.acceptedRequests[conversation.id] = false;
+      state.deletedChats = state.deletedChats || {};
+      state.deletedChats[conversation.id] = true;
+      saveState();
+      if (activeConversationId === conversation.id) {
+        const { inbox, requests } = classifyConversations();
+        activeConversationId = inbox[0]?.id || requests[0]?.id || "";
+      }
+      toast("Chat deleted");
+      render();
     });
     return;
   }
@@ -1896,7 +1924,7 @@ function showConversationDetailsPopup(conversation) {
       <div class="row">
         <button class="btn small" type="button" data-action="view-profile" data-id="${user.id}">Open Full Profile</button>
         <button class="btn small" type="button" data-action="edit-remark" data-id="${user.id}">Set Remark</button>
-        <button class="btn small" type="button" data-rename-conversation="${conversation.id}">Rename Chat</button>
+        <button class="btn small" type="button" data-delete-conversation="${conversation.id}">Delete Chat</button>
       </div>
     </div>
   `);
@@ -1908,9 +1936,21 @@ function showConversationDetailsPopup(conversation) {
     await refreshQnaForProfile(user.id);
     render();
   });
-  popup.querySelector('[data-rename-conversation]')?.addEventListener("click", async () => {
+  popup.querySelector('[data-delete-conversation]')?.addEventListener("click", async () => {
     popup.remove();
-    await renameConversation(conversation.id);
+    const ok = await askConfirmPopup("Delete Chat", "Delete this chat for you? Others will still see it.", "Delete");
+    if (!ok) return;
+    if (!state.acceptedRequests || typeof state.acceptedRequests !== "object") state.acceptedRequests = {};
+    state.acceptedRequests[conversation.id] = false;
+    state.deletedChats = state.deletedChats || {};
+    state.deletedChats[conversation.id] = true;
+    saveState();
+    if (activeConversationId === conversation.id) {
+      const { inbox, requests } = classifyConversations();
+      activeConversationId = inbox[0]?.id || requests[0]?.id || "";
+    }
+    toast("Chat deleted");
+    render();
   });
 }
 
@@ -2728,6 +2768,11 @@ async function handleAction(action, id) {
   if (action === "chat-tab-requests") {
     conversationTab = "requests";
     const next = classifyConversations().requests[0];
+    activeConversationId = next?.id || activeConversationId;
+  }
+  if (action === "chat-tab-sent") {
+    conversationTab = "sent";
+    const next = classifyConversations().requestsSent[0];
     activeConversationId = next?.id || activeConversationId;
   }
   if (action === "accept-request") {
