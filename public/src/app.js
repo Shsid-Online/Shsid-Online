@@ -1747,6 +1747,7 @@ function bindEvents() {
 
   document.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", async (event) => {
+      event.preventDefault();
       event.stopPropagation();
       if (button.dataset.busy === "1") return;
       button.dataset.busy = "1";
@@ -1968,6 +1969,7 @@ function bindAuth() {
 
 async function handleAction(action, id) {
   const user = currentUser();
+  if (action === "open-media") return;
   if (action === "logout") {
     try {
       if (state.apiToken) await apiRequest("/auth/logout", { method: "POST", body: JSON.stringify({}) });

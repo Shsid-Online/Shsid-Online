@@ -103,3 +103,7 @@
   - Share popup now sources selectable chats from `classifyConversations().inbox`.
   - This blocks sharing to requests/unaccepted conversations and enforces "accepted into inbox" requirement.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added anti-phantom media action guard for residual magnification flashes.
+  - `bindEvents` data-action click handler now calls `event.preventDefault()` for all action buttons.
+  - `handleAction` now explicitly no-ops `open-media` to neutralize stale cached DOM/script action payloads.
+  - Validation: `npm run check` passed.
