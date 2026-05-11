@@ -1133,9 +1133,9 @@ function render() {
           ${visibleNav.map(([id, icon, label]) => `<button class="${view === id ? "active" : ""}" data-view="${id}"><span class="nav-ico ${id === "profile" ? "nav-ico-profile" : ""}">${id === "profile" ? profileIconHtml : icon}</span>${label}</button>`).join("")}
         </nav>
         <button class="session session-card-btn" data-action="open-settings">
-          <strong>${escapeHtml(user.englishName)}</strong>
-          <span>Grade ${user.grade}, Class ${user.classNo}</span>
-          <span>${user.role === "admin" ? "Admin" : user.status}</span>
+          <span class="session-name">${escapeHtml(user.englishName)}</span>
+          <span class="session-info">${escapeHtml(user.chineseName)} · G${user.grade} C${user.classNo}</span>
+          <span class="session-status">${user.role === "admin" ? "Admin" : user.status}</span>
         </button>
         <button class="btn small ghost" data-action="logout" style="margin-top:10px;color:#fff;border-color:rgba(255,255,255,.25)">Logout</button>
       </aside>
