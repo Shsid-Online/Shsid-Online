@@ -63,6 +63,8 @@ let feedVideoPlaybackTickScheduled = false;
 let feedVideoManualControlVideo = null;
 let feedVideoManualControlUntil = 0;
 let feedVideoViewportListenersBound = false;
+const feedVideoUserPaused = new WeakSet();
+const feedVideoProgrammaticPause = new WeakSet();
 const preloadedMediaUrls = new Set();
 const loadedMediaUrls = new Set();
 const inputFileStore = {};
@@ -1126,9 +1128,13 @@ function syncMostVisibleFeedVideo() {
   }
   for (const video of videos) {
     if (video !== winner || bestRatio < 0.45) {
-      if (!video.paused) video.pause();
+      if (!video.paused) {
+        feedVideoProgrammaticPause.add(video);
+        video.pause();
+      }
       continue;
     }
+    if (feedVideoUserPaused.has(video)) continue;
     if (video.paused) {
       const tryPlay = () => video.play().catch(() => {
         // Ignore autoplay blocks; user can still tap play.
@@ -1165,6 +1171,18 @@ function setupFeedVideoAutoplay() {
     video.addEventListener("mousedown", markManual);
     video.addEventListener("touchstart", markManual, { passive: true });
     video.addEventListener("seeking", markManual);
+    video.addEventListener("pause", () => {
+      if (feedVideoProgrammaticPause.has(video)) {
+        feedVideoProgrammaticPause.delete(video);
+        return;
+      }
+      feedVideoUserPaused.add(video);
+      markManual();
+    });
+    video.addEventListener("play", () => {
+      feedVideoUserPaused.delete(video);
+      scheduleFeedVideoPlaybackSync();
+    });
     video.addEventListener("play", scheduleFeedVideoPlaybackSync);
   });
   if (!feedVideoViewportListenersBound) {
