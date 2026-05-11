@@ -219,3 +219,8 @@
   - Added CSS rules to use 2-column app layout (sidebar + main) and hide `.rightbar` in Messages, matching admin-width behavior.
   - Reason: conversation-list slimming was already live, but right sidebar still consumed major width and masked the effect.
   - Validation: `npm run check` passed.
+- 2026-05-11: Slimmed the Conversations panel content itself.
+  - Reduced `chat-layout` list column to `170px` desktop and `150px` at <=1120px.
+  - Tightened `.chat-panel-list` internal density (panel padding, row spacing, and button size) so controls use less horizontal/vertical space.
+  - Targets the exact block: "Conversations / Direct / Create convo / Inbox / Requests / No conversations..."
+  - Validation: `npm run check` passed.

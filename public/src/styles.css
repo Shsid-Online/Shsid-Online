@@ -737,7 +737,7 @@ button {
 }
 
 .chat-layout {
-  grid-template-columns: minmax(0, 210px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 170px) minmax(0, 1fr);
   gap: 10px;
   align-items: start;
 }
@@ -756,6 +756,21 @@ button {
 
 .chat-panel-list {
   width: 100%;
+  padding: 10px;
+}
+
+.chat-panel-list .between {
+  align-items: flex-start;
+}
+
+.chat-panel-list .row {
+  gap: 6px;
+}
+
+.chat-panel-list .btn {
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 12px;
 }
 
 .chat-list-scroll {
@@ -869,7 +884,7 @@ body.modal-open {
   }
 
   .chat-layout {
-    grid-template-columns: minmax(0, 180px) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 150px) minmax(0, 1fr);
     gap: 8px;
   }
 }
