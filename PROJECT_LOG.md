@@ -299,3 +299,9 @@
   - Rebuilt monitor layout using chat-like two-pane structure with a compact conversation list and smaller thread view.
   - Added dedicated compact styles for admin chat monitor sizing/spacing (`.admin-chat-layout`, `.admin-chat-message`).
   - Validation: `npm run check` passed.
+- 2026-05-11: Humanized Admin Report Queue readability.
+  - Reworked report row wording to plain language: `Reporter reported Target`.
+  - Added target context resolver for clearer labels (post author, direct/group chat title).
+  - Added report preview column using live source content (post text/media summary or latest chat message).
+  - Kept raw type/target ID and existing `Open Source`/`Resolve` actions for audit traceability.
+  - Validation: `npm run check` passed.

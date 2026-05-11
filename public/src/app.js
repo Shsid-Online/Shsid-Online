@@ -642,6 +642,44 @@ function metadataDetailsLabel(metadata = {}) {
   return entries.slice(0, 4).map(([key, value]) => `${key}: ${value}`).join(" | ");
 }
 
+function reportTargetHumanLabel(report = {}) {
+  const type = String(report.type || "").toLowerCase();
+  const targetId = String(report.targetId || "");
+  if (type === "post") {
+    const post = state.posts.find((item) => item.id === targetId);
+    if (post) return `Post by ${userName(post.authorId, post.anonymous)}`;
+    return "Post";
+  }
+  if (type === "conversation" || type === "chat") {
+    const convo = state.conversations.find((item) => item.id === targetId);
+    if (convo) return convo.group ? `Group chat: ${conversationDisplayTitle(convo, true)}` : `Direct chat: ${conversationDisplayTitle(convo, true)}`;
+    return "Conversation";
+  }
+  return type ? `${type[0].toUpperCase()}${type.slice(1)}` : "Content";
+}
+
+function reportTargetPreview(report = {}) {
+  const type = String(report.type || "").toLowerCase();
+  const targetId = String(report.targetId || "");
+  if (type === "post") {
+    const post = state.posts.find((item) => item.id === targetId);
+    if (!post) return "Preview unavailable. Source may have been deleted or not loaded yet.";
+    const body = String(post.text || "").trim();
+    if (body) return body.slice(0, 160);
+    if (Array.isArray(post.media) && post.media.length) return `Media post (${post.media.length} attachment${post.media.length > 1 ? "s" : ""})`;
+    return "Empty text post.";
+  }
+  if (type === "conversation" || type === "chat") {
+    const convo = state.conversations.find((item) => item.id === targetId);
+    if (!convo) return "Preview unavailable. Conversation may be unavailable.";
+    const latest = (convo.messages || []).slice().sort((a, b) => at(b.createdAt) - at(a.createdAt))[0];
+    if (!latest) return "No messages in conversation yet.";
+    const body = String(latest.text || "").trim();
+    return body ? `Latest: ${body.slice(0, 140)}` : "Latest message contains attachment only.";
+  }
+  return `Target ID: ${targetId || "-"}`;
+}
+
 function resolveAdminSourceTarget(targetType = "", targetId = "", metadata = {}) {
   const normalizedType = String(targetType || "").trim().toLowerCase();
   const normalizedId = String(targetId || "").trim();
@@ -1879,8 +1917,8 @@ function renderAdmin() {
       <div class="panel admin-panel">
         <h2>Report Queue</h2>
         <div class="table-wrap">
-          <table class="table"><thead><tr><th>Reporter</th><th>Target</th><th>Reason</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-            ${state.reports.map((report) => `<tr><td>${escapeHtml(userName(report.reporterId))}<br><span class="muted">${escapeHtml(report.reporterId || "-")}</span></td><td>${escapeHtml(report.type)}<br><span class="muted">${escapeHtml(report.targetId || "-")}</span></td><td>${escapeHtml(report.reason)}</td><td>${escapeHtml(report.status)}</td><td><div class="admin-actions"><button class="btn small" data-action="open-report-source" data-id="${report.id}">Open Source</button><button class="btn small" data-action="resolve-report" data-id="${report.id}">Resolve</button></div></td></tr>`).join("")}
+          <table class="table"><thead><tr><th>Report</th><th>Reason</th><th>Preview</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+            ${state.reports.map((report) => `<tr><td><strong>${escapeHtml(userName(report.reporterId))}</strong> reported <strong>${escapeHtml(reportTargetHumanLabel(report))}</strong><br><span class="muted">${escapeHtml(report.type || "-")} · ${escapeHtml(report.targetId || "-")}</span></td><td>${escapeHtml(report.reason)}</td><td><span class="muted">${escapeHtml(reportTargetPreview(report))}</span></td><td>${escapeHtml(report.status)}</td><td><div class="admin-actions"><button class="btn small" data-action="open-report-source" data-id="${report.id}">Open Source</button><button class="btn small" data-action="resolve-report" data-id="${report.id}">Resolve</button></div></td></tr>`).join("")}
           </tbody></table>
         </div>
       </div>
