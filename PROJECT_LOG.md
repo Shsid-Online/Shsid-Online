@@ -228,3 +228,7 @@
   - Added `min-width: 0` to `.chat-panel` and explicit `max-width` caps on `.chat-panel-list` (132px desktop, 112px <=1120px).
   - This targets the panel/window width directly to prevent grid/content expansion from making the left block appear unchanged.
   - Validation: `npm run check` passed.
+- 2026-05-11: Rebalanced Messages layout to 1:3 split.
+  - Removed hard-capped conversation list widths and switched `chat-layout` to `minmax(0, 1fr) minmax(0, 3fr)` on desktop and <=1120px.
+  - Ensures the thread pane fills the space freed by the slimmer conversation area while avoiding over-compression.
+  - Validation: `npm run check` passed.
