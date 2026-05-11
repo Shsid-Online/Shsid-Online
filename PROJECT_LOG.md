@@ -261,3 +261,14 @@
   - Added attachment rendering in admin monitor via `renderChatMediaItem(...)`.
   - Kept anon/public label and explicit `(real: ...)` indicator for anonymous entries in admin monitor.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added direct source-jump actions for Reports and Audit Logs.
+  - Reports table now includes `Open Source` action per row.
+  - Audit table now includes `Open Source` action near the target column.
+  - Added source resolver/router (`resolveAdminSourceTarget`, `openAdminSource`) to route admin to:
+    - chat monitor conversation
+    - feed post/comment source
+    - stories source
+    - reels source
+    - user profile source
+  - Goal: one-click traceability from report/audit row to underlying content.
+  - Validation: `npm run check` passed.

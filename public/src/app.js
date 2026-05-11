@@ -749,6 +749,84 @@ function metadataDetailsLabel(metadata = {}) {
   return entries.slice(0, 4).map(([key, value]) => `${key}: ${value}`).join(" | ");
 }
 
+function resolveAdminSourceTarget(targetType = "", targetId = "", metadata = {}) {
+  const normalizedType = String(targetType || "").trim().toLowerCase();
+  const normalizedId = String(targetId || "").trim();
+  const m = metadata && typeof metadata === "object" ? metadata : {};
+  const conversationId = String(m.conversationId || "").trim();
+  const postId = String(m.postId || "").trim();
+  const commentId = String(m.commentId || "").trim();
+  const storyId = String(m.storyId || "").trim();
+  const reelId = String(m.reelId || "").trim();
+  const userId = String(m.userId || "").trim();
+  if (conversationId || normalizedType === "conversation" || normalizedType === "chat") {
+    return { kind: "conversation", id: conversationId || normalizedId };
+  }
+  if (postId || normalizedType === "post") {
+    return { kind: "post", id: postId || normalizedId };
+  }
+  if (commentId || normalizedType === "comment") {
+    return { kind: "comment", id: commentId || normalizedId, postId: postId || "" };
+  }
+  if (storyId || normalizedType === "story") {
+    return { kind: "story", id: storyId || normalizedId };
+  }
+  if (reelId || normalizedType === "reel") {
+    return { kind: "reel", id: reelId || normalizedId };
+  }
+  if (userId || normalizedType === "user") {
+    return { kind: "user", id: userId || normalizedId };
+  }
+  if (normalizedId) return { kind: normalizedType || "unknown", id: normalizedId };
+  return null;
+}
+
+async function openAdminSource(target) {
+  if (!target?.id) {
+    toast("No source target available");
+    return;
+  }
+  if (target.kind === "conversation") {
+    view = "admin";
+    adminChatMonitorFilter = "all";
+    adminActiveConversationId = target.id;
+    await refreshConversations();
+    return;
+  }
+  if (target.kind === "post" || target.kind === "comment") {
+    view = "feed";
+    deepLinkedPostId = target.postId || target.id;
+    await refreshPosts();
+    if (target.kind === "comment" && deepLinkedPostId) openCommentPostId = deepLinkedPostId;
+    return;
+  }
+  if (target.kind === "story") {
+    view = "stories";
+    await refreshStories();
+    const story = state.stories.find((item) => item.id === target.id);
+    if (story) {
+      const views = story?.views?.length ?? 0;
+      showPopup("Story Source", `${story.caption || story.text || ""}\n\n${userName(story.authorId)} · ${views} views`);
+    } else {
+      toast("Story source opened in Stories view");
+    }
+    return;
+  }
+  if (target.kind === "reel") {
+    view = "reels";
+    await refreshReels();
+    toast(`Reel source: ${target.id}`);
+    return;
+  }
+  if (target.kind === "user") {
+    state.selectedProfileId = target.id;
+    view = "profile";
+    await refreshQnaForProfile(target.id);
+    return;
+  }
+  toast("Unsupported source target");
+}
+
 function toast(message) {
   const existing = document.querySelector(".toast");
   existing?.remove();
@@ -1989,7 +2067,7 @@ function renderAdmin() {
         <h2>Report Queue</h2>
         <div class="table-wrap">
           <table class="table"><thead><tr><th>Reporter</th><th>Target</th><th>Reason</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-            ${state.reports.map((report) => `<tr><td>${escapeHtml(userName(report.reporterId))}<br><span class="muted">${escapeHtml(report.reporterId || "-")}</span></td><td>${escapeHtml(report.type)}<br><span class="muted">${escapeHtml(report.targetId || "-")}</span></td><td>${escapeHtml(report.reason)}</td><td>${escapeHtml(report.status)}</td><td><div class="admin-actions"><button class="btn small" data-action="resolve-report" data-id="${report.id}">Resolve</button></div></td></tr>`).join("")}
+            ${state.reports.map((report) => `<tr><td>${escapeHtml(userName(report.reporterId))}<br><span class="muted">${escapeHtml(report.reporterId || "-")}</span></td><td>${escapeHtml(report.type)}<br><span class="muted">${escapeHtml(report.targetId || "-")}</span></td><td>${escapeHtml(report.reason)}</td><td>${escapeHtml(report.status)}</td><td><div class="admin-actions"><button class="btn small" data-action="open-report-source" data-id="${report.id}">Open Source</button><button class="btn small" data-action="resolve-report" data-id="${report.id}">Resolve</button></div></td></tr>`).join("")}
           </tbody></table>
         </div>
       </div>
@@ -1997,7 +2075,7 @@ function renderAdmin() {
         <h2>Audit Trail</h2>
         <div class="table-wrap">
           <table class="table"><thead><tr><th>Actor</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th><th>Time</th></tr></thead><tbody>
-            ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}<br><span class="muted">${escapeHtml(item.userId || "-")}</span></td><td>${escapeHtml(formatActionLabel(item.action))}</td><td>${escapeHtml(metadataTargetLabel(item.metadata || {}))}</td><td><span class="muted">${escapeHtml(metadataDetailsLabel(item.metadata || {}))}</span></td><td>${escapeHtml(item.ip || "-")}</td><td>${new Date(item.createdAt).toLocaleString()}<br><span class="muted">${timeAgo(item.createdAt)} ago</span></td></tr>`).join("")}
+            ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}<br><span class="muted">${escapeHtml(item.userId || "-")}</span></td><td>${escapeHtml(formatActionLabel(item.action))}</td><td>${escapeHtml(metadataTargetLabel(item.metadata || {}))}<br><button class="btn small" data-action="open-audit-source" data-id="${item.id}">Open Source</button></td><td><span class="muted">${escapeHtml(metadataDetailsLabel(item.metadata || {}))}</span></td><td>${escapeHtml(item.ip || "-")}</td><td>${new Date(item.createdAt).toLocaleString()}<br><span class="muted">${timeAgo(item.createdAt)} ago</span></td></tr>`).join("")}
           </tbody></table>
         </div>
       </div>
@@ -2725,6 +2803,18 @@ async function handleAction(action, id) {
   if (action === "resolve-report") {
     await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "resolved" }) });
     await refreshReports();
+  }
+  if (action === "open-report-source") {
+    const report = state.reports.find((item) => item.id === id);
+    if (!report) return;
+    const target = resolveAdminSourceTarget(report.type, report.targetId, report.metadata || {});
+    await openAdminSource(target);
+  }
+  if (action === "open-audit-source") {
+    const entry = state.audit.find((item) => item.id === id);
+    if (!entry) return;
+    const target = resolveAdminSourceTarget("", "", entry.metadata || {});
+    await openAdminSource(target);
   }
   if (action === "mark-read") {
     await apiRequest("/notifications/read-all", { method: "POST", body: JSON.stringify({}) });
