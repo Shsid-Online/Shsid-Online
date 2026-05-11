@@ -164,3 +164,8 @@
   - If user scrolls away, autoplay can immediately promote the next most visible video.
   - Preserves user pause priority without blocking next-video autoplay.
   - Validation: `npm run check` passed.
+- 2026-05-11: Reduced feed video autoplay pause/play flapping while scrolling.
+  - Added current-autoplay tracking and switch hysteresis to avoid rapid winner changes near visibility thresholds.
+  - Removed playback re-arbitration from video `play` events to prevent immediate pause/unpause loops.
+  - Reset remembered autoplay winner whenever feed video observer is rebuilt.
+  - Validation: `npm run check` passed.

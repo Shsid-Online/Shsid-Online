@@ -63,6 +63,8 @@ let feedVideoPlaybackTickScheduled = false;
 let feedVideoManualControlVideo = null;
 let feedVideoManualControlUntil = 0;
 let feedVideoViewportListenersBound = false;
+let feedVideoCurrentAutoplay = null;
+let feedVideoLastSwitchAt = 0;
 const feedVideoUserPaused = new WeakSet();
 const feedVideoProgrammaticPause = new WeakSet();
 const preloadedMediaUrls = new Set();
@@ -1114,22 +1116,44 @@ function syncMostVisibleFeedVideo() {
     && feedVideoManualControlVideo.isConnected
     && nowMs < feedVideoManualControlUntil
     && manualRatio >= 0.45;
+  let candidate = null;
+  let candidateRatio = 0;
   let winner = null;
-  let bestRatio = 0;
+  let winnerRatio = 0;
   if (manualActive) {
     winner = feedVideoManualControlVideo;
-    bestRatio = Number(feedVideoVisibility.get(winner) || 1);
+    winnerRatio = manualRatio;
   } else {
     for (const video of videos) {
+      if (feedVideoUserPaused.has(video)) continue;
       const ratio = Number(feedVideoVisibility.get(video) || 0);
-      if (ratio > bestRatio) {
-        bestRatio = ratio;
-        winner = video;
+      if (ratio > candidateRatio) {
+        candidateRatio = ratio;
+        candidate = video;
+      }
+    }
+    const currentRatio = feedVideoCurrentAutoplay?.isConnected
+      ? Number(feedVideoVisibility.get(feedVideoCurrentAutoplay) || 0)
+      : 0;
+    const canSwitch = nowMs - feedVideoLastSwitchAt > 800;
+    const currentStillGood = feedVideoCurrentAutoplay
+      && feedVideoCurrentAutoplay.isConnected
+      && !feedVideoUserPaused.has(feedVideoCurrentAutoplay)
+      && currentRatio >= 0.35;
+    if (currentStillGood && (!candidate || candidate === feedVideoCurrentAutoplay || candidateRatio < currentRatio + 0.18 || !canSwitch)) {
+      winner = feedVideoCurrentAutoplay;
+      winnerRatio = currentRatio;
+    } else {
+      winner = candidate;
+      winnerRatio = candidateRatio;
+      if (winner !== feedVideoCurrentAutoplay) {
+        feedVideoCurrentAutoplay = winner;
+        feedVideoLastSwitchAt = nowMs;
       }
     }
   }
   for (const video of videos) {
-    if (video !== winner || bestRatio < 0.45) {
+    if (video !== winner || winnerRatio < 0.45 || feedVideoUserPaused.has(video)) {
       if (!video.paused) {
         feedVideoProgrammaticPause.add(video);
         video.pause();
@@ -1154,6 +1178,7 @@ function setupFeedVideoAutoplay() {
     feedVideoObserver = null;
   }
   feedVideoVisibility.clear();
+  feedVideoCurrentAutoplay = null;
   if (!videos.length) return;
   feedVideoObserver = new IntersectionObserver((entries) => {
     for (const entry of entries) {
@@ -1179,13 +1204,12 @@ function setupFeedVideoAutoplay() {
         return;
       }
       feedVideoUserPaused.add(video);
+      if (feedVideoCurrentAutoplay === video) feedVideoCurrentAutoplay = null;
       markManual();
     });
     video.addEventListener("play", () => {
       feedVideoUserPaused.delete(video);
-      scheduleFeedVideoPlaybackSync();
     });
-    video.addEventListener("play", scheduleFeedVideoPlaybackSync);
   });
   if (!feedVideoViewportListenersBound) {
     window.addEventListener("scroll", scheduleFeedVideoPlaybackSync, { passive: true });
