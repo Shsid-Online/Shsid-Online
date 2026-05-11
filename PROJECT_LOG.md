@@ -378,3 +378,7 @@
   - Affected inputs: post media, verification video, signup profile photo, settings profile photo.
   - Upload functionality remains through dropzone/icon triggers.
   - Validation: `npm run check` passed.
+- 2026-05-11: Reordered name display in student list.
+  - Student card subtitle now shows secondary/chinese name immediately after english name, followed by grade/class.
+  - Changed from: `Grade/Class · Chinese name` to `Chinese name · Grade/Class`.
+  - Validation: `npm run check` passed.

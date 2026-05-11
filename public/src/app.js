@@ -86,7 +86,7 @@ hydrateAuthFromUrl();
 
 const navItems = [
   ["feed", "FD", "Feed"],
-  ["post", "PT", "Post"],
+  ["post", "+", "Post"],
   ["students", "ST", "Students"],
   ["messages", "MS", "Messages"],
   ["suggestions", "SG", "Suggestions"],
@@ -1651,7 +1651,7 @@ function renderFeed() {
   return page("Feed", "Posts from followed students, categories, sticky announcements, comments, likes, and reports.", `
     <section class="grid">${postsHtml}</section>
     ${postsNextOffset != null ? `<div class="row" style="justify-content:center"><button class="btn" data-action="load-more-posts">Load more posts</button></div>` : ""}
-  `, `<button class="btn primary" data-view="post">New post</button>`);
+  `);
 }
 
 function renderPost(post) {
