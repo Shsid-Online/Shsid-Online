@@ -68,3 +68,7 @@
   - Fixed variable shadow/reassignment bug in `uploadVerificationVideoMultipart` (`const` completion response vs completion flag).
   - This prevents runtime failure in verification upload flow and stabilizes script execution path.
   - Validation: `npm run check` passed.
+- 2026-05-11: Post-publish stabilization patch for blank-page report.
+  - On successful `create-post`, now clears `post-media` file store and resets the file input immediately before feed transition.
+  - Prevents stale composer file state from carrying into later renders after publish.
+  - Validation: `npm run check` passed.

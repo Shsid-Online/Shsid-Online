@@ -1945,6 +1945,13 @@ async function handleAction(action, id) {
         media
       })
     });
+    inputFileStore["post-media"] = [];
+    const postMediaInput = document.querySelector("#post-media");
+    if (postMediaInput) {
+      inputFileSyncLock.add("post-media");
+      setInputFiles(postMediaInput, []);
+      inputFileSyncLock.delete("post-media");
+    }
     await refreshPosts();
     view = "feed";
     toast("Post published");
