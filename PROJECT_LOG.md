@@ -362,3 +362,8 @@
   - Added stronger CTA/tab button styling (contrast, border, weight) so sections are visually distinct.
   - Goal: easier separation between top actions, tab filters, and chat list items (including anonymous conversation rows).
   - Validation: `npm run check` passed.
+- 2026-05-11: Made `Post of the Day` clickable.
+  - Rightbar post-of-day entries are now buttons.
+  - Added `open-post-day` action to open selected post in single-post view.
+  - Uses deep-link load helper to ensure post opens even if not already in current feed slice.
+  - Validation: `npm run check` passed.

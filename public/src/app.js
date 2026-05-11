@@ -1678,9 +1678,13 @@ function renderPost(post) {
       <div class="post-text">${escapeHtml(post.text || "")}</div>
       ${media.length ? `
         <div class="media-carousel">
-          ${media.length > 1 ? `<button class="media-nav prev" type="button" data-action="media-prev" data-id="${post.id}" ${mediaIndex === 0 ? "disabled" : ""}>&#8249;</button>` : ""}
-          <div class="media-stage">${renderPostMedia(activeMedia)}</div>
-          ${media.length > 1 ? `<button class="media-nav next" type="button" data-action="media-next" data-id="${post.id}" ${mediaIndex >= media.length - 1 ? "disabled" : ""}>&#8250;</button>` : ""}
+          ${media.length > 1 && mediaIndex > 0 ? `<button class="media-nav prev" type="button" data-action="media-prev" data-id="${post.id}">&#8249;</button>` : ""}
+          <div class="media-stage">
+            <div class="media-track" style="transform: translateX(-${mediaIndex * 100}%);">
+              ${media.map((item) => `<div class="media-slide">${renderPostMedia(item)}</div>`).join("")}
+            </div>
+          </div>
+          ${media.length > 1 && mediaIndex < media.length - 1 ? `<button class="media-nav next" type="button" data-action="media-next" data-id="${post.id}">&#8250;</button>` : ""}
           ${media.length > 1 ? `<div class="media-dots">${media.map((_, idx) => `<span class="media-dot ${idx === mediaIndex ? "active" : ""}"></span>`).join("")}</div>` : ""}
         </div>
       ` : ""}
@@ -3001,16 +3005,16 @@ function updatePostMediaCarousel(postId) {
   if (!media.length) return;
   const current = Math.max(0, Math.min(postMediaIndexByPostId[postId] || 0, media.length - 1));
   postMediaIndexByPostId[postId] = current;
-  const stage = card.querySelector(".media-stage");
-  if (stage) stage.innerHTML = renderPostMedia(media[current]);
-  setupMediaLoadingIndicators(card);
-  setupFeedVideoAutoplay();
+  const track = card.querySelector(".media-track");
+  if (track) track.style.transform = `translateX(-${current * 100}%)`;
   const prevButton = card.querySelector('[data-action="media-prev"]');
-  if (prevButton) prevButton.disabled = current === 0;
+  if (prevButton) prevButton.style.visibility = current === 0 ? "hidden" : "visible";
   const nextButton = card.querySelector('[data-action="media-next"]');
-  if (nextButton) nextButton.disabled = current >= media.length - 1;
+  if (nextButton) nextButton.style.visibility = current >= media.length - 1 ? "hidden" : "visible";
   const dots = card.querySelectorAll(".media-dot");
   dots.forEach((dot, idx) => dot.classList.toggle("active", idx === current));
+  setupMediaLoadingIndicators(card);
+  setupFeedVideoAutoplay();
   preloadPostMediaAround(postId);
 }
 

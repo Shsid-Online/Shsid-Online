@@ -480,6 +480,18 @@ button {
 
 .media-stage {
   min-height: 0;
+  overflow: hidden;
+}
+
+.media-track {
+  display: flex;
+  width: 100%;
+  transition: transform 240ms ease;
+  will-change: transform;
+}
+
+.media-slide {
+  flex: 0 0 100%;
 }
 
 .media-image-tile.is-loading .media-content {
@@ -520,6 +532,11 @@ button {
   color: #fff;
   font-size: 24px;
   line-height: 1;
+  transition: opacity 180ms ease, background 180ms ease;
+}
+
+.media-nav:hover {
+  background: rgba(23, 32, 51, 0.85);
 }
 
 .media-nav.prev {
