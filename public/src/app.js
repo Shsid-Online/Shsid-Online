@@ -8,7 +8,6 @@ const initialState = {
   authMode: "login",
   users: [],
   posts: [],
-  reels: [],
   conversations: [],
   reports: [],
   bans: [],
@@ -41,7 +40,6 @@ let authRequestInFlight = false;
 let resendCooldownUntil = 0;
 let openCommentPostId = null;
 let postsNextOffset = null;
-let reelsNextOffset = null;
 let deepLinkedPostId = "";
 let conversationTab = "inbox";
 let adminChatMonitorFilter = "all";
@@ -74,19 +72,15 @@ const loadedMediaUrls = new Set();
 const inputFileStore = {};
 const inputFileSyncLock = new Set();
 let feedAheadPrefetchInFlight = false;
-let reelsAheadPrefetchInFlight = false;
 let categoryPrefetchInFlight = false;
 let feedCategoryWarmDone = false;
-let reelsCategoryWarmDone = false;
 const prefetchedCategoryPosts = Object.fromEntries(CONTENT_CATEGORIES.map((category) => [category, []]));
-const prefetchedCategoryReels = Object.fromEntries(CONTENT_CATEGORIES.map((category) => [category, []]));
 
 hydrateAuthFromUrl();
 
 const navItems = [
   ["feed", "FD", "Feed"],
   ["post", "PT", "Post"],
-  ["reels", "RL", "Reels"],
   ["students", "ST", "Students"],
   ["messages", "MS", "Messages"],
   ["profile", "PR", "Profile"],
@@ -358,22 +352,6 @@ async function fetchPostsPage({ offset = 0, limit = 10, category = "" } = {}) {
   };
 }
 
-async function fetchReelsPage({ offset = 0, limit = 10, category = "" } = {}) {
-  const query = new URLSearchParams();
-  query.set("limit", String(limit));
-  query.set("offset", String(Math.max(0, Number(offset) || 0)));
-  if (category) query.set("category", String(category).trim().toLowerCase());
-  const result = await apiRequest(`/reels?${query.toString()}`);
-  return {
-    reels: (result.reels || []).map((reel) => ({
-      ...reel,
-      createdAt: at(reel.createdAt),
-      likes: Array.isArray(reel.likes) ? reel.likes : []
-    })),
-    pagination: result.pagination || {}
-  };
-}
-
 async function warmCategoryPools() {
   if (!state.apiToken || categoryPrefetchInFlight) return;
   categoryPrefetchInFlight = true;
@@ -384,13 +362,6 @@ async function warmCategoryPools() {
         prefetchedCategoryPosts[category] = posts.slice(0, 10);
       }));
       feedCategoryWarmDone = true;
-    }
-    if (!reelsCategoryWarmDone) {
-      await Promise.all(CONTENT_CATEGORIES.map(async (category) => {
-        const { reels } = await fetchReelsPage({ category, limit: 10, offset: 0 });
-        prefetchedCategoryReels[category] = reels.slice(0, 10);
-      }));
-      reelsCategoryWarmDone = true;
     }
   } catch (error) {
     console.error("warmCategoryPools failed", error);
@@ -415,25 +386,6 @@ async function ensurePostsAhead() {
     console.error("ensurePostsAhead failed", error);
   } finally {
     feedAheadPrefetchInFlight = false;
-  }
-}
-
-async function ensureReelsAhead() {
-  if (!state.apiToken || reelsAheadPrefetchInFlight || reelsNextOffset == null) return;
-  const currentCount = (state.reels || []).length;
-  if (currentCount >= 20) return;
-  reelsAheadPrefetchInFlight = true;
-  try {
-    while ((state.reels || []).length < 20 && reelsNextOffset != null) {
-      const { reels, pagination } = await fetchReelsPage({ offset: reelsNextOffset, limit: 10 });
-      state.reels = [...state.reels, ...reels];
-      reelsNextOffset = pagination.nextOffset ?? null;
-    }
-    saveState();
-  } catch (error) {
-    console.error("ensureReelsAhead failed", error);
-  } finally {
-    reelsAheadPrefetchInFlight = false;
   }
 }
 
@@ -463,21 +415,6 @@ async function refreshConversations() {
     saveState();
   } catch (error) {
     console.error("refreshConversations failed", error);
-  }
-}
-
-async function refreshReels(reset = true) {
-  if (!state.apiToken) return;
-  try {
-    const offset = reset ? 0 : (reelsNextOffset ?? 0);
-    const { reels: next, pagination } = await fetchReelsPage({ offset, limit: 10 });
-    state.reels = reset ? next : [...state.reels, ...next];
-    reelsNextOffset = pagination?.nextOffset ?? null;
-    saveState();
-    void ensureReelsAhead();
-    void warmCategoryPools();
-  } catch (error) {
-    console.error("refreshReels failed", error);
   }
 }
 
@@ -598,7 +535,6 @@ async function bootstrapSession() {
     await refreshPosts();
     await ensureDeepLinkedPostLoaded();
     await refreshConversations();
-    await refreshReels();
     await refreshNotifications();
     await refreshSuggestions();
     if (result.user.role === "admin") {
@@ -694,14 +630,13 @@ function metadataTargetLabel(metadata = {}) {
   if (m.postId) return `Post ${m.postId}`;
   if (m.commentId) return `Comment ${m.commentId}`;
   if (m.storyId) return `Story ${m.storyId}`;
-  if (m.reelId) return `Reel ${m.reelId}`;
   if (m.conversationId) return `Conversation ${m.conversationId}`;
   if (m.reportId) return `Report ${m.reportId}`;
   return "System";
 }
 
 function metadataDetailsLabel(metadata = {}) {
-  const entries = Object.entries(metadata || {}).filter(([key]) => !["userId", "postId", "commentId", "storyId", "reelId", "conversationId", "reportId"].includes(key));
+  const entries = Object.entries(metadata || {}).filter(([key]) => !["userId", "postId", "commentId", "storyId", "conversationId", "reportId"].includes(key));
   if (!entries.length) return "No extra details";
   return entries.slice(0, 4).map(([key, value]) => `${key}: ${value}`).join(" | ");
 }
@@ -713,7 +648,6 @@ function resolveAdminSourceTarget(targetType = "", targetId = "", metadata = {})
   const conversationId = String(m.conversationId || "").trim();
   const postId = String(m.postId || "").trim();
   const commentId = String(m.commentId || "").trim();
-  const reelId = String(m.reelId || "").trim();
   const userId = String(m.userId || "").trim();
   if (conversationId || normalizedType === "conversation" || normalizedType === "chat") {
     return { kind: "conversation", id: conversationId || normalizedId };
@@ -723,9 +657,6 @@ function resolveAdminSourceTarget(targetType = "", targetId = "", metadata = {})
   }
   if (commentId || normalizedType === "comment") {
     return { kind: "comment", id: commentId || normalizedId, postId: postId || "" };
-  }
-  if (reelId || normalizedType === "reel") {
-    return { kind: "reel", id: reelId || normalizedId };
   }
   if (userId || normalizedType === "user") {
     return { kind: "user", id: userId || normalizedId };
@@ -751,12 +682,6 @@ async function openAdminSource(target) {
     deepLinkedPostId = target.postId || target.id;
     await refreshPosts();
     if (target.kind === "comment" && deepLinkedPostId) openCommentPostId = deepLinkedPostId;
-    return;
-  }
-  if (target.kind === "reel") {
-    view = "reels";
-    await refreshReels();
-    toast(`Reel source: ${target.id}`);
     return;
   }
   if (target.kind === "user") {
@@ -1538,7 +1463,7 @@ function renderAuth() {
       </div>
       <div class="auth-art">
         <h1>Private social networking for verified SHSID students.</h1>
-        <p>Feed, reels, messaging, profiles, reports, verification, and admin moderation in one school-only platform.</p>
+        <p>Feed, messaging, profiles, reports, verification, and admin moderation in one school-only platform.</p>
       </div>
     </section>
   `;
@@ -1564,7 +1489,6 @@ function renderView() {
     feed: renderFeed,
     "single-post": renderSinglePost,
     post: renderComposer,
-    reels: renderReels,
     students: renderStudents,
     messages: renderMessages,
     profile: renderProfile,
@@ -1680,51 +1604,6 @@ function renderComposer() {
       </div>
       <button class="btn primary" data-action="create-post">Publish</button>
     </section>
-  `);
-}
-
-function renderReels() {
-  const uid = state.currentUserId;
-  const tiles = state.reels.map((reel) => {
-    const likes = reel.likes || [];
-    const liked = likes.includes(uid);
-    const commentCount = Number(reel.commentCount || 0);
-    const videoUrl = reel.videoUrl || reel.video_url || "";
-    const openable = videoUrl && videoUrl !== "pending-upload" && /^https?:\/\//i.test(videoUrl);
-    return `
-      <article class="reel-screen">
-        <div class="reel-media-shell">
-          ${openable
-            ? `<video class="reel-media" src="${escapeHtml(videoUrl)}" controls preload="metadata" playsinline></video>`
-            : `<div class="reel-media reel-media-empty">Video pending upload</div>`
-          }
-          <div class="reel-overlay">
-            <div class="reel-meta-block">
-              <span class="chip">${escapeHtml(reel.category)}</span>
-              <h2>${escapeHtml(reel.title)}</h2>
-              <p class="reel-meta">${escapeHtml(userName(reel.authorId))} · ${likes.length} likes · ${timeAgo(reel.createdAt)}</p>
-            </div>
-            <div class="reel-actions">
-              <button class="btn small ${liked ? "primary" : ""}" data-action="like-reel" data-id="${reel.id}">${liked ? "Liked" : "Like"}</button>
-              <button class="btn small" data-action="comment-reel" data-id="${reel.id}">Comment · ${commentCount}</button>
-            </div>
-          </div>
-        </div>
-      </article>
-    `;
-  }).join("");
-  const grid = tiles || `<div class="empty-state">No reels yet. Add one below or ask classmates to share.</div>`;
-  return page("Reels", "Vertical snap feed for short videos.", `
-    <section class="composer" style="margin-bottom:16px">
-      <div class="grid two">
-        <div class="field"><label>Title</label><input id="reel-title" placeholder="What is this reel about?" /></div>
-        <div class="field"><label>Category</label><select id="reel-category"><option>school</option><option>lifestyle</option><option>gaming</option><option>academic</option></select></div>
-      </div>
-      <div class="field"><label>Upload reel video (optional)</label><input id="reel-video-file" type="file" accept="video/*" /></div>
-      <button class="btn primary" data-action="create-reel">Publish reel</button>
-    </section>
-    <section class="reel-feed">${grid}</section>
-    ${reelsNextOffset != null ? `<div class="row" style="justify-content:center"><button class="btn" data-action="load-more-reels">Load more reels</button></div>` : ""}
   `);
 }
 
@@ -2618,39 +2497,6 @@ async function handleAction(action, id) {
     if (!reason) return;
     await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "conversation", targetId: id, reason }) });
     if (user.role === "admin") await refreshReports();
-  }
-  if (action === "create-reel") {
-    const title = document.querySelector("#reel-title").value.trim();
-    if (!title) return toast("Add a reel title");
-    const category = document.querySelector("#reel-category").value;
-    const videoFile = document.querySelector("#reel-video-file").files[0];
-    let videoUrl = "";
-    if (videoFile) {
-      const [uploaded] = await uploadFiles([videoFile]);
-      videoUrl = uploaded?.url || "";
-    }
-    await apiRequest("/reels", {
-      method: "POST",
-      body: JSON.stringify({ title, category, videoUrl })
-    });
-    await refreshReels();
-    view = "reels";
-    toast("Reel published");
-  }
-  if (action === "load-more-reels") {
-    if (reelsNextOffset == null) return;
-    await refreshReels(false);
-  }
-  if (action === "like-reel") {
-    await apiRequest(`/reels/${id}/like`, { method: "POST", body: JSON.stringify({}) });
-    await refreshReels();
-  }
-  if (action === "comment-reel") {
-    const payload = await askCommentPopup();
-    if (!payload) return;
-    await apiRequest(`/reels/${id}/comments`, { method: "POST", body: JSON.stringify(payload) });
-    await refreshReels();
-    toast("Comment added");
   }
   if (action === "verify-user") {
     await apiRequest(`/admin/verifications/${id}`, {

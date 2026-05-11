@@ -285,3 +285,11 @@
   - Removed story-specific CSS blocks (`.story-strip`, `.story`, related empty hint).
   - Kept legacy story references only in admin metadata labeling for historical audit/report readability.
   - Validation: `npm run check` passed.
+- 2026-05-11: Removed Reels from the app UI flow.
+  - Removed reels prefetch/load helpers and bootstrap refresh path.
+  - Removed reels route and renderer (`renderReels`) from view map.
+  - Removed all reel actions/handlers (`create`, `load more`, `like`, `comment`).
+  - Updated auth hero copy to remove reels mention.
+  - Updated admin source resolver to remove reel-specific jump path.
+  - Removed reel-only CSS blocks (`.reel-*`, reel tile helper classes).
+  - Validation: `npm run check` passed.
