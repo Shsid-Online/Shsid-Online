@@ -2780,49 +2780,36 @@ async function uploadFiles(files, options = {}) {
     const totalFiles = Math.max(1, files.length);
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
-      const basePct = Math.floor((index / totalFiles) * 100);
-      setUploadProgress("Uploading media", Math.max(1, basePct + 2));
+      const fileStartPct = (index / totalFiles) * 100;
+      const fileSpanPct = 100 / totalFiles;
+      const markFileProgress = (fraction) => {
+        const pct = fileStartPct + fileSpanPct * Math.max(0, Math.min(0.99, fraction));
+        setUploadProgress("Uploading media", pct);
+      };
+      markFileProgress(0.02);
       // Avoid multipart unless necessary. Direct signed PUT is more reliable for
       // normal-size files and prevents /api/multipart part failures on some runtimes.
       const shouldUseMultipart = file.size > 24 * 1024 * 1024;
       if (shouldUseMultipart) {
-        setUploadProgress("Uploading media", Math.max(uploadUi.percent, basePct + 8));
+        markFileProgress(0.08);
         const mediaUrl = await uploadFileMultipart(file, purpose);
-        setUploadProgress("Uploading media", Math.max(uploadUi.percent, basePct + Math.floor(100 / totalFiles) - 2));
+        markFileProgress(0.98);
         uploaded.push({ url: mediaUrl, type: file.type || "application/octet-stream", name: file.name });
         continue;
       }
-      setUploadProgress("Uploading media", Math.max(uploadUi.percent, basePct + 12));
+      markFileProgress(0.12);
       const sign = await apiRequest("/upload-url", {
         method: "POST",
         body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", purpose })
       });
-      setUploadProgress("Uploading media", Math.max(uploadUi.percent, basePct + 24));
-      const controller = new AbortController();
-      const uploadTimeout = setTimeout(() => controller.abort("upload-timeout"), 90_000);
-      let response;
-      try {
-        response = await fetch(sign.uploadUrl, {
-          method: "PUT",
-          headers: { "content-type": file.type || "application/octet-stream" },
-          body: file,
-          signal: controller.signal
-        });
-      } finally {
-        clearTimeout(uploadTimeout);
-      }
-      if (!response.ok) {
-        let reason = "";
-        try {
-          const body = await response.json();
-          reason = body?.error || body?.detail || "";
-        } catch {
-          reason = await response.text();
-        }
-        const detail = typeof reason === "string" && reason.trim().length ? ` ${reason.trim()}` : "";
-        throw new Error(`Upload failed (${file.name}):${detail || " Unknown upload error."}`);
-      }
-      setUploadProgress("Uploading media", Math.max(uploadUi.percent, basePct + Math.floor(100 / totalFiles) - 1));
+      markFileProgress(0.24);
+      await uploadDirectFileWithProgress({
+        uploadUrl: sign.uploadUrl,
+        file,
+        contentType: file.type || "application/octet-stream",
+        onProgress: (ratio) => markFileProgress(0.24 + ratio * 0.72)
+      });
+      markFileProgress(0.98);
       uploaded.push({
         url: sign.mediaUrl,
         type: file.type || "application/octet-stream",
@@ -2840,6 +2827,39 @@ async function uploadFiles(files, options = {}) {
   } finally {
     clearUploadProgress({ immediate: !completed });
   }
+}
+
+function uploadDirectFileWithProgress({ uploadUrl, file, contentType, onProgress }) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", uploadUrl);
+    xhr.timeout = 90_000;
+    xhr.setRequestHeader("content-type", contentType || "application/octet-stream");
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable || !event.total) return;
+      onProgress?.(event.loaded / event.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(1);
+        resolve();
+        return;
+      }
+      let detail = xhr.responseText || xhr.statusText || "Unknown upload error.";
+      try {
+        const body = JSON.parse(xhr.responseText || "{}");
+        detail = body?.error || body?.detail || detail;
+      } catch {
+        // Keep raw response text when it is not JSON.
+      }
+      reject(new Error(`Upload failed (${file.name}): ${String(detail).trim()}`));
+    };
+    xhr.onerror = () => reject(new Error(`Upload failed (${file.name}): Network error while uploading.`));
+    xhr.ontimeout = () => reject(new Error("Upload timed out. Please retry with a smaller file or more stable connection."));
+    xhr.onabort = () => reject(new Error(`Upload failed (${file.name}): Upload was aborted.`));
+    xhr.send(file);
+  });
 }
 
 async function uploadFileMultipart(file, purpose = "media") {

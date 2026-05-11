@@ -174,3 +174,8 @@
   - Added `HEAD /api/media/*` support and allowed `Range` in CORS headers.
   - This lets Chrome request later video byte ranges instead of jumping back to the current buffered position.
   - Validation: `npm run check` passed.
+- 2026-05-11: Fixed direct media upload progress freezing at 24%.
+  - Replaced direct signed PUT `fetch()` upload with `XMLHttpRequest` so upload byte progress events are available.
+  - Reworked per-file progress math so single and multi-file uploads advance through signing, upload, and completion phases.
+  - Kept 90-second upload timeout and clearer upload error messages.
+  - Validation: `npm run check` passed.
