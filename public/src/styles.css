@@ -746,6 +746,12 @@ button {
   overflow: hidden;
 }
 
+.chat-panel-list {
+  max-width: 220px;
+  justify-self: start;
+  width: 100%;
+}
+
 .chat-list-scroll {
   flex: 1;
   overflow-y: auto;
@@ -859,6 +865,10 @@ body.modal-open {
   .chat-layout {
     grid-template-columns: minmax(110px, 0.3fr) minmax(0, 2.8fr);
     gap: 8px;
+  }
+
+  .chat-panel-list {
+    max-width: 190px;
   }
 }
 

@@ -206,3 +206,7 @@
   - Added a dedicated <=1120px split with an even narrower list column so chat content stays readable on tablet/mid-size widths.
   - Mobile one-column chat stacking remains unchanged.
   - Validation: `npm run check` passed.
+- 2026-05-11: Slimmed conversation panel width directly.
+  - Added explicit max-width constraint on `.chat-panel-list` so the list panel stays narrow even when grid space is available.
+  - Added a tighter `.chat-panel-list` max-width override for <=1120px layouts.
+  - Validation: `npm run check` passed.
