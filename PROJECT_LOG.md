@@ -84,3 +84,7 @@
   - `initials(user)` now handles undefined/null user and empty names safely, returning fallback `??`.
   - Prevents `Cannot read properties of undefined (reading 'englishName')` during `renderPost` when user cache is temporarily incomplete.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added direct renderPost avatar guard for missing author records.
+  - Avatar label now resolves to `??` when post author object is unavailable, avoiding any `initials(author)` path on undefined author.
+  - This is a belt-and-suspenders guard in addition to null-safe `initials()`.
+  - Validation: `npm run check` passed.

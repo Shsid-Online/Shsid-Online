@@ -1398,13 +1398,14 @@ function renderPost(post) {
   const liked = likes.includes(state.currentUserId);
   const isAdmin = currentUser().role === "admin";
   const isOwner = post.authorId === state.currentUserId;
+  const avatarLabel = post.anonymous ? "AN" : (author?.englishName ? initials(author) : "??");
   const media = post.media || [];
   const mediaIndex = Math.max(0, Math.min((postMediaIndexByPostId[post.id] || 0), Math.max(0, media.length - 1)));
   const activeMedia = media.length ? media[mediaIndex] : null;
   return `
     <article class="card" data-post-id="${post.id}">
       <div class="post-head">
-        <div class="avatar ${author?.role === "admin" ? "admin" : ""}">${post.anonymous ? "AN" : initials(author)}</div>
+        <div class="avatar ${author?.role === "admin" ? "admin" : ""}">${avatarLabel}</div>
         <div style="min-width:0">
           <div class="between">
             <strong>${escapeHtml(userName(post.authorId, post.anonymous))}</strong>
