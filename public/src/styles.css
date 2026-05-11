@@ -723,6 +723,35 @@ button {
   align-items: start;
 }
 
+.admin-subtabs {
+  margin-bottom: 2px;
+  gap: 8px;
+}
+
+.admin-chat-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 10px;
+}
+
+.admin-chat-layout .chat-panel {
+  height: min(56vh, 520px);
+}
+
+.admin-chat-layout .chat-panel-list .btn {
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.admin-chat-layout .chat-panel-thread {
+  padding: 10px;
+}
+
+.admin-chat-message {
+  font-size: 13px;
+  padding: 8px;
+}
+
 .chat-panel {
   height: min(72vh, 760px);
   display: flex;

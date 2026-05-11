@@ -293,3 +293,9 @@
   - Updated admin source resolver to remove reel-specific jump path.
   - Removed reel-only CSS blocks (`.reel-*`, reel tile helper classes).
   - Validation: `npm run check` passed.
+- 2026-05-11: Reformatted Admin Chat Monitor as a compact Messages-style sub-tab.
+  - Added admin subtabs: `Overview` and `Chat Monitor`.
+  - Moved chat monitoring into its own admin sub-tab (`adminTab`) instead of always showing on the main admin overview.
+  - Rebuilt monitor layout using chat-like two-pane structure with a compact conversation list and smaller thread view.
+  - Added dedicated compact styles for admin chat monitor sizing/spacing (`.admin-chat-layout`, `.admin-chat-message`).
+  - Validation: `npm run check` passed.

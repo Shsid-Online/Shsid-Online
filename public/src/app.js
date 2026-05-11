@@ -44,6 +44,7 @@ let deepLinkedPostId = "";
 let conversationTab = "inbox";
 let adminChatMonitorFilter = "all";
 let adminActiveConversationId = "";
+let adminTab = "overview";
 let liveChatTimer = null;
 let liveChatPollInFlight = false;
 let liveChatSnapshot = "";
@@ -1817,8 +1818,16 @@ function renderAdmin() {
     return true;
   });
   const activeMonitored = filteredConversations.find((conversation) => conversation.id === adminActiveConversationId) || filteredConversations[0];
+  const adminTabs = `
+    <div class="row admin-subtabs">
+      <button class="btn ${adminTab === "overview" ? "primary" : ""}" data-action="admin-tab" data-id="overview">Overview</button>
+      <button class="btn ${adminTab === "chat" ? "primary" : ""}" data-action="admin-tab" data-id="chat">Chat Monitor</button>
+    </div>
+  `;
   return page("Admin", "Verification, reports, bans, audit trails, anonymous author visibility, and compliance exports.", `
     <section class="admin-grid">
+      ${adminTabs}
+      ${adminTab === "chat" ? `
       <div class="panel admin-panel">
         <h2>Chat Monitor</h2>
         <div class="row" style="margin-bottom:12px">
@@ -1826,26 +1835,34 @@ function renderAdmin() {
           <button class="btn ${adminChatMonitorFilter === "direct" ? "primary" : ""}" data-action="admin-chat-filter" data-id="direct">Direct</button>
           <button class="btn ${adminChatMonitorFilter === "group" ? "primary" : ""}" data-action="admin-chat-filter" data-id="group">Convo</button>
         </div>
-        <div class="grid two">
-          <div class="grid" style="max-height:360px;overflow:auto;align-content:start">
+        <div class="chat-layout admin-chat-layout">
+          <div class="panel chat-panel chat-panel-list">
+            <div class="grid chat-list-scroll">
             ${filteredConversations.length
               ? filteredConversations.map((conversation) => `<button class="btn ${activeMonitored?.id === conversation.id ? "primary" : ""}" data-action="admin-open-chat" data-id="${conversation.id}">${escapeHtml(conversationDisplayTitle(conversation, true))} · ${conversation.group ? "convo" : "direct"}</button>`).join("")
               : `<p class="muted">No chats for this filter.</p>`
             }
+            </div>
           </div>
-          <div class="grid" style="max-height:360px;overflow:auto;align-content:start">
-            <strong>${escapeHtml(activeMonitored ? conversationDisplayTitle(activeMonitored, true) : "No chat selected")}</strong>
+          <div class="panel chat-panel chat-panel-thread">
+            <div class="between" style="margin-bottom:8px">
+              <strong>${escapeHtml(activeMonitored ? conversationDisplayTitle(activeMonitored, true) : "No chat selected")}</strong>
+              <span class="muted small">${activeMonitored ? `${activeMonitored.group ? "Group" : "Direct"} · ${(activeMonitored.members || []).length} members` : ""}</span>
+            </div>
+            <div class="grid chat-messages-scroll">
             ${(activeMonitored?.messages || []).map((message) => `
-              <div class="comment" style="margin:0">
+              <div class="comment admin-chat-message" style="margin:0">
                 <strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text || "")}
                 ${(message.media || []).map((item) => renderChatMediaItem(item)).join("")}
                 <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span>
                 ${message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId, false))})</span>` : ""}
               </div>
             `).join("") || `<p class="muted">No messages yet.</p>`}
+            </div>
           </div>
         </div>
       </div>
+      ` : `
       <div class="grid three">
         <div class="panel"><span class="muted">Pending verification</span><h2>${pending.length}</h2></div>
         <div class="panel"><span class="muted">Open reports</span><h2>${state.reports.filter((r) => r.status === "pending").length}</h2></div>
@@ -1875,6 +1892,7 @@ function renderAdmin() {
           </tbody></table>
         </div>
       </div>
+      `}
     </section>
   `);
 }
@@ -2479,6 +2497,10 @@ async function handleAction(action, id) {
   if (action === "admin-chat-filter") {
     adminChatMonitorFilter = id || "all";
     adminActiveConversationId = "";
+  }
+  if (action === "admin-tab") {
+    adminTab = id === "chat" ? "chat" : "overview";
+    if (adminTab === "chat" && !state.conversations.length) await refreshConversations();
   }
   if (action === "admin-open-chat") {
     adminActiveConversationId = id || "";
