@@ -701,7 +701,7 @@ button {
   background: conic-gradient(#2563eb calc(var(--pct) * 1%), #dbe7ff 0);
   display: grid;
   place-items: center;
-  animation: spinring 1.2s linear infinite;
+  transition: background 450ms linear;
 }
 
 .upload-ring-inner {
@@ -713,11 +713,6 @@ button {
   place-items: center;
   font-weight: 800;
   color: #1e3a8a;
-}
-
-@keyframes spinring {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 .chat-layout {

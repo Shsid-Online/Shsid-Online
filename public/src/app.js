@@ -51,6 +51,9 @@ let liveChatTimer = null;
 let liveChatPollInFlight = false;
 let liveChatSnapshot = "";
 let uploadUi = { active: false, label: "", percent: 0 };
+let uploadTargetPercent = 0;
+let uploadProgressTimer = null;
+let uploadCompleting = false;
 const postMediaIndexByPostId = {};
 const preloadedMediaUrls = new Set();
 const loadedMediaUrls = new Set();
@@ -1048,14 +1051,65 @@ function renderUploadOverlay() {
   `;
 }
 
-function setUploadProgress(label, percent) {
-  uploadUi = { active: true, label: String(label || "Uploading..."), percent: Number(percent || 0) };
-  render();
+function stopUploadProgressTicker() {
+  if (!uploadProgressTimer) return;
+  clearInterval(uploadProgressTimer);
+  uploadProgressTimer = null;
 }
 
-function clearUploadProgress() {
-  uploadUi = { active: false, label: "", percent: 0 };
-  render();
+function startUploadProgressTicker() {
+  if (uploadProgressTimer) return;
+  uploadProgressTimer = setInterval(() => {
+    if (!uploadUi.active) {
+      stopUploadProgressTicker();
+      return;
+    }
+    const current = Math.max(0, Math.min(100, Number(uploadUi.percent || 0)));
+    const target = Math.max(current, Math.min(100, Number(uploadTargetPercent || 0)));
+    if (current >= target) {
+      if (uploadCompleting && current >= 100) {
+        uploadUi = { active: false, label: "", percent: 0 };
+        uploadTargetPercent = 0;
+        uploadCompleting = false;
+        stopUploadProgressTicker();
+        render();
+      }
+      return;
+    }
+    const step = Math.max(1, Math.ceil((target - current) * 0.28));
+    const next = Math.min(target, current + step);
+    uploadUi = { ...uploadUi, percent: next };
+    render();
+  }, 500);
+}
+
+function setUploadProgress(label, percent) {
+  const normalized = Math.max(0, Math.min(99, Number(percent || 0)));
+  const nextLabel = String(label || "Uploading...");
+  uploadTargetPercent = Math.max(uploadTargetPercent, normalized);
+  uploadCompleting = false;
+  if (!uploadUi.active) {
+    uploadUi = { active: true, label: nextLabel, percent: 0 };
+    render();
+  } else if (uploadUi.label !== nextLabel) {
+    uploadUi = { ...uploadUi, label: nextLabel };
+    render();
+  }
+  startUploadProgressTicker();
+}
+
+function clearUploadProgress({ immediate = false } = {}) {
+  if (immediate) {
+    uploadUi = { active: false, label: "", percent: 0 };
+    uploadTargetPercent = 0;
+    uploadCompleting = false;
+    stopUploadProgressTicker();
+    render();
+    return;
+  }
+  uploadTargetPercent = 100;
+  uploadCompleting = true;
+  startUploadProgressTicker();
 }
 
 function conversationsSnapshot() {
@@ -2513,6 +2567,7 @@ async function uploadFiles(files, options = {}) {
   const purpose = options.purpose || "media";
   const uploaded = [];
   setUploadProgress("Uploading media", 0);
+  let completed = false;
   try {
     for (const file of files) {
       const shouldUseMultipart = file.size > 20 * 1024 * 1024 || (file.type || "").startsWith("video/");
@@ -2547,9 +2602,10 @@ async function uploadFiles(files, options = {}) {
         name: file.name
       });
     }
+    completed = true;
     return uploaded;
   } finally {
-    clearUploadProgress();
+    clearUploadProgress({ immediate: !completed });
   }
 }
 
@@ -2580,6 +2636,7 @@ async function uploadFileMultipart(file, purpose = "media") {
 
 async function uploadVerificationVideoMultipart(file) {
   setUploadProgress("Uploading verification video", 0);
+  let completed = false;
   try {
     const init = await apiRequest("/verification-upload/init", {
       method: "POST",
@@ -2603,9 +2660,10 @@ async function uploadVerificationVideoMultipart(file) {
       method: "POST",
       body: JSON.stringify({ key: init.key, uploadId: init.uploadId, parts })
     });
+    completed = true;
     return completed.mediaUrl;
   } finally {
-    clearUploadProgress();
+    clearUploadProgress({ immediate: !completed });
   }
 }
 

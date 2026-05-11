@@ -58,3 +58,9 @@
   - Preserved stored file selections across UI re-renders by restoring `input.files` from in-memory store during `bindFileChips`.
   - Prevents first selected file from disappearing when selecting additional files after a re-render.
   - Validation: `npm run check` passed.
+- 2026-05-11: Fixed upload progress indicator behavior.
+  - Removed continuous spinning upload ring animation so percent is readable.
+  - Added 500ms progress ticker to smoothly advance displayed percentage toward real upload progress.
+  - Progress now eases to 100% on successful completion, then overlay closes.
+  - On upload failure, overlay clears immediately instead of faking completion.
+  - Validation: `npm run check` passed.
