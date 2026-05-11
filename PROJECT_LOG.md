@@ -153,3 +153,9 @@
   - Added viewport-trigger sync on scroll/resize and bound global listeners only once.
   - Goal: one visible video autoplay + stable user scrubbing without jump-back.
   - Validation: `npm run check` passed.
+- 2026-05-11: Enforced manual pause priority over autoplay for feed videos.
+  - Added user-pause tracking (`feedVideoUserPaused`) so autoplay never resumes a video paused by user.
+  - Added programmatic pause marker to distinguish system pause vs user pause.
+  - User pressing play clears paused-by-user state.
+  - Result: user pause > system autoplay behavior.
+  - Validation: `npm run check` passed.
