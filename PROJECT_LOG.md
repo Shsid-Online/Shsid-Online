@@ -197,3 +197,7 @@
   - Updated `.chat-layout` column ratio to reduce the left conversation tab width and give more space to active chat content.
   - Kept mobile behavior unchanged (`.chat-layout` still stacks to one column under 760px).
   - Validation: `npm run check` passed.
+- 2026-05-11: Hid redundant "receiver sees" hint for admin in Messages.
+  - In message row rendering, the `receiver sees: ...` helper now shows only for non-admin senders.
+  - Admin still sees anon/public label and `(real: ...)` where applicable.
+  - Validation: `npm run check` passed.
