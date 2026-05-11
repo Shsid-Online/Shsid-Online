@@ -88,3 +88,8 @@
   - Avatar label now resolves to `??` when post author object is unavailable, avoiding any `initials(author)` path on undefined author.
   - This is a belt-and-suspenders guard in addition to null-safe `initials()`.
   - Validation: `npm run check` passed.
+- 2026-05-11: Updated post share popup permissions and labels.
+  - Share popup now only lists conversations where current user is a member (prevents admin sharing into groups/chats they are not in).
+  - Added runtime guard in share submit to reject any non-member conversation IDs.
+  - Direct chat labels in share popup now show counterpart name (or remark) instead of generic "Direct message" for student UX clarity.
+  - Validation: `npm run check` passed.

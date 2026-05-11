@@ -808,7 +808,10 @@ function openMediaViewer(url, type = "") {
 }
 
 function showSharePopup(url, text = "", postId = "") {
-  const conversations = (state.conversations || []).slice(0, 50);
+  const meId = currentUser()?.id || "";
+  const conversations = (state.conversations || [])
+    .filter((conv) => Array.isArray(conv?.members) && conv.members.includes(meId))
+    .slice(0, 50);
   const popup = showFormPopup("Share Post", `
     <div class="grid">
       <div class="field">
@@ -820,7 +823,12 @@ function showSharePopup(url, text = "", postId = "") {
         <label>Select chats</label>
         <select id="share-conversation-id" multiple size="6" ${conversations.length ? "" : "disabled"}>
           ${conversations.length
-            ? conversations.map((conv) => `<option value="${escapeHtml(conv.id)}">${escapeHtml(conv.title || "Conversation")}</option>`).join("")
+            ? conversations.map((conv) => {
+              const label = conv.group
+                ? (conv.title || "Group chat")
+                : conversationCounterpartName(conv);
+              return `<option value="${escapeHtml(conv.id)}">${escapeHtml(label)}</option>`;
+            }).join("")
             : `<option value="">No conversation available</option>`
           }
         </select>
@@ -851,6 +859,9 @@ function showSharePopup(url, text = "", postId = "") {
     try {
       const selected = [...(popup.querySelector("#share-conversation-id")?.selectedOptions || [])].map((option) => String(option.value || "")).filter(Boolean);
       if (!selected.length) return toast("Select at least one chat");
+      const allowed = new Set(conversations.map((conv) => conv.id));
+      const invalid = selected.find((conversationId) => !allowed.has(conversationId));
+      if (invalid) return toast("You can only share to your own chats");
       const messageText = [`Shared post${postId ? ` (${postId})` : ""}:`, text || "", url].filter(Boolean).join("\n");
       for (const conversationId of selected) {
         await apiRequest(`/conversations/${conversationId}/messages`, {
