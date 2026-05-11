@@ -60,6 +60,9 @@ const postMediaIndexByPostId = {};
 let feedVideoObserver = null;
 const feedVideoVisibility = new Map();
 let feedVideoPlaybackTickScheduled = false;
+let feedVideoManualControlVideo = null;
+let feedVideoManualControlUntil = 0;
+let feedVideoViewportListenersBound = false;
 const preloadedMediaUrls = new Set();
 const loadedMediaUrls = new Set();
 const inputFileStore = {};
@@ -1103,13 +1106,22 @@ function scheduleFeedVideoPlaybackSync() {
 function syncMostVisibleFeedVideo() {
   const videos = [...document.querySelectorAll(".media-carousel .media-video")];
   if (!videos.length) return;
+  const nowMs = Date.now();
+  const manualActive = feedVideoManualControlVideo
+    && feedVideoManualControlVideo.isConnected
+    && nowMs < feedVideoManualControlUntil;
   let winner = null;
   let bestRatio = 0;
-  for (const video of videos) {
-    const ratio = Number(feedVideoVisibility.get(video) || 0);
-    if (ratio > bestRatio) {
-      bestRatio = ratio;
-      winner = video;
+  if (manualActive) {
+    winner = feedVideoManualControlVideo;
+    bestRatio = Number(feedVideoVisibility.get(winner) || 1);
+  } else {
+    for (const video of videos) {
+      const ratio = Number(feedVideoVisibility.get(video) || 0);
+      if (ratio > bestRatio) {
+        bestRatio = ratio;
+        winner = video;
+      }
     }
   }
   for (const video of videos) {
@@ -1118,9 +1130,11 @@ function syncMostVisibleFeedVideo() {
       continue;
     }
     if (video.paused) {
-      video.play().catch(() => {
+      const tryPlay = () => video.play().catch(() => {
         // Ignore autoplay blocks; user can still tap play.
       });
+      if (video.readyState >= 2) tryPlay();
+      else video.addEventListener("canplay", tryPlay, { once: true });
     }
   }
 }
@@ -1143,8 +1157,21 @@ function setupFeedVideoAutoplay() {
     video.muted = true;
     video.playsInline = true;
     feedVideoObserver.observe(video);
+    const markManual = () => {
+      feedVideoManualControlVideo = video;
+      feedVideoManualControlUntil = Date.now() + 2200;
+    };
+    video.addEventListener("pointerdown", markManual);
+    video.addEventListener("mousedown", markManual);
+    video.addEventListener("touchstart", markManual, { passive: true });
+    video.addEventListener("seeking", markManual);
     video.addEventListener("play", scheduleFeedVideoPlaybackSync);
   });
+  if (!feedVideoViewportListenersBound) {
+    window.addEventListener("scroll", scheduleFeedVideoPlaybackSync, { passive: true });
+    window.addEventListener("resize", scheduleFeedVideoPlaybackSync);
+    feedVideoViewportListenersBound = true;
+  }
   scheduleFeedVideoPlaybackSync();
 }
 

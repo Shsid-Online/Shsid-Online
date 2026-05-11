@@ -147,3 +147,9 @@
   - At any time, only the most visible video plays; others are paused.
   - Added visibility threshold gate (>=45%) to avoid autoplaying barely visible videos.
   - Validation: `npm run check` passed.
+- 2026-05-11: Refined post-video autoplay/scrub behavior.
+  - Autoplay arbitration now respects manual user control windows (seeking/pressing controls) so timeline scrubbing is not overridden.
+  - Added canplay fallback for autoplay start when metadata loads late.
+  - Added viewport-trigger sync on scroll/resize and bound global listeners only once.
+  - Goal: one visible video autoplay + stable user scrubbing without jump-back.
+  - Validation: `npm run check` passed.
