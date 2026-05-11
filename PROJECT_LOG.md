@@ -232,3 +232,7 @@
   - Removed hard-capped conversation list widths and switched `chat-layout` to `minmax(0, 1fr) minmax(0, 3fr)` on desktop and <=1120px.
   - Ensures the thread pane fills the space freed by the slimmer conversation area while avoiding over-compression.
   - Validation: `npm run check` passed.
+- 2026-05-11: Enforced 1:3 Messages split by removing equal-grid utility class.
+  - Changed Messages container from `class="grid two chat-layout"` to `class="chat-layout"` to avoid equal-column utility interference.
+  - Made `.chat-layout` explicitly `display: grid` with `1fr / 3fr` columns as the authoritative layout rule.
+  - Validation: `npm run check` passed.

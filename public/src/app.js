@@ -1724,7 +1724,7 @@ function renderMessages() {
   const counterpartId = active && !active.group ? (active.members || []).find((memberId) => memberId !== currentUser().id) : "";
   const counterpartRemark = counterpartId ? getRemarkForUser(counterpartId) : "";
   return page("Messages", "Real-time style direct and group messaging, anonymous sending, reporting, and admin monitoring.", `
-    <section class="grid two chat-layout">
+    <section class="chat-layout">
       <div class="panel chat-panel chat-panel-list">
         <div class="between" style="margin-bottom:12px"><strong>Conversations</strong><div class="row"><button class="btn small" data-action="open-start-direct">Direct</button><button class="btn small" data-action="open-create-convo">Create convo</button></div></div>
         <div class="row" style="margin-bottom:12px">
