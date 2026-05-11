@@ -714,6 +714,34 @@ function toast(message) {
   setTimeout(() => node.remove(), 2200);
 }
 
+function renderFatalUi(message) {
+  const app = document.querySelector("#app");
+  if (!app) return;
+  const safeMessage = escapeHtml(String(message || "Unknown client error"));
+  app.innerHTML = `
+    <section class="panel" style="max-width:760px;margin:24px auto">
+      <h2 style="margin-top:0">App Runtime Error</h2>
+      <p class="muted">The page hit a client-side error and stopped rendering. You can reload now.</p>
+      <pre style="white-space:pre-wrap;word-break:break-word;background:#f8fbff;border:1px solid var(--line);padding:12px;border-radius:10px">${safeMessage}</pre>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" type="button" id="fatal-reload-btn">Reload</button>
+      </div>
+    </section>
+  `;
+  app.querySelector("#fatal-reload-btn")?.addEventListener("click", () => window.location.reload());
+}
+
+window.addEventListener("error", (event) => {
+  const message = event?.error?.stack || event?.message || "Unknown client error";
+  renderFatalUi(message);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event?.reason;
+  const message = reason?.stack || reason?.message || String(reason || "Unhandled promise rejection");
+  renderFatalUi(message);
+});
+
 function showPopup(title, message) {
   document.querySelector("#site-popup")?.remove();
   const node = document.createElement("div");
