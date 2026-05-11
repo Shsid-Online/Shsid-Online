@@ -1690,7 +1690,10 @@ function renderMessages() {
   return page("Messages", "Real-time style direct and group messaging, anonymous sending, reporting, and admin monitoring.", `
     <section class="chat-layout">
       <div class="panel chat-panel chat-panel-list">
-        <div class="between" style="margin-bottom:12px"><strong>Conversations</strong><div class="row"><button class="btn small" data-action="open-start-direct">Direct</button><button class="btn small" data-action="open-create-convo">Create convo</button></div></div>
+        <div style="margin-bottom:12px">
+          <strong>Conversations</strong>
+          <div class="row" style="margin-top:8px"><button class="btn small" data-action="open-start-direct">Direct Messaging</button><button class="btn small" data-action="open-create-convo">Create Group Chat</button></div>
+        </div>
         <div class="row" style="margin-bottom:12px">
           <button class="btn ${conversationTab === "inbox" ? "primary" : ""}" data-action="chat-tab-inbox">Inbox (${inbox.length})</button>
           <button class="btn ${conversationTab === "requests" ? "primary" : ""}" data-action="chat-tab-requests">Requests (${requests.length})</button>
