@@ -1722,6 +1722,7 @@ function renderPost(post) {
 function renderComposer() {
   return page("Create Post", "Post publicly or anonymously with text, photos, and videos.", `
     <section class="composer">
+      <p class="muted" style="margin:0 0 8px">No title is needed for posts.</p>
       <div class="field"><label>Post text</label><textarea id="post-text" placeholder="What do you want to share?"></textarea></div>
       <div class="grid two">
         <div class="field"><label>Category</label><select id="post-category"><option>lifestyle</option><option>gaming</option><option>academic</option><option>school</option><option>shitpost</option></select></div>
@@ -1743,7 +1744,7 @@ function renderStudents() {
     <section class="grid two">${state.users.filter((u) => u.role !== "admin" && u.status === "verified").map((user) => `
       <article class="panel" data-action="view-profile" data-id="${user.id}" style="cursor:pointer">
         <div class="between">
-          <div class="row">${renderAvatar(user)}<div><strong>${escapeHtml(user.englishName)}</strong><div class="muted">Grade ${user.grade}, Class ${user.classNo} · ${escapeHtml(user.chineseName)}</div></div></div>
+          <div class="row">${renderAvatar(user)}<div><strong>${escapeHtml(user.englishName)}</strong><div class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</div></div></div>
         </div>
         <p>${escapeHtml(user.bio)}</p>
         <div class="row">

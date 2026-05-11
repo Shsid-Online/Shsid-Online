@@ -373,3 +373,8 @@
   - Right arrow now only appears when not on last media.
   - Added smoother transform/hover transitions to reduce abrupt flashing effect.
   - Validation: `npm run check` passed.
+- 2026-05-11: Removed repetitive native "Choose File" controls.
+  - Hid native file inputs for areas already using custom dropzones/icons.
+  - Affected inputs: post media, verification video, signup profile photo, settings profile photo.
+  - Upload functionality remains through dropzone/icon triggers.
+  - Validation: `npm run check` passed.
