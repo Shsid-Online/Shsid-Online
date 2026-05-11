@@ -54,6 +54,8 @@ let uploadUi = { active: false, label: "", percent: 0 };
 const postMediaIndexByPostId = {};
 const preloadedMediaUrls = new Set();
 const loadedMediaUrls = new Set();
+const inputFileStore = {};
+const inputFileSyncLock = new Set();
 let feedAheadPrefetchInFlight = false;
 let reelsAheadPrefetchInFlight = false;
 let categoryPrefetchInFlight = false;
@@ -2395,6 +2397,41 @@ function preloadVisiblePostMedia() {
   }
 }
 
+function fileFingerprint(file) {
+  return `${file.name}::${file.size}::${file.lastModified}::${file.type}`;
+}
+
+function mergeUniqueFiles(existingFiles = [], incomingFiles = []) {
+  const seen = new Set(existingFiles.map(fileFingerprint));
+  const merged = [...existingFiles];
+  for (const file of incomingFiles) {
+    const key = fileFingerprint(file);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(file);
+  }
+  return merged;
+}
+
+function setInputFiles(input, files = []) {
+  const dt = new DataTransfer();
+  files.forEach((file) => dt.items.add(file));
+  input.files = dt.files;
+}
+
+function appendFilesToInput(inputId, files = [], multiple = true) {
+  const input = document.querySelector(`#${inputId}`);
+  if (!input) return;
+  const existing = inputFileStore[inputId] || [];
+  const incoming = Array.isArray(files) ? files : [];
+  const merged = multiple ? mergeUniqueFiles(existing, incoming) : incoming.slice(0, 1);
+  inputFileStore[inputId] = merged;
+  inputFileSyncLock.add(inputId);
+  setInputFiles(input, merged);
+  inputFileSyncLock.delete(inputId);
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 function setupMediaLoadingIndicators(root = document) {
   const images = root.querySelectorAll(".media-image-tile img.media-content");
   images.forEach((img) => {
@@ -2423,11 +2460,26 @@ function bindFileChips(inputId, chipsId) {
   const input = document.querySelector(`#${inputId}`);
   const chips = document.querySelector(`#${chipsId}`);
   if (!input || !chips) return;
+  const isMultiple = input.hasAttribute("multiple");
+  inputFileStore[inputId] = [...(input.files || [])];
   const draw = () => {
-    const files = [...(input.files || [])];
+    const files = inputFileStore[inputId] || [...(input.files || [])];
     chips.innerHTML = files.map((file) => `<span class="chip">${escapeHtml(file.name)}</span>`).join("");
   };
-  input.addEventListener("change", draw);
+  input.addEventListener("change", () => {
+    if (inputFileSyncLock.has(inputId)) {
+      draw();
+      return;
+    }
+    const incoming = [...(input.files || [])];
+    const existing = inputFileStore[inputId] || [];
+    const merged = isMultiple ? mergeUniqueFiles(existing, incoming) : incoming.slice(0, 1);
+    inputFileStore[inputId] = merged;
+    inputFileSyncLock.add(inputId);
+    setInputFiles(input, merged);
+    inputFileSyncLock.delete(inputId);
+    draw();
+  });
   draw();
 }
 
@@ -2447,10 +2499,7 @@ function setupDropzone(zoneId, inputId, multiple) {
     zone.classList.remove("dragover");
     const files = [...(event.dataTransfer?.files || [])];
     if (!files.length) return;
-    const dt = new DataTransfer();
-    (multiple ? files : files.slice(0, 1)).forEach((file) => dt.items.add(file));
-    input.files = dt.files;
-    input.dispatchEvent(new Event("change", { bubbles: true }));
+    appendFilesToInput(inputId, files, multiple);
   });
 }
 

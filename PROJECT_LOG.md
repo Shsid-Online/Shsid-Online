@@ -49,3 +49,8 @@
   - Post delete action is now visible to post owner as well as admin.
   - `askConfirmPopup` now resolves `false` on all close paths (Cancel, top-right Close button, backdrop click), preventing unresolved promise/busy-state lock on delete buttons.
   - Validation: `npm run check` passed.
+- 2026-05-11: Fixed multi-file selection replacing previous uploads in post composer.
+  - Added client-side file store + merge logic so selecting more files appends to current selection (deduplicated by name/size/mtime/type) instead of replacing.
+  - Applied same append behavior to drag-and-drop in multi-file zones.
+  - Single-file zones (e.g. story/verification) still replace with latest single file as expected.
+  - Validation: `npm run check` passed.
