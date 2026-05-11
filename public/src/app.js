@@ -86,11 +86,11 @@ const prefetchedCategoryPosts = Object.fromEntries(CONTENT_CATEGORIES.map((categ
 hydrateAuthFromUrl();
 
 const navItems = [
-  ["feed", "FD", "Feed"],
+  ["feed", "&#128247;", "Feed"],
   ["post", "+", "Post"],
   ["students", "&#128269;", "Students"],
   ["messages", "&#128172;", "Messages"],
-  ["suggestions", "SG", "Suggestions"],
+  ["suggestions", "?", "Suggestions"],
   ["profile", "PR", "Profile"],
   ["admin", "&#128100;", "Admin"]
 ];
@@ -2117,13 +2117,14 @@ function renderAdmin() {
       <div class="panel admin-panel">
         <h2>Report Queue</h2>
         <div class="table-wrap">
-          <table class="table"><thead><tr><th>Reporter</th><th>Reported Content</th><th>Reason</th><th>Time</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+          <table class="table"><thead><tr><th>Reporter</th><th>Reported User</th><th>Reason</th><th>Time</th><th>Status</th><th>Actions</th></tr></thead><tbody>
             ${state.reports.map((report) => {
               const post = report.type === "post" ? state.posts.find((p) => p.id === report.targetId) : null;
+              const reportedUser = post ? state.users.find((u) => u.id === post.authorId) : null;
               const preview = post ? (post.text?.slice(0, 60) || "Media post") : "View in system";
               return `<tr>
                 <td><strong>${escapeHtml(userName(report.reporterId))}</strong><br><span class="muted">${report.reporterId ? state.users.find((u) => u.id === report.reporterId)?.englishName || "Unknown" : "Unknown"}</span></td>
-                <td><strong>${escapeHtml(reportTargetHumanLabel(report))}</strong><br><span class="muted">${escapeHtml(preview)}</span></td>
+                <td>${reportedUser ? `<strong>${escapeHtml(reportedUser.englishName || "Unknown")}</strong><br><span class="muted">${escapeHtml(reportedUser.chineseName || "")} · G${reportedUser.grade} C${reportedUser.classNo}</span>` : `<span class="muted">${escapeHtml(reportTargetHumanLabel(report))}</span><br><span class="muted">${escapeHtml(preview)}</span>`}</td>
                 <td>${escapeHtml(report.reason || "-")}</td>
                 <td><span class="muted">${new Date(report.createdAt).toLocaleDateString()}</span><br><span class="muted">${timeAgo(report.createdAt)}</span></td>
                 <td><span class="status ${report.status === "resolved" ? "green" : "gold"}">${escapeHtml(report.status)}</span></td>
