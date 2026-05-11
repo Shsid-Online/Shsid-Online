@@ -2750,7 +2750,9 @@ async function uploadVerificationVideoMultipart(file) {
 
 async function uploadMultipartPartsInParallel({ file, chunkSize, endpointPrefix, uploadId, key, onProgress = null }) {
   const totalParts = Math.ceil(file.size / chunkSize);
-  const concurrency = 4;
+  // Use sequential chunk uploads for browser/runtime compatibility and to avoid
+  // stream-reader lock issues reported on some environments.
+  const concurrency = 1;
   const nextPart = { value: 1 };
   const results = new Array(totalParts);
   let finished = 0;
@@ -2769,7 +2771,13 @@ async function uploadMultipartPartsInParallel({ file, chunkSize, endpointPrefix,
         },
         body: chunk
       });
-      const body = await response.json();
+      const raw = await response.text();
+      let body = {};
+      try {
+        body = raw ? JSON.parse(raw) : {};
+      } catch {
+        body = { detail: raw };
+      }
       if (!response.ok) {
         const detail = [body?.error, body?.detail].filter(Boolean).join(" - ");
         throw new Error(detail || `Chunk upload failed (part ${partNumber})`);

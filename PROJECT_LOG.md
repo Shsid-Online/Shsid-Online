@@ -117,3 +117,7 @@
   - Added per-upload PUT timeout (90s) with clear user-facing timeout error instead of silent long hang.
   - Added final 99% progress step before completion handoff to smooth close behavior.
   - Validation: `npm run check` passed.
+- 2026-05-11: Multipart upload reliability hotfix for "ReadableStream ... locked to a reader" stalls around early progress.
+  - Switched multipart chunk uploader to sequential mode (`concurrency = 1`) to avoid parallel stream lock conflicts in affected browser/runtime paths.
+  - Changed chunk response parsing to single-read text parse (`response.text()` then JSON parse) to avoid body-reader lock edge cases.
+  - Validation: `npm run check` passed.
