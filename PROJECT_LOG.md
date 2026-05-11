@@ -356,3 +356,9 @@
   - Queue stats auto-refresh every 60 seconds while user is in waiting state.
   - Queue polling automatically stops once user enters app state.
   - Validation: `npm run check` passed.
+- 2026-05-11: Improved visual distinction in Messages controls.
+  - Grouped `Direct Messaging` and `Create Group Chat` into a styled `Conversations` control block.
+  - Grouped `Inbox` / `Requests` into a separate styled tab block.
+  - Added stronger CTA/tab button styling (contrast, border, weight) so sections are visually distinct.
+  - Goal: easier separation between top actions, tab filters, and chat list items (including anonymous conversation rows).
+  - Validation: `npm run check` passed.

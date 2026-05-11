@@ -2119,7 +2119,7 @@ function renderRightbar() {
       </section>
       <section class="panel">
         <strong>Post of the Day</strong>
-        ${leaders.map((post) => `<p class="comment" style="margin:10px 0 0">${escapeHtml(post.category)} · ${post.likes.length} likes<br>${escapeHtml(post.text.slice(0, 80))}</p>`).join("")}
+        ${leaders.map((post) => `<button class="comment post-day-item" style="margin:10px 0 0;text-align:left;width:100%" data-action="open-post-day" data-id="${post.id}">${escapeHtml(post.category)} · ${post.likes.length} likes<br>${escapeHtml(post.text.slice(0, 80))}</button>`).join("")}
       </section>
       <section class="panel">
         <strong>Safety Status</strong>
@@ -2534,6 +2534,13 @@ async function handleAction(action, id) {
     const post = state.posts.find((item) => item.id === id);
     const text = post?.text ? post.text.slice(0, 120) : "Check this post";
     showSharePopup(shareUrl, text, id);
+    return;
+  }
+  if (action === "open-post-day") {
+    if (!id) return;
+    deepLinkedPostId = id;
+    view = "single-post";
+    await ensureDeepLinkedPostLoaded();
     return;
   }
   if (action === "back-feed") {
