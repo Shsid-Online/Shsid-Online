@@ -729,7 +729,7 @@ button {
 }
 
 .chat-layout {
-  grid-template-columns: minmax(120px, 0.34fr) minmax(0, 2.56fr);
+  grid-template-columns: minmax(0, 210px) minmax(0, 1fr);
   gap: 10px;
   align-items: start;
 }
@@ -747,8 +747,6 @@ button {
 }
 
 .chat-panel-list {
-  max-width: 220px;
-  justify-self: start;
   width: 100%;
 }
 
@@ -863,12 +861,8 @@ body.modal-open {
   }
 
   .chat-layout {
-    grid-template-columns: minmax(110px, 0.3fr) minmax(0, 2.8fr);
+    grid-template-columns: minmax(0, 180px) minmax(0, 1fr);
     gap: 8px;
-  }
-
-  .chat-panel-list {
-    max-width: 190px;
   }
 }
 

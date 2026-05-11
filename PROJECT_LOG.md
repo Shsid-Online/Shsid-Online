@@ -210,3 +210,7 @@
   - Added explicit max-width constraint on `.chat-panel-list` so the list panel stays narrow even when grid space is available.
   - Added a tighter `.chat-panel-list` max-width override for <=1120px layouts.
   - Validation: `npm run check` passed.
+- 2026-05-11: Converted Messages split to true fixed-width list column.
+  - Replaced fraction-based `chat-layout` first column with fixed tracks: desktop `minmax(0, 210px)`, <=1120px `minmax(0, 180px)`.
+  - This removes reserved empty grid space and guarantees the thread pane gets the recovered width.
+  - Validation: `npm run check` passed.
