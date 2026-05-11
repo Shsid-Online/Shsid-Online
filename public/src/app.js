@@ -16,6 +16,7 @@ const initialState = {
   notifications: [],
   audit: [],
   adminVerifications: [],
+  verificationQueue: { pendingTotal: 0, ahead: 0, position: 0 },
   apiToken: null,
   pendingEmail: "",
   pendingCode: "",
@@ -50,6 +51,8 @@ let profileBackView = "students";
 let liveChatTimer = null;
 let liveChatPollInFlight = false;
 let liveChatSnapshot = "";
+let verificationQueueTimer = null;
+let verificationQueuePollInFlight = false;
 let uploadUi = { active: false, label: "", percent: 0 };
 let uploadTargetPercent = 0;
 let uploadProgressTimer = null;
@@ -548,6 +551,7 @@ async function bootstrapSession() {
     await refreshConversations();
     await refreshNotifications();
     await refreshSuggestions();
+    await refreshVerificationQueue();
     if (result.user.role === "admin") {
       await refreshAdminVerifications();
       await refreshReports();
@@ -1109,6 +1113,7 @@ function render() {
     renderAuth();
     return;
   }
+  stopVerificationQueueLoop();
 
   const adminVisible = user.role === "admin";
   const visibleNav = navItems.filter((item) => item[0] !== "admin" || adminVisible);
@@ -1385,6 +1390,51 @@ function stopLiveChatLoop() {
   }
 }
 
+function stopVerificationQueueLoop() {
+  if (verificationQueueTimer) {
+    clearInterval(verificationQueueTimer);
+    verificationQueueTimer = null;
+  }
+}
+
+async function refreshVerificationQueue() {
+  if (!state.apiToken) return;
+  const user = currentUser();
+  if (!user || user.role === "admin" || user.status === "verified") return;
+  try {
+    const result = await apiRequest("/me/verification-queue");
+    state.verificationQueue = {
+      pendingTotal: Number(result.pendingTotal || 0),
+      ahead: Number(result.ahead || 0),
+      position: Number(result.position || 0)
+    };
+    saveState();
+  } catch (error) {
+    console.error("refreshVerificationQueue failed", error);
+  }
+}
+
+function syncVerificationQueueLoop() {
+  const user = currentUser();
+  const needsLoop = Boolean(user && state.authStep === "waiting" && user.role !== "admin" && user.status !== "verified");
+  if (!needsLoop) {
+    stopVerificationQueueLoop();
+    return;
+  }
+  if (verificationQueueTimer) return;
+  verificationQueueTimer = setInterval(async () => {
+    if (verificationQueuePollInFlight) return;
+    verificationQueuePollInFlight = true;
+    try {
+      await refreshVerificationQueue();
+      render();
+    } finally {
+      verificationQueuePollInFlight = false;
+    }
+  }, 60000);
+  void refreshVerificationQueue();
+}
+
 function syncLiveChatLoop() {
   const user = currentUser();
   const needsLiveChat = Boolean(user && state.authStep === "app" && (view === "messages" || (view === "admin" && user.role === "admin")));
@@ -1438,6 +1488,7 @@ function renderAuth() {
               ? "Upload your verification video to submit your account."
               : "Your account is submitted. Please wait for admin approval.";
   const resendSeconds = resendCooldownLeft();
+  const queue = state.verificationQueue || { pendingTotal: 0, ahead: 0, position: 0 };
   const body = step === "email" ? `
     <form class="grid" id="auth-email-form">
       <div class="field"><label>Email</label><input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" value="${escapeHtml(state.pendingEmail || "")}" required></div>
@@ -1508,6 +1559,7 @@ function renderAuth() {
   ` : step === "waiting" ? `
     <div class="grid">
       <p class="muted">We received your information and video. You will be able to post and message after approval.</p>
+      <p class="muted">Users ahead: <strong>${Math.max(0, Number(queue.ahead || 0))}</strong> · Pending users: <strong>${Math.max(0, Number(queue.pendingTotal || 0))}</strong></p>
       <div class="row"><button class="btn" type="button" data-auth="logout">Log out</button></div>
     </div>
   ` : `
@@ -1541,6 +1593,7 @@ function renderAuth() {
     </section>
   `;
   bindAuth();
+  syncVerificationQueueLoop();
 }
 
 function page(title, subtitle, content, actions = "") {

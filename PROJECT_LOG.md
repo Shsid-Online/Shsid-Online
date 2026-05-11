@@ -347,3 +347,6 @@
   - Wired profile photo rendering into major avatar surfaces (posts, students list, profile view, chat detail previews).
   - Added avatar image styling for circular cover display.
   - Validation: `npm run check` passed.
+- 2026-05-11: Reduced global UI text size by 10%.
+  - Added base `html { font-size: 90%; }` to scale text across the app consistently.
+  - Validation: `npm run check` passed.

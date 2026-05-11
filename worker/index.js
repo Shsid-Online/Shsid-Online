@@ -396,6 +396,20 @@ async function handleApi(request, env, url, route) {
     return json({ user: await userView(env, authUser, authUser) }, 200);
   }
 
+  if (method === "GET" && route === "/me/verification-queue") {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    if (authUser.role === "admin" || authUser.status === "verified") {
+      return json({ pendingTotal: 0, ahead: 0, position: 0 }, 200);
+    }
+    const totalRow = await env.DB.prepare("select count(*) as count from users where role='student' and status='pending_verification'").first();
+    const meRow = await env.DB.prepare("select created_at from users where id=? limit 1").bind(authUser.id).first();
+    if (!meRow?.created_at) return json({ pendingTotal: Number(totalRow?.count || 0), ahead: 0, position: 0 }, 200);
+    const aheadRow = await env.DB.prepare("select count(*) as count from users where role='student' and status='pending_verification' and created_at < ?").bind(meRow.created_at).first();
+    const ahead = Number(aheadRow?.count || 0);
+    const pendingTotal = Number(totalRow?.count || 0);
+    return json({ pendingTotal, ahead, position: ahead + 1 }, 200);
+  }
+
   if (method === "PATCH" && route === "/me/profile") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     const englishName = String(body.englishName || "").trim().slice(0, MAX_NAME_LEN);
