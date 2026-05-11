@@ -1073,7 +1073,7 @@ function render() {
   const adminVisible = user.role === "admin";
   const visibleNav = navItems.filter((item) => item[0] !== "admin" || adminVisible);
   document.querySelector("#app").innerHTML = `
-    <div class="app ${view === "admin" ? "app-admin" : ""}">
+    <div class="app ${view === "admin" ? "app-admin" : ""} ${view === "messages" ? "app-messages" : ""}">
       <aside class="sidebar">
         <div class="brand"><span class="brand-mark">S</span><span>SHSID Social</span></div>
         <nav class="nav">

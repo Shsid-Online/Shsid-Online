@@ -214,3 +214,8 @@
   - Replaced fraction-based `chat-layout` first column with fixed tracks: desktop `minmax(0, 210px)`, <=1120px `minmax(0, 180px)`.
   - This removes reserved empty grid space and guarantees the thread pane gets the recovered width.
   - Validation: `npm run check` passed.
+- 2026-05-11: Expanded Messages workspace by hiding right sidebar in chat view.
+  - Added `app-messages` root class when `view === "messages"`.
+  - Added CSS rules to use 2-column app layout (sidebar + main) and hide `.rightbar` in Messages, matching admin-width behavior.
+  - Reason: conversation-list slimming was already live, but right sidebar still consumed major width and masked the effect.
+  - Validation: `npm run check` passed.

@@ -53,6 +53,14 @@ button {
   display: none;
 }
 
+.app.app-messages {
+  grid-template-columns: 248px minmax(0, 1fr);
+}
+
+.app.app-messages .rightbar {
+  display: none;
+}
+
 .sidebar {
   position: sticky;
   top: 0;
