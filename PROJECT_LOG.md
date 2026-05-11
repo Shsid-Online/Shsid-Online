@@ -107,3 +107,8 @@
   - `bindEvents` data-action click handler now calls `event.preventDefault()` for all action buttons.
   - `handleAction` now explicitly no-ops `open-media` to neutralize stale cached DOM/script action payloads.
   - Validation: `npm run check` passed.
+- 2026-05-11: Stabilized post media layout to avoid shrink-then-expand during slow loads.
+  - Media stage now reserves a fixed frame immediately (`aspect-ratio: 4/3`, `min-height: 220px`) for each post media item.
+  - Media content is absolutely positioned to fill the reserved frame with `object-fit: contain`.
+  - This prevents post card height jumps while image/video bytes are still loading.
+  - Validation: `npm run check` passed.
