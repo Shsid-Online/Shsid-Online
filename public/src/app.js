@@ -54,6 +54,7 @@ let uploadUi = { active: false, label: "", percent: 0 };
 let uploadTargetPercent = 0;
 let uploadProgressTimer = null;
 let uploadCompleting = false;
+let postPublishInFlight = false;
 let modalLockedScrollY = 0;
 const postMediaIndexByPostId = {};
 const preloadedMediaUrls = new Set();
@@ -1728,6 +1729,10 @@ function renderRightbar() {
 function bindEvents() {
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", async () => {
+      if (postPublishInFlight || uploadUi.active) {
+        toast("Upload in progress. Please wait for completion.");
+        return;
+      }
       view = button.dataset.view;
       if (view === "profile") {
         state.selectedProfileId = null;
@@ -1969,6 +1974,10 @@ function bindAuth() {
 
 async function handleAction(action, id) {
   const user = currentUser();
+  if ((postPublishInFlight || uploadUi.active) && !["media-prev", "media-next"].includes(action)) {
+    toast("Upload in progress. Please wait for completion.");
+    return;
+  }
   if (action === "open-media") return;
   if (action === "logout") {
     try {
@@ -1984,29 +1993,38 @@ async function handleAction(action, id) {
     stopLiveChatLoop();
   }
   if (action === "create-post") {
+    if (postPublishInFlight) return;
+    postPublishInFlight = true;
     const text = document.querySelector("#post-text").value.trim();
     const files = [...document.querySelector("#post-media").files].slice(0, 20);
-    if (!text && !files.length) return toast("Write something or attach media");
-    const media = files.length ? await uploadFiles(files) : [];
-    await apiRequest("/posts", {
-      method: "POST",
-      body: JSON.stringify({
-        text,
-        anonymous: document.querySelector("#post-anon").value === "true",
-        category: document.querySelector("#post-category").value,
-        media
-      })
-    });
-    inputFileStore["post-media"] = [];
-    const postMediaInput = document.querySelector("#post-media");
-    if (postMediaInput) {
-      inputFileSyncLock.add("post-media");
-      setInputFiles(postMediaInput, []);
-      inputFileSyncLock.delete("post-media");
+    try {
+      if (!text && !files.length) {
+        toast("Write something or attach media");
+        return;
+      }
+      const media = files.length ? await uploadFiles(files) : [];
+      await apiRequest("/posts", {
+        method: "POST",
+        body: JSON.stringify({
+          text,
+          anonymous: document.querySelector("#post-anon").value === "true",
+          category: document.querySelector("#post-category").value,
+          media
+        })
+      });
+      inputFileStore["post-media"] = [];
+      const postMediaInput = document.querySelector("#post-media");
+      if (postMediaInput) {
+        inputFileSyncLock.add("post-media");
+        setInputFiles(postMediaInput, []);
+        inputFileSyncLock.delete("post-media");
+      }
+      await refreshPosts();
+      view = "feed";
+      toast("Post published");
+    } finally {
+      postPublishInFlight = false;
     }
-    await refreshPosts();
-    view = "feed";
-    toast("Post published");
   }
   if (action === "load-more-posts") {
     if (postsNextOffset == null) return;

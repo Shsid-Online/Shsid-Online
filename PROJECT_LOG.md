@@ -131,3 +131,9 @@
   - Multipart is now reserved only for larger files (>24 MiB).
   - Goal: bypass unstable chunk endpoint path for common uploads while retaining large-file support.
   - Validation: `npm run check` passed.
+- 2026-05-11: Enforced no-skip-ahead behavior during post/video upload publishing.
+  - Added `postPublishInFlight` guard.
+  - Blocks nav view switching while upload/post publish is active.
+  - Blocks most action handlers during active upload/publish (except local media-prev/next controls).
+  - Prevents users from skipping ahead mid-upload and causing inconsistent flow state.
+  - Validation: `npm run check` passed.
