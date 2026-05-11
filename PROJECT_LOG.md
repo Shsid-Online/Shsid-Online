@@ -76,3 +76,7 @@
   - Replaced modal body lock behavior with fixed-position scroll lock (`body.style.position = fixed; top = -scrollY`) and explicit scroll restore on modal close.
   - Prevents viewport jumping to top when image modal opens/closes on affected browsers.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added client runtime crash fallback UI to prevent white-screen lock.
+  - Added global `window.onerror` and `unhandledrejection` handlers to render a visible in-app fatal panel with reload action.
+  - Purpose: avoid blank page with no signal when a client runtime error occurs (including post-flow regressions).
+  - Validation: `npm run check` passed.
