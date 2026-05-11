@@ -702,6 +702,13 @@ button {
   cursor: pointer;
 }
 
+#post-media,
+#reg-video,
+#reg-photo,
+#settings-photo {
+  display: none;
+}
+
 .dropzone.dragover {
   border-color: #7ea8ff;
   background: #ecf3ff;

@@ -367,3 +367,9 @@
   - Added `open-post-day` action to open selected post in single-post view.
   - Uses deep-link load helper to ensure post opens even if not already in current feed slice.
   - Validation: `npm run check` passed.
+- 2026-05-11: Improved post media carousel navigation and reduced flash.
+  - Switched post carousel from single-media swap to sliding track (`media-track`) transition.
+  - Left arrow now only appears when not on first media.
+  - Right arrow now only appears when not on last media.
+  - Added smoother transform/hover transitions to reduce abrupt flashing effect.
+  - Validation: `npm run check` passed.
