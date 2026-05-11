@@ -421,6 +421,7 @@ button {
   border: 0;
   padding: 0;
   cursor: pointer;
+  position: relative;
 }
 
 .media-carousel {
@@ -430,6 +431,35 @@ button {
 
 .media-stage .media-tile {
   border-radius: 12px;
+}
+
+.media-stage {
+  min-height: 260px;
+}
+
+.media-image-tile.is-loading .media-content {
+  opacity: 0.25;
+}
+
+.media-loading-indicator {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  background: linear-gradient(180deg, rgba(2, 6, 23, 0.35), rgba(2, 6, 23, 0.55));
+}
+
+.media-image-tile.is-loading .media-loading-indicator {
+  display: grid;
+}
+
+.media-image-tile.is-loaded .media-loading-indicator {
+  display: none;
 }
 
 .media-nav {

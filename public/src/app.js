@@ -53,6 +53,7 @@ let liveChatSnapshot = "";
 let uploadUi = { active: false, label: "", percent: 0 };
 const postMediaIndexByPostId = {};
 const preloadedMediaUrls = new Set();
+const loadedMediaUrls = new Set();
 let feedAheadPrefetchInFlight = false;
 let reelsAheadPrefetchInFlight = false;
 let categoryPrefetchInFlight = false;
@@ -1021,6 +1022,7 @@ function render() {
     ${uploadUi.active ? renderUploadOverlay() : ""}
   `;
   bindEvents();
+  setupMediaLoadingIndicators();
   preloadVisiblePostMedia();
   syncLiveChatLoop();
 }
@@ -2319,7 +2321,15 @@ function renderPostMedia(item) {
   const url = String(item?.url || "");
   const type = String(item?.type || "");
   if (!url) return `<div class="media-tile">Media</div>`;
-  if (type.startsWith("image/")) return `<button type="button" class="media-tile media-button" data-action="open-media" data-id="${escapeHtml(url)}"><img class="media-content" src="${escapeHtml(url)}" alt="Post media" loading="lazy" /></button>`;
+  if (type.startsWith("image/")) {
+    const loaded = loadedMediaUrls.has(url);
+    return `
+      <button type="button" class="media-tile media-button media-image-tile ${loaded ? "is-loaded" : "is-loading"}" data-action="open-media" data-id="${escapeHtml(url)}">
+        <img class="media-content" src="${escapeHtml(url)}" alt="Post media" loading="lazy" />
+        <span class="media-loading-indicator" aria-hidden="true">Loading...</span>
+      </button>
+    `;
+  }
   if (type.startsWith("video/")) return `<div class="media-tile"><video class="media-content media-video" src="${escapeHtml(url)}" controls preload="metadata"></video></div>`;
   return `<a class="media-tile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open file</a>`;
 }
@@ -2360,6 +2370,7 @@ function updatePostMediaCarousel(postId) {
   postMediaIndexByPostId[postId] = current;
   const stage = card.querySelector(".media-stage");
   if (stage) stage.innerHTML = renderPostMedia(media[current]);
+  setupMediaLoadingIndicators(card);
   const prevButton = card.querySelector('[data-action="media-prev"]');
   if (prevButton) prevButton.disabled = current === 0;
   const nextButton = card.querySelector('[data-action="media-next"]');
@@ -2374,6 +2385,30 @@ function preloadVisiblePostMedia() {
     if (!post?.id) continue;
     preloadPostMediaAround(post.id);
   }
+}
+
+function setupMediaLoadingIndicators(root = document) {
+  const images = root.querySelectorAll(".media-image-tile img.media-content");
+  images.forEach((img) => {
+    const url = String(img.currentSrc || img.src || "").trim();
+    const tile = img.closest(".media-image-tile");
+    if (!tile || !url) return;
+    const markLoaded = () => {
+      loadedMediaUrls.add(url);
+      tile.classList.remove("is-loading");
+      tile.classList.add("is-loaded");
+    };
+    if (img.complete && img.naturalWidth > 0) {
+      markLoaded();
+      return;
+    }
+    tile.classList.add("is-loading");
+    img.addEventListener("load", markLoaded, { once: true });
+    img.addEventListener("error", () => {
+      tile.classList.remove("is-loading");
+      tile.classList.add("is-loaded");
+    }, { once: true });
+  });
 }
 
 function bindFileChips(inputId, chipsId) {
