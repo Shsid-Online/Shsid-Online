@@ -185,3 +185,6 @@
   - Rebuilt feed video autoplay bindings after carousel prev/next swaps so newly displayed videos are observed and controlled correctly.
   - Switched post video preload from metadata to auto to make byte-range seek requests smoother.
   - Validation: `npm run check` passed.
+- 2026-05-11: Deployed and verified feed video seek fix on production frontend.
+  - Ran Cloudflare Pages deploy for `public/` on project `shsid-online`.
+  - Verified `https://www.shsid.online/src/app.js` includes the new seek-lock code and `preload="auto"` post video markup.
