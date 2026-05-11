@@ -804,6 +804,32 @@ button {
   gap: 6px;
 }
 
+.chat-section {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 8px;
+}
+
+.chat-action-row {
+  gap: 8px;
+}
+
+.chat-cta-btn {
+  font-weight: 700;
+  border-color: #bdd4ff;
+  background: #eaf2ff;
+  color: #1e3a8a;
+}
+
+.chat-tab-section {
+  gap: 8px;
+}
+
+.chat-tab-btn {
+  font-weight: 700;
+}
+
 .chat-panel-list .btn {
   min-height: 34px;
   padding: 6px 8px;
@@ -816,6 +842,11 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.chat-list-scroll .btn {
+  border-color: #d5deee;
+  background: #fff;
 }
 
 .chat-list-scroll {

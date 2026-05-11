@@ -350,3 +350,9 @@
 - 2026-05-11: Reduced global UI text size by 10%.
   - Added base `html { font-size: 90%; }` to scale text across the app consistently.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added live verification queue counts for new unverified users.
+  - New API endpoint: `GET /me/verification-queue` returns `pendingTotal`, `ahead`, and `position` for current user.
+  - Waiting screen now shows queue stats: users ahead and total pending users.
+  - Queue stats auto-refresh every 60 seconds while user is in waiting state.
+  - Queue polling automatically stops once user enters app state.
+  - Validation: `npm run check` passed.
