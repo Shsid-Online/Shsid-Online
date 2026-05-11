@@ -1935,6 +1935,25 @@ function bindEvents() {
     });
   });
 
+  const messageBox = document.querySelector("#message-text");
+  messageBox?.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    const sendButton = document.querySelector('[data-action="send-message"]');
+    const conversationId = sendButton?.dataset?.id || "";
+    if (!conversationId || sendButton?.disabled || sendButton?.dataset?.busy === "1") return;
+    sendButton.dataset.busy = "1";
+    sendButton.disabled = true;
+    try {
+      await handleAction("send-message", conversationId);
+    } catch (error) {
+      toast(error.message || "Action failed");
+    } finally {
+      sendButton.dataset.busy = "0";
+      sendButton.disabled = false;
+    }
+  });
+
   setupDropzone("post-dropzone", "post-media", true);
   setupDropzone("story-dropzone", "story-media-file", false);
   bindFileChips("post-media", "post-file-chips");

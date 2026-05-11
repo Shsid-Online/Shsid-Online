@@ -188,3 +188,8 @@
 - 2026-05-11: Deployed and verified feed video seek fix on production frontend.
   - Ran Cloudflare Pages deploy for `public/` on project `shsid-online`.
   - Verified `https://www.shsid.online/src/app.js` includes the new seek-lock code and `preload="auto"` post video markup.
+- 2026-05-11: Added Enter-to-send shortcut in chat composer.
+  - Pressing `Enter` in `#message-text` now triggers the existing `send-message` flow.
+  - `Shift+Enter` still inserts a newline.
+  - Added in-flight guards so keyboard send respects the same busy/disabled behavior as clicking Send.
+  - Validation: `npm run check` passed.
