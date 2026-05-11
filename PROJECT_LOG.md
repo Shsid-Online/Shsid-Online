@@ -159,3 +159,8 @@
   - User pressing play clears paused-by-user state.
   - Result: user pause > system autoplay behavior.
   - Validation: `npm run check` passed.
+- 2026-05-11: Refined manual-control lock for feed video autoplay.
+  - Manual control lock now applies only while that same video remains >=45% visible.
+  - If user scrolls away, autoplay can immediately promote the next most visible video.
+  - Preserves user pause priority without blocking next-video autoplay.
+  - Validation: `npm run check` passed.

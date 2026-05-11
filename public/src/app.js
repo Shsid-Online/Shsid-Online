@@ -1109,9 +1109,11 @@ function syncMostVisibleFeedVideo() {
   const videos = [...document.querySelectorAll(".media-carousel .media-video")];
   if (!videos.length) return;
   const nowMs = Date.now();
+  const manualRatio = Number(feedVideoVisibility.get(feedVideoManualControlVideo) || 0);
   const manualActive = feedVideoManualControlVideo
     && feedVideoManualControlVideo.isConnected
-    && nowMs < feedVideoManualControlUntil;
+    && nowMs < feedVideoManualControlUntil
+    && manualRatio >= 0.45;
   let winner = null;
   let bestRatio = 0;
   if (manualActive) {
