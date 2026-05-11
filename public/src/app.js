@@ -472,7 +472,7 @@ async function refreshStories() {
   if (!state.apiToken) return;
   try {
     const result = await apiRequest("/stories");
-    state.stories = (result.stories || []).map((story) => ({ ...story, createdAt: at(story.createdAt) }));
+    state.stories = (result.stories || []).map((story) => ({ ...normalizeStory(story), createdAt: at(story.createdAt) }));
     saveState();
   } catch (error) {
     console.error("refreshStories failed", error);
@@ -696,6 +696,35 @@ function parseJsonObject(value) {
   } catch {
     return {};
   }
+}
+
+function normalizeStory(story) {
+  const base = story && typeof story === "object" ? { ...story } : {};
+  const rawText = String(base.text || "");
+  const caption = String(base.caption || "");
+  const mediaUrl = String(base.mediaUrl || "");
+  const mediaType = String(base.mediaType || "");
+  if (!caption && !mediaUrl && rawText.startsWith("__STORY__:")) {
+    try {
+      const parsed = JSON.parse(rawText.slice("__STORY__:".length));
+      return {
+        ...base,
+        storyType: "media",
+        caption: String(parsed?.caption || ""),
+        mediaUrl: String(parsed?.mediaUrl || ""),
+        mediaType: String(parsed?.mediaType || "")
+      };
+    } catch {
+      // fall through to safe fallback
+    }
+  }
+  return {
+    ...base,
+    storyType: base.storyType || (mediaUrl ? "media" : "text"),
+    caption: caption || rawText,
+    mediaUrl,
+    mediaType
+  };
 }
 
 function formatActionLabel(action) {
