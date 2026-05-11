@@ -387,3 +387,7 @@
   - Removed redundant `New post` button from Feed top actions.
   - Post creation remains accessible via the left sidebar `Post` tab.
   - Validation: `npm run check` passed.
+- 2026-05-11: Updated anonymous label wording.
+  - `userName(..., anonymous=true)` now returns `Anonymous` (was `Anonymous student`).
+  - This ensures anonymous post/comment labels show `Anonymous` instead of any unknown/fallback wording.
+  - Validation: `npm run check` passed.

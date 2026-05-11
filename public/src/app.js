@@ -1676,6 +1676,7 @@ function renderPost(post) {
         </div>
       </div>
       <div class="post-text">${escapeHtml(post.text || "")}</div>
+      ${post.title ? `<div class="post-title">${escapeHtml(post.title)}</div>` : ""}
       ${media.length ? `
         <div class="media-carousel">
           ${media.length > 1 && mediaIndex > 0 ? `<button class="media-nav prev" type="button" data-action="media-prev" data-id="${post.id}">&#8249;</button>` : ""}
@@ -1722,8 +1723,8 @@ function renderPost(post) {
 function renderComposer() {
   return page("Create Post", "Post publicly or anonymously with text, photos, and videos.", `
     <section class="composer">
-      <p class="muted" style="margin:0 0 8px">No title is needed for posts.</p>
-      <div class="field"><label>Post text</label><textarea id="post-text" placeholder="What do you want to share?"></textarea></div>
+      <div class="field"><label>Title (not required)</label><input id="post-title" placeholder="Optional title"></div>
+      <div class="field"><label>Post text (not required)</label><textarea id="post-text" placeholder="What do you want to share?"></textarea></div>
       <div class="grid two">
         <div class="field"><label>Category</label><select id="post-category"><option>lifestyle</option><option>gaming</option><option>academic</option><option>school</option><option>shitpost</option></select></div>
         <div class="field"><label>Visibility</label><select id="post-anon"><option value="false">Public</option><option value="true">Anonymous</option></select></div>
@@ -2456,6 +2457,7 @@ async function handleAction(action, id) {
   if (action === "create-post") {
     if (postPublishInFlight) return;
     postPublishInFlight = true;
+    const title = document.querySelector("#post-title")?.value?.trim() || "";
     const text = document.querySelector("#post-text").value.trim();
     const files = [...document.querySelector("#post-media").files].slice(0, 20);
     try {
@@ -2467,6 +2469,7 @@ async function handleAction(action, id) {
       await apiRequest("/posts", {
         method: "POST",
         body: JSON.stringify({
+          title,
           text,
           anonymous: document.querySelector("#post-anon").value === "true",
           category: document.querySelector("#post-category").value,

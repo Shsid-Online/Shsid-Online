@@ -20,6 +20,7 @@ const ALLOWED_UPLOAD_TYPES = [
   "application/pdf"
 ];
 let hasUsersProfilePhotoColumnCache = null;
+let hasPostsTitleColumnCache = null;
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
@@ -518,6 +519,7 @@ async function handleApi(request, env, url, route) {
     const post = {
       id: id("pst"),
       author_id: authUser.id,
+      title: String(body.title || "").trim().slice(0, MAX_TITLE_LEN),
       category: String(body.category || "school").slice(0, MAX_CATEGORY_LEN),
       text: text.slice(0, MAX_TEXT_LEN),
       media: JSON.stringify(media),
@@ -528,9 +530,15 @@ async function handleApi(request, env, url, route) {
       created_at: now()
     };
 
-    await env.DB.prepare("insert into posts (id, author_id, category, text, media, likes, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .bind(post.id, post.author_id, post.category, post.text, post.media, post.likes, post.anonymous, post.sticky, post.deleted_at, post.created_at)
-      .run();
+    if (await hasPostsTitleColumn(env)) {
+      await env.DB.prepare("insert into posts (id, author_id, title, category, text, media, likes, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(post.id, post.author_id, post.title, post.category, post.text, post.media, post.likes, post.anonymous, post.sticky, post.deleted_at, post.created_at)
+        .run();
+    } else {
+      await env.DB.prepare("insert into posts (id, author_id, category, text, media, likes, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(post.id, post.author_id, post.category, post.text, post.media, post.likes, post.anonymous, post.sticky, post.deleted_at, post.created_at)
+        .run();
+    }
     await audit(env, authUser.id, "post_created", { postId: post.id }, request);
 
     return json({ post: fromDbPost(post) }, 201);
@@ -1170,6 +1178,7 @@ function fromDbPost(row) {
   return {
     id: row.id,
     authorId: row.author_id,
+    title: row.title || "",
     category: row.category,
     text: row.text,
     media: jsonArray(row.media),
@@ -1273,6 +1282,24 @@ async function hasUsersProfilePhotoColumn(env) {
     return true;
   } catch {
     hasUsersProfilePhotoColumnCache = false;
+    return false;
+  }
+}
+
+async function hasPostsTitleColumn(env) {
+  if (hasPostsTitleColumnCache !== null) return hasPostsTitleColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(posts)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (names.includes("title")) {
+      hasPostsTitleColumnCache = true;
+      return true;
+    }
+    await env.DB.prepare("alter table posts add column title text default ''").run();
+    hasPostsTitleColumnCache = true;
+    return true;
+  } catch {
+    hasPostsTitleColumnCache = false;
     return false;
   }
 }

@@ -29,6 +29,7 @@ create table if not exists email_verifications (
 create table if not exists posts (
   id text primary key,
   author_id text not null references users(id),
+  title text not null default '',
   category text not null default 'school',
   text text not null default '',
   media text not null default '[]',
