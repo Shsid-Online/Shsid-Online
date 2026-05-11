@@ -1129,7 +1129,17 @@ async function handleEmailAuthIntent(intent) {
   }
 }
 
+let renderDebounceTimer = null;
+
 function render() {
+  if (renderDebounceTimer) return;
+  renderDebounceTimer = setTimeout(() => {
+    renderDebounceTimer = null;
+    doRender();
+  }, 16);
+}
+
+function doRender() {
   const user = currentUser();
   if (!user || state.authStep !== "app") {
     stopLiveChatLoop();
@@ -2209,7 +2219,12 @@ function renderRightbar() {
   `;
 }
 
+let eventsBound = false;
+let renderFrameScheduled = false;
+
 function bindEvents() {
+  if (eventsBound) return;
+  eventsBound = true;
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", async () => {
       if (postPublishInFlight || uploadUi.active) {
