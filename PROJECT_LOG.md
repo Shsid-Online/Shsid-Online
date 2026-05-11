@@ -310,3 +310,13 @@
   - Added previous-view tracking (`profileBackView`) so return target is preserved (students/messages/admin/feed).
   - Wired profile opens from messages popup and admin source jumps to set correct back target.
   - Validation: `npm run check` passed.
+- 2026-05-11: Fixed Q&A answering and moved suggestions into a dedicated tab workflow.
+  - Added backend Q&A answer endpoint `POST /qna/:id/answer` (profile owner or admin), with notification to asker.
+  - Added dedicated `Suggestions` nav tab (`SG`) and renderer.
+  - Removed suggestion box from profile page.
+  - Student suggestions tab: submit suggestion + see history and admin replies.
+  - Admin suggestions tab: read all student suggestions and send direct responses.
+  - Added backend admin suggestion endpoints:
+    - `GET /admin/suggestions`
+    - `POST /admin/suggestions/:id` (stores response in status payload `responded::...` and notifies student).
+  - Validation: `npm run check` passed.

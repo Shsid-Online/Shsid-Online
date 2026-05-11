@@ -865,6 +865,25 @@ async function handleApi(request, env, url, route) {
     return json({ question: { id: entry.id, profileId: entry.profile_id, askerId: entry.asker_id, question: entry.question, answer: entry.answer, anonymous: Boolean(entry.anonymous), visibility: entry.visibility, createdAt: entry.created_at } }, 201);
   }
 
+  const qnaAnswerMatch = route.match(/^\/qna\/([^/]+)\/answer$/);
+  if (qnaAnswerMatch && method === "POST") {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const entry = await env.DB.prepare("select * from qna where id=?").bind(qnaAnswerMatch[1]).first();
+    if (!entry) return json({ error: "Not found" }, 404);
+    if (authUser.role !== "admin" && authUser.id !== entry.profile_id) return json({ error: "Not allowed" }, 403);
+    const answer = String(body.answer || "").trim().slice(0, MAX_TEXT_LEN);
+    if (!answer) return json({ error: "Answer is required" }, 400);
+    await env.DB.prepare("update qna set answer=? where id=?").bind(answer, entry.id).run();
+    const updated = await env.DB.prepare("select * from qna where id=?").bind(entry.id).first();
+    await audit(env, authUser.id, "qna_answered", { qnaId: entry.id, profileId: entry.profile_id }, request);
+    if (entry.asker_id) {
+      await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
+        .bind(id("ntf"), entry.asker_id, "qna", "Your Q&A question got a reply.", null, now())
+        .run();
+    }
+    return json({ question: { id: updated.id, profileId: updated.profile_id, askerId: updated.asker_id, question: updated.question, answer: updated.answer, anonymous: Boolean(updated.anonymous), visibility: updated.visibility, createdAt: updated.created_at } }, 200);
+  }
+
   if (method === "GET" && route === "/suggestions") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     const rows = await env.DB.prepare("select * from suggestions where user_id=? order by created_at desc").bind(authUser.id).all();
@@ -880,6 +899,29 @@ async function handleApi(request, env, url, route) {
       .bind(suggestion.id, suggestion.user_id, suggestion.text, suggestion.status, suggestion.created_at)
       .run();
     return json({ suggestion }, 201);
+  }
+
+  if (method === "GET" && route === "/admin/suggestions") {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    const rows = await env.DB.prepare("select * from suggestions order by created_at desc").all();
+    return json({ suggestions: rows.results || [], pagination: { limit: 200, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
+  }
+
+  const adminSuggestionMatch = route.match(/^\/admin\/suggestions\/([^/]+)$/);
+  if (method === "POST" && adminSuggestionMatch) {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    const suggestion = await env.DB.prepare("select * from suggestions where id=?").bind(adminSuggestionMatch[1]).first();
+    if (!suggestion) return json({ error: "Not found" }, 404);
+    const responseText = String(body.response || "").trim().slice(0, 280);
+    if (!responseText) return json({ error: "Response is required" }, 400);
+    const status = `responded::${responseText}`;
+    await env.DB.prepare("update suggestions set status=? where id=?").bind(status, suggestion.id).run();
+    await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
+      .bind(id("ntf"), suggestion.user_id, "suggestion", `Admin replied to your suggestion: ${responseText}`, null, now())
+      .run();
+    await audit(env, authUser.id, "suggestion_responded", { suggestionId: suggestion.id }, request);
+    const updated = await env.DB.prepare("select * from suggestions where id=?").bind(suggestion.id).first();
+    return json({ suggestion: updated }, 200);
   }
 
   if (method === "GET" && route === "/notifications") {

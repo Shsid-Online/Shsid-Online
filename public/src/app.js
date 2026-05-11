@@ -85,6 +85,7 @@ const navItems = [
   ["post", "PT", "Post"],
   ["students", "ST", "Students"],
   ["messages", "MS", "Messages"],
+  ["suggestions", "SG", "Suggestions"],
   ["profile", "PR", "Profile"],
   ["admin", "AD", "Admin"]
 ];
@@ -476,7 +477,9 @@ async function refreshNotifications() {
 async function refreshSuggestions() {
   if (!state.apiToken) return;
   try {
-    const result = await apiRequest("/suggestions");
+    const result = currentUser()?.role === "admin"
+      ? await apiRequest("/admin/suggestions")
+      : await apiRequest("/suggestions");
     state.suggestions = result.suggestions || [];
     saveState();
   } catch (error) {
@@ -641,6 +644,13 @@ function metadataDetailsLabel(metadata = {}) {
   const entries = Object.entries(metadata || {}).filter(([key]) => !["userId", "postId", "commentId", "storyId", "conversationId", "reportId"].includes(key));
   if (!entries.length) return "No extra details";
   return entries.slice(0, 4).map(([key, value]) => `${key}: ${value}`).join(" | ");
+}
+
+function parseSuggestionStatus(status) {
+  const raw = String(status || "").trim();
+  if (raw.startsWith("responded::")) return { stage: "responded", response: raw.slice("responded::".length).trim() };
+  if (raw === "resolved") return { stage: "responded", response: "" };
+  return { stage: raw || "pending", response: "" };
 }
 
 function reportTargetHumanLabel(report = {}) {
@@ -1532,6 +1542,7 @@ function renderView() {
     post: renderComposer,
     students: renderStudents,
     messages: renderMessages,
+    suggestions: renderSuggestions,
     profile: renderProfile,
     admin: renderAdmin
   };
@@ -1836,8 +1847,6 @@ function renderProfile() {
           ${!isOwnProfile ? `<button class="btn small" data-action="ask-qna" data-id="${user.id}">Ask Question</button>` : ""}
         </div>
         ${questions.length ? questions.map((q) => `<button class="comment qna-item" data-action="open-qna" data-id="${q.id}" style="text-align:left"><strong>${escapeHtml(q.question)}</strong><br>${escapeHtml(q.answer || "Waiting for answer")}</button>`).join("") : `<p class="muted">No questions yet.</p>`}
-        <h3>Suggestion Box</h3>
-        ${state.suggestions.map((s) => `<p class="comment">${escapeHtml(s.text)} · ${escapeHtml(s.status)}</p>`).join("")}
       </div>
     </section>
     <section class="panel" style="margin-top:16px">
@@ -1846,6 +1855,62 @@ function renderProfile() {
         ? `<div class="grid">${userPosts.map(renderPost).join("")}</div>`
         : `<p class="muted">This user has no posts.</p>`
       }
+    </section>
+  `);
+}
+
+function renderSuggestions() {
+  const user = currentUser();
+  if (!user) return page("Suggestions", "Loading suggestions...", `<section class="panel"><p class="muted">Please wait.</p></section>`);
+  const rows = [...(state.suggestions || [])].sort((a, b) => at(b.created_at || b.createdAt) - at(a.created_at || a.createdAt));
+  if (user.role === "admin") {
+    return page("Suggestions", "Read student suggestions and send direct admin responses.", `
+      <section class="panel">
+        <h2 style="margin-top:0">Student Suggestions</h2>
+        <div class="grid">
+          ${rows.length ? rows.map((item) => {
+            const parsed = parseSuggestionStatus(item.status);
+            return `
+              <article class="comment" style="margin:0">
+                <div class="between">
+                  <strong>${escapeHtml(userName(item.user_id || item.userId))}</strong>
+                  <span class="muted">${new Date(at(item.created_at || item.createdAt)).toLocaleString()}</span>
+                </div>
+                <p style="margin:8px 0 6px">${escapeHtml(item.text || "")}</p>
+                <p class="muted" style="margin:0">Status: ${escapeHtml(parsed.stage)}</p>
+                ${parsed.response ? `<p class="muted" style="margin:6px 0 0"><strong>Response:</strong> ${escapeHtml(parsed.response)}</p>` : ""}
+                <div class="row" style="margin-top:8px">
+                  <button class="btn small" data-action="reply-suggestion" data-id="${item.id}">Reply</button>
+                </div>
+              </article>
+            `;
+          }).join("") : `<p class="muted">No suggestions submitted yet.</p>`}
+        </div>
+      </section>
+    `);
+  }
+  return page("Suggestions", "Submit suggestions to admins and track replies.", `
+    <section class="grid">
+      <div class="panel">
+        <h2 style="margin-top:0">Send Suggestion</h2>
+        <div class="field"><label>Your suggestion</label><textarea id="suggestion-text" placeholder="Share feedback, bug reports, or ideas."></textarea></div>
+        <div class="row"><button class="btn primary" data-action="submit-suggestion">Submit</button></div>
+      </div>
+      <div class="panel">
+        <h2 style="margin-top:0">Your Suggestion History</h2>
+        <div class="grid">
+          ${rows.length ? rows.map((item) => {
+            const parsed = parseSuggestionStatus(item.status);
+            return `
+              <article class="comment" style="margin:0">
+                <p style="margin:0 0 6px">${escapeHtml(item.text || "")}</p>
+                <p class="muted" style="margin:0">Status: ${escapeHtml(parsed.stage)}</p>
+                ${parsed.response ? `<p class="muted" style="margin:6px 0 0"><strong>Admin response:</strong> ${escapeHtml(parsed.response)}</p>` : ""}
+              </article>
+            `;
+          }).join("") : `<p class="muted">No suggestions submitted yet.</p>`}
+        </div>
+      </div>
     </section>
   `);
 }
@@ -1971,9 +2036,9 @@ function bindEvents() {
       view = button.dataset.view;
       if (view === "profile") {
         state.selectedProfileId = null;
-        await refreshSuggestions();
         await refreshQnaForProfile(state.currentUserId);
       }
+      if (view === "suggestions") await refreshSuggestions();
       if (view === "admin") {
         await refreshAdminVerifications();
         await refreshReports();
@@ -2630,7 +2695,53 @@ async function handleAction(action, id) {
   if (action === "open-qna") {
     const entry = state.qna.find((item) => item.id === id);
     if (!entry) return;
-    showPopup("Q&A", `${entry.question}\n\n${entry.answer || "Waiting for answer"}`);
+    const me = currentUser();
+    const canAnswer = me?.role === "admin" || me?.id === entry.profileId;
+    if (!canAnswer) {
+      showPopup("Q&A", `${entry.question}\n\n${entry.answer || "Waiting for answer"}`);
+      return;
+    }
+    const popup = showFormPopup("Q&A", `
+      <form id="qna-answer-form" class="grid">
+        <p style="margin:0"><strong>Question:</strong> ${escapeHtml(entry.question)}</p>
+        <div class="field">
+          <label>Your answer</label>
+          <textarea id="qna-answer-text" placeholder="Write your answer">${escapeHtml(entry.answer || "")}</textarea>
+        </div>
+        <div class="row">
+          <button class="btn primary" type="submit">Save Answer</button>
+          <button class="btn" type="button" data-cancel>Cancel</button>
+        </div>
+      </form>
+    `);
+    popup.querySelector("[data-cancel]")?.addEventListener("click", () => popup.remove());
+    popup.querySelector("#qna-answer-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const answer = String(popup.querySelector("#qna-answer-text")?.value || "").trim();
+      if (!answer) return toast("Answer is required");
+      await apiRequest(`/qna/${entry.id}/answer`, { method: "POST", body: JSON.stringify({ answer }) });
+      await refreshQnaForProfile(entry.profileId);
+      popup.remove();
+      toast("Q&A answer saved");
+      render();
+    });
+    return;
+  }
+  if (action === "submit-suggestion") {
+    const text = String(document.querySelector("#suggestion-text")?.value || "").trim();
+    if (!text) return toast("Write a suggestion first");
+    await apiRequest("/suggestions", { method: "POST", body: JSON.stringify({ text }) });
+    await refreshSuggestions();
+    toast("Suggestion submitted");
+  }
+  if (action === "reply-suggestion") {
+    const response = await askTextPopup("Respond to Suggestion", "Response", "Write your response");
+    if (response == null) return;
+    const clean = String(response).trim();
+    if (!clean) return toast("Response is required");
+    await apiRequest(`/admin/suggestions/${id}`, { method: "POST", body: JSON.stringify({ response: clean }) });
+    await refreshSuggestions();
+    toast("Suggestion response sent");
   }
   saveState();
   render();
