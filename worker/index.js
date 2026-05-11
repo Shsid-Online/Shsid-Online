@@ -1065,6 +1065,64 @@ async function handleApi(request, env, url, route) {
     return json({ auditLogs: rows.results || [], pagination: { limit: 500, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
   }
 
+  if (method === "GET" && route === "/admin/bans") {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    const rows = await env.DB.prepare("select * from bans order by created_at desc").all();
+    const enriched = (rows.results || []).map((ban) => {
+      const targetUser = rows.results?.find ? null : ban;
+      const targetRow = ban;
+      return { ...ban, targetName: ban.target_name || "Unknown", adminName: ban.admin_name || "Unknown" };
+    });
+    return json({ bans: enriched, pagination: { limit: 100, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
+  }
+
+  const banUserMatch = route.match(/^\/admin\/bans\/([^/]+)\/user$/);
+  if (method === "POST" && banUserMatch) {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    const targetRow = await env.DB.prepare("select * from users where id=?").bind(banUserMatch[1]).first();
+    if (!targetRow) return json({ error: "Not found" }, 404);
+    if (targetRow.role === "admin") return json({ error: "Cannot ban admin account" }, 400);
+    const action = String(body.action || "warn");
+    const reason = String(body.reason || "Violation of community guidelines").slice(0, 500);
+    let endsAt = null;
+    if (action === "ban_temp") {
+      const days = Math.max(1, Math.min(365, parseInt(body.days || "7", 10)));
+      endsAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+    }
+    if (action !== "warn") {
+      await env.DB.prepare("update users set status='banned', updated_at=? where id=?").bind(now(), targetRow.id).run();
+    }
+    const banId = id("ban");
+    await env.DB.prepare("insert into bans (id, user_id, admin_id, action, reason, starts_at, ends_at, revoked_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(banId, targetRow.id, authUser.id, action, reason, now(), endsAt, null, now())
+      .run();
+    const notifBody = action === "warn"
+      ? `You have received a warning from admin: ${reason}`
+      : action === "ban_temp"
+        ? `Your account has been temporarily suspended for ${body.days || 7} days. Reason: ${reason}`
+        : "Your account has been banned by admin review.";
+    await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
+      .bind(id("ntf"), targetRow.id, "moderation", notifBody, null, now())
+      .run();
+    const auditAction = action === "warn" ? "user_warned" : (action === "ban_temp" ? "user_temp_banned" : "user_banned");
+    await audit(env, authUser.id, auditAction, { userId: targetRow.id, action, reason, endsAt }, request);
+    return json({ ban: { id: banId, userId: targetRow.id, adminId: authUser.id, action, reason, startsAt: now(), endsAt } }, 201);
+  }
+
+  const revokeBanMatch = route.match(/^\/admin\/bans\/([^/]+)$/);
+  if ((method === "DELETE" || method === "PATCH") && revokeBanMatch) {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    const ban = await env.DB.prepare("select * from bans where id=?").bind(revokeBanMatch[1]).first();
+    if (!ban) return json({ error: "Not found" }, 404);
+    await env.DB.prepare("update bans set revoked_at=? where id=?").bind(now(), ban.id).run();
+    await env.DB.prepare("update users set status='verified', updated_at=? where id=?").bind(now(), ban.user_id).run();
+    await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
+      .bind(id("ntf"), ban.user_id, "moderation", "Your account suspension has been lifted.", null, now())
+      .run();
+    await audit(env, authUser.id, "ban_revoked", { banId: ban.id, userId: ban.user_id }, request);
+    return json({ ban: { ...ban, revoked_at: now() } }, 200);
+  }
+
   return json({ error: "Not found" }, 404);
 }
 

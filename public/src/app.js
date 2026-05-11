@@ -2111,8 +2111,19 @@ function renderAdmin() {
       <div class="panel admin-panel">
         <h2>Report Queue</h2>
         <div class="table-wrap">
-          <table class="table"><thead><tr><th>Report</th><th>Reason</th><th>Preview</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-            ${state.reports.map((report) => `<tr><td><strong>${escapeHtml(userName(report.reporterId))}</strong> reported <strong>${escapeHtml(reportTargetHumanLabel(report))}</strong><br><span class="muted">${escapeHtml(report.type || "-")} · ${escapeHtml(report.targetId || "-")}</span></td><td>${escapeHtml(report.reason)}</td><td><span class="muted">${escapeHtml(reportTargetPreview(report))}</span></td><td>${escapeHtml(report.status)}</td><td><div class="admin-actions"><button class="btn small" data-action="open-report-source" data-id="${report.id}">Open Source</button><button class="btn small" data-action="resolve-report" data-id="${report.id}">Resolve</button></div></td></tr>`).join("")}
+          <table class="table"><thead><tr><th>Reporter</th><th>Reported Content</th><th>Reason</th><th>Time</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+            ${state.reports.map((report) => {
+              const post = report.type === "post" ? state.posts.find((p) => p.id === report.targetId) : null;
+              const preview = post ? (post.text?.slice(0, 60) || "Media post") : "View in system";
+              return `<tr>
+                <td><strong>${escapeHtml(userName(report.reporterId))}</strong><br><span class="muted">${report.reporterId ? state.users.find((u) => u.id === report.reporterId)?.englishName || "Unknown" : "Unknown"}</span></td>
+                <td><strong>${escapeHtml(reportTargetHumanLabel(report))}</strong><br><span class="muted">${escapeHtml(preview)}</span></td>
+                <td>${escapeHtml(report.reason || "-")}</td>
+                <td><span class="muted">${new Date(report.createdAt).toLocaleDateString()}</span><br><span class="muted">${timeAgo(report.createdAt)}</span></td>
+                <td><span class="status ${report.status === "resolved" ? "green" : "gold"}">${escapeHtml(report.status)}</span></td>
+                <td><div class="admin-actions"><button class="btn small primary" data-action="handle-report" data-id="${report.id}">Handle</button></div></td>
+              </tr>`;
+            }).join("")}
           </tbody></table>
         </div>
       </div>
@@ -2846,15 +2857,118 @@ async function handleAction(action, id) {
     await refreshStudents();
   }
   if (action === "ban-user") {
-    const ok = await askConfirmPopup("Ban User", "This will ban the account and block access. Continue?", "Ban User");
-    if (!ok) return;
-    await apiRequest(`/admin/users/${id}/ban`, { method: "POST", body: JSON.stringify({}) });
-    await refreshAdminVerifications();
-    await refreshStudents();
+    const user = state.users.find((u) => u.id === id);
+    const result = await showFormPopup("Ban / Warn User", `
+      <form id="ban-user-form" class="grid">
+        <p><strong>${escapeHtml(user?.englishName || "Unknown")}</strong> (${escapeHtml(user?.chineseName || "")})</p>
+        <div class="field">
+          <label>Action</label>
+          <select id="ban-action">
+            <option value="warn">Send Warning</option>
+            <option value="ban_temp">Temporary Ban</option>
+            <option value="ban_perm">Permanent Ban</option>
+          </select>
+        </div>
+        <div class="field" id="ban-days-field" style="display:none">
+          <label>Days (1-365)</label>
+          <input id="ban-days" type="number" min="1" max="365" value="7" />
+        </div>
+        <div class="field">
+          <label>Reason (visible to user)</label>
+          <textarea id="ban-reason" placeholder="Describe the violation..." required></textarea>
+        </div>
+        <div class="row">
+          <button class="btn danger" type="submit">Confirm</button>
+          <button class="btn" type="button" data-cancel>Cancel</button>
+        </div>
+      </form>
+    `);
+    result.querySelector("#ban-action")?.addEventListener("change", (e) => {
+      const daysField = result.querySelector("#ban-days-field");
+      if (daysField) daysField.style.display = e.target.value === "ban_temp" ? "" : "none";
+    });
+    result.querySelector("[data-cancel]")?.addEventListener("click", () => result.remove());
+    result.querySelector("#ban-user-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const banAction = result.querySelector("#ban-action")?.value || "warn";
+      const reason = result.querySelector("#ban-reason")?.value?.trim();
+      if (!reason) return toast("Please enter a reason");
+      const days = banAction === "ban_temp" ? parseInt(result.querySelector("#ban-days")?.value || "7", 10) : 0;
+      await apiRequest(`/admin/bans/${id}/user`, {
+        method: "POST",
+        body: JSON.stringify({ action: banAction, reason, days })
+      });
+      result.remove();
+      toast(banAction === "warn" ? "Warning sent" : "User banned");
+      await refreshAdminVerifications();
+      await refreshStudents();
+    });
+    return;
   }
-  if (action === "resolve-report") {
-    await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "resolved" }) });
-    await refreshReports();
+  if (action === "handle-report") {
+    const report = state.reports.find((r) => r.id === id);
+    if (!report) return;
+    const targetPost = report.type === "post" ? state.posts.find((p) => p.id === report.targetId) : null;
+    const targetUser = targetPost ? state.users.find((u) => u.id === targetPost.authorId) : null;
+    const targetId = targetUser?.id || report.targetId;
+    const result = await showFormPopup("Handle Report", `
+      <form id="handle-report-form" class="grid">
+        <p><strong>Reporter:</strong> ${escapeHtml(userName(report.reporterId))}</p>
+        <p><strong>Against:</strong> ${escapeHtml(reportTargetHumanLabel(report))}</p>
+        <p><strong>Reason:</strong> ${escapeHtml(report.reason || "-")}</p>
+        ${targetPost ? `<p class="muted"><strong>Post:</strong> ${escapeHtml(targetPost.text?.slice(0, 100) || "Media post")}</p>` : ""}
+        <hr style="margin:12px 0;border-color:#eee" />
+        <div class="field">
+          <label>Take Action</label>
+          <select id="report-action">
+            <option value="dismiss">Dismiss Report</option>
+            <option value="warn">Warn User</option>
+            <option value="ban_temp">Temporary Ban</option>
+            <option value="ban_perm">Permanent Ban</option>
+          </select>
+        </div>
+        <div class="field" id="report-days-field" style="display:none">
+          <label>Days (1-365)</label>
+          <input id="report-days" type="number" min="1" max="365" value="7" />
+        </div>
+        <div class="field" id="report-reason-field">
+          <label>Reason (visible to user)</label>
+          <textarea id="report-reason" placeholder="Describe the violation for the user..."></textarea>
+        </div>
+        <div class="row">
+          <button class="btn primary" type="submit">Submit</button>
+          <button class="btn" type="button" data-cancel>Cancel</button>
+        </div>
+      </form>
+    `);
+    result.querySelector("#report-action")?.addEventListener("change", (e) => {
+      const daysField = result.querySelector("#report-days-field");
+      const reasonField = result.querySelector("#report-reason-field");
+      if (daysField) daysField.style.display = e.target.value === "ban_temp" ? "" : "none";
+      if (reasonField) reasonField.style.display = e.target.value === "dismiss" ? "none" : "";
+    });
+    result.querySelector("[data-cancel]")?.addEventListener("click", () => result.remove());
+    result.querySelector("#handle-report-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const reportAction = result.querySelector("#report-action")?.value || "dismiss";
+      const reason = result.querySelector("#report-reason")?.value?.trim();
+      if (reportAction !== "dismiss" && !reason) return toast("Please enter a reason for non-dismiss actions");
+      const days = reportAction === "ban_temp" ? parseInt(result.querySelector("#report-days")?.value || "7", 10) : 0;
+      if (reportAction === "dismiss") {
+        await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "dismissed" }) });
+      } else if (targetId && targetId !== report.reporterId) {
+        await apiRequest(`/admin/bans/${targetId}/user`, {
+          method: "POST",
+          body: JSON.stringify({ action: reportAction, reason, days })
+        });
+        await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "actioned" }) });
+      }
+      result.remove();
+      toast(reportAction === "dismiss" ? "Report dismissed" : "Action taken");
+      await refreshReports();
+      if (targetId) await refreshStudents();
+    });
+    return;
   }
   if (action === "open-report-source") {
     const report = state.reports.find((item) => item.id === id);

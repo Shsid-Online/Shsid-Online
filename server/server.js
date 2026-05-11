@@ -1115,6 +1115,100 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { auditLogs: items, pagination });
   }
 
+  if (method === "GET" && url.pathname === "/api/admin/bans") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { items, pagination } = paginate(store.data.bans, url, { limit: 100, maxLimit: 500 });
+    const enriched = items.map((ban) => {
+      const targetUser = store.findUserById(ban.userId);
+      const adminUser = store.findUserById(ban.adminId);
+      return {
+        ...ban,
+        targetName: targetUser ? `${targetUser.englishName} (${targetUser.chineseName})` : "Unknown",
+        targetGrade: targetUser ? `G${targetUser.grade} C${targetUser.classNo}` : "-",
+        adminName: adminUser ? adminUser.englishName : "Unknown"
+      };
+    });
+    return sendJson(res, 200, { bans: enriched, pagination });
+  }
+
+  const banCheckMatch = url.pathname.match(/^\/api\/admin\/bans\/check\/([^/]+)$/);
+  if (method === "GET" && banCheckMatch) {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const targetUser = store.findUserById(banCheckMatch[1]);
+    if (!targetUser) return notFound(res);
+    const nowMs = Date.now();
+    const activeBan = store.data.bans.find((ban) => {
+      if (ban.userId !== targetUser.id) return false;
+      if (ban.revokedAt) return false;
+      const starts = new Date(ban.startsAt).getTime();
+      if (starts > nowMs) return false;
+      if (!ban.endsAt) return true;
+      return new Date(ban.endsAt).getTime() > nowMs;
+    });
+    return sendJson(res, 200, { banned: Boolean(activeBan), ban: activeBan || null });
+  }
+
+  const banUserMatch = url.pathname.match(/^\/api\/admin\/bans\/([^/]+)\/user$/);
+  if (method === "POST" && banUserMatch) {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const targetUser = store.findUserById(banUserMatch[1]);
+    if (!targetUser) return notFound(res);
+    if (targetUser.role === "admin") return sendJson(res, 400, { error: "Cannot ban admin account" });
+    const action = body.action || "warn";
+    const reason = String(body.reason || "Violation of community guidelines").slice(0, 500);
+    let endsAt = null;
+    if (action === "ban_temp") {
+      const days = Math.max(1, Math.min(365, parseInt(body.days || "7", 10)));
+      endsAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+    }
+    if (action !== "warn") {
+      targetUser.status = "banned";
+      targetUser.updatedAt = now();
+    }
+    const ban = {
+      id: id("ban"),
+      userId: targetUser.id,
+      adminId: admin.id,
+      action,
+      reason,
+      startsAt: now(),
+      endsAt,
+      revokedAt: null,
+      createdAt: now()
+    };
+    store.data.bans.unshift(ban);
+    const notifBody = action === "warn"
+      ? `You have received a warning from admin: ${reason}`
+      : action === "ban_temp"
+        ? `Your account has been temporarily suspended for ${body.days || 7} days. Reason: ${reason}`
+        : "Your account has been banned by admin review.";
+    store.data.notifications.push({ id: id("ntf"), userId: targetUser.id, type: "moderation", body: notifBody, readAt: null, createdAt: now() });
+    store.audit(admin.id, action === "warn" ? "user_warned" : (action === "ban_temp" ? "user_temp_banned" : "user_banned"), { userId: targetUser.id, action, reason, endsAt });
+    store.save();
+    return sendJson(res, 201, { ban });
+  }
+
+  const revokeBanMatch = url.pathname.match(/^\/api\/admin\/bans\/([^/]+)$/);
+  if ((method === "DELETE" || method === "PATCH") && revokeBanMatch) {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const ban = store.data.bans.find((item) => item.id === revokeBanMatch[1]);
+    if (!ban) return notFound(res);
+    ban.revokedAt = now();
+    const targetUser = store.findUserById(ban.userId);
+    if (targetUser) {
+      targetUser.status = "verified";
+      targetUser.updatedAt = now();
+      store.data.notifications.push({ id: id("ntf"), userId: targetUser.id, type: "moderation", body: "Your account suspension has been lifted.", readAt: null, createdAt: now() });
+    }
+    store.audit(admin.id, "ban_revoked", { banId: ban.id, userId: ban.userId });
+    store.save();
+    return sendJson(res, 200, { ban });
+  }
+
   return notFound(res);
 }
 
