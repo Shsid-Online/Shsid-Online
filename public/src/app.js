@@ -31,7 +31,8 @@ const initialState = {
   conversationIdentityMode: {},
   acceptedRequests: {},
   rejectedRequests: {},
-  contactRemarks: {}
+  contactRemarks: {},
+  feedSearchQuery: ""
 };
 
 let state = loadState();
@@ -485,13 +486,23 @@ async function refreshNotifications() {
 async function refreshSuggestions() {
   if (!state.apiToken) return;
   try {
-    const result = currentUser()?.role === "admin"
-      ? await apiRequest("/admin/suggestions")
-      : await apiRequest("/suggestions");
-    state.suggestions = result.suggestions || [];
+    const isAdmin = currentUser()?.role === "admin";
+    let result;
+    if (isAdmin) {
+      result = await apiRequest("/admin/suggestions");
+    } else {
+      result = await apiRequest("/suggestions");
+    }
+    if (result && Array.isArray(result.suggestions)) {
+      state.suggestions = result.suggestions;
+    } else {
+      state.suggestions = [];
+    }
     saveState();
   } catch (error) {
     console.error("refreshSuggestions failed", error);
+    state.suggestions = [];
+    saveState();
   }
 }
 
@@ -1256,7 +1267,7 @@ function setupFeedVideoAutoplay() {
     scheduleFeedVideoPlaybackSync();
   }, { threshold: [0, 0.2, 0.45, 0.65, 0.85, 1] });
   videos.forEach((video) => {
-    video.muted = true;
+    video.muted = false;
     video.playsInline = true;
     video.preload = "auto";
     feedVideoObserver.observe(video);
@@ -1528,8 +1539,10 @@ function renderAuth() {
     </form>
   ` : step === "profile" ? `
     <form class="grid" id="auth-profile-form">
-      <div class="field"><label>English name</label><input id="reg-en" value="${escapeHtml(state.pendingEnglishName || "")}" placeholder="First Last" required></div>
-      <div class="field"><label>Chinese name</label><input id="reg-cn" value="${escapeHtml(state.pendingChineseName || "")}" placeholder="中文姓名" required></div>
+      <div class="field"><label>First name</label><input id="reg-first" placeholder="First name" required></div>
+      <div class="field"><label>Middle name (optional)</label><input id="reg-middle" placeholder="Middle name"></div>
+      <div class="field"><label>Last name</label><input id="reg-last" placeholder="Last name" required></div>
+      <div class="field"><label>Chinese name (optional)</label><input id="reg-cn" placeholder="中文姓名 (optional)"></div>
       <div class="grid two">
         <div class="field"><label>Year (1-12)</label><input id="reg-grade" type="number" min="1" max="12" value="${Number(state.pendingGrade || 10)}" required></div>
         <div class="field"><label>Class (1-13)</label><input id="reg-class" type="number" min="1" max="13" value="${Number(state.pendingClassNo || 1)}" required></div>
@@ -1537,7 +1550,7 @@ function renderAuth() {
       <div class="field">
         <label>Profile picture</label>
         <div id="reg-photo-dropzone" class="dropzone">Drag and drop profile photo here, or click to pick file.</div>
-        <input id="reg-photo" type="file" accept="image/*" required>
+        <input id="reg-photo" type="file" accept="image/*">
         <div id="reg-photo-chips" class="file-chips"></div>
       </div>
       <div class="row">
@@ -1567,7 +1580,7 @@ function renderAuth() {
   ` : step === "waiting" ? `
     <div class="grid">
       <p class="muted">We received your information and video. You will be able to post and message after approval.</p>
-      <p class="muted">Users ahead: <strong>${Math.max(0, Number(queue.ahead || 0))}</strong> · Pending users: <strong>${Math.max(0, Number(queue.pendingTotal || 0))}</strong></p>
+      <p class="muted">Users ahead: <strong>${Math.max(0, Number(queue.ahead || 0))}</strong> · Pending users: <strong>${Math.max(1, Number(queue.pendingTotal || 1))}</strong></p>
       <div class="row"><button class="btn" type="button" data-auth="logout">Log out</button></div>
     </div>
   ` : `
@@ -1661,7 +1674,7 @@ function renderFeed() {
       <input id="feed-search" type="text" placeholder="Search posts..." style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd" />
     </div>
     <section class="grid" id="feed-posts">${postsHtml}</section>
-    ${postsNextOffset != null ? `<div class="row" style="justify-content:center"><button class="btn" data-action="load-more-posts">Load more posts</button></div>` : ""}
+    ${postsNextOffset != null ? `<div id="load-more-container" class="row" style="justify-content:center"><button class="btn" data-action="load-more-posts">Load more posts</button></div>` : ""}
   `);
 }
 
@@ -1931,7 +1944,7 @@ function renderProfile() {
         <p>${escapeHtml(user.bio)}</p>
         <span class="status ${user.status === "verified" ? "green" : "gold"}">${user.status}</span>
       </div>
-      <div class="panel">
+      <div class="panel" style="min-height:200px">
         <div class="between" style="margin-bottom:10px">
           <h3 style="margin:0">Q&A Box</h3>
           ${!isOwnProfile ? `<button class="btn small" data-action="ask-qna" data-id="${user.id}">Ask Question</button>` : ""}
@@ -2188,6 +2201,8 @@ function bindEvents() {
 
   document.querySelector("#feed-search")?.addEventListener("input", (event) => {
     const query = String(event.target.value || "").trim().toLowerCase();
+    state.feedSearchQuery = query;
+    saveState();
     document.querySelectorAll("#feed-posts article.card").forEach((card) => {
       const text = card.textContent?.toLowerCase() || "";
       card.style.display = !query || text.includes(query) ? "" : "none";
@@ -2379,21 +2394,26 @@ function bindAuth() {
 
   document.querySelector("#auth-profile-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const englishName = document.querySelector("#reg-en").value.trim();
-    const chineseName = document.querySelector("#reg-cn").value.trim();
-    const grade = Number(document.querySelector("#reg-grade").value);
-    const classNo = Number(document.querySelector("#reg-class").value);
+    const firstName = document.querySelector("#reg-first")?.value.trim() || "";
+    const middleName = document.querySelector("#reg-middle")?.value.trim() || "";
+    const lastName = document.querySelector("#reg-last")?.value.trim() || "";
+    const chineseName = document.querySelector("#reg-cn")?.value.trim() || "";
+    const grade = Number(document.querySelector("#reg-grade")?.value);
+    const classNo = Number(document.querySelector("#reg-class")?.value);
     const photoFile = document.querySelector("#reg-photo")?.files?.[0];
-    if (!englishName || !chineseName) return toast("Enter both names");
+    if (!firstName || !lastName) return toast("Enter your first and last name");
     if (!Number.isInteger(grade) || grade < 1 || grade > 12) return toast("Year must be 1-12");
     if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return toast("Class must be 1-13");
-    if (!photoFile || !(photoFile.type || "").startsWith("image/")) return toast("Upload a profile picture");
-    const [uploadedPhoto] = await uploadFiles([photoFile]);
-    state.pendingProfilePhoto = uploadedPhoto?.url || "";
+    const englishName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
     state.pendingEnglishName = englishName;
     state.pendingChineseName = chineseName;
     state.pendingGrade = grade;
     state.pendingClassNo = classNo;
+    state.pendingProfilePhoto = "";
+    if (photoFile && (photoFile.type || "").startsWith("image/")) {
+      const [uploadedPhoto] = await uploadFiles([photoFile]);
+      state.pendingProfilePhoto = uploadedPhoto?.url || "";
+    }
     state.pendingVerificationWords = generateVerificationWords(10);
     state.authStep = "video";
     saveState();
@@ -2527,7 +2547,14 @@ async function handleAction(action, id) {
   }
   if (action === "load-more-posts") {
     if (postsNextOffset == null) return;
+    const container = document.querySelector("#load-more-container");
+    if (container) container.innerHTML = `<span class="muted">Loading...</span>`;
     await refreshPosts(false);
+    if (container) {
+      container.innerHTML = postsNextOffset != null
+        ? `<button class="btn" data-action="load-more-posts">Load more posts</button>`
+        : "";
+    }
   }
   if (action === "like-post") {
     const result = await apiRequest(`/posts/${id}/like`, { method: "POST", body: JSON.stringify({}) });
