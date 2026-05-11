@@ -327,3 +327,7 @@
   - Prevented remarks from showing in conversation display when that conversation identity mode is anonymous.
   - Cleared message attachment strip/input stores immediately after send.
   - Validation: `npm run check` passed.
+- 2026-05-11: Adjusted Conversations action placement and labels.
+  - Moved `Direct Messaging` and `Create Group Chat` buttons under the `Conversations` heading (stacked layout) instead of inline right-aligned.
+  - Renamed `Create convo` button label to `Create Group Chat`.
+  - Validation: `npm run check` passed.

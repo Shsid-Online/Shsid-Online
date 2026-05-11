@@ -24,6 +24,7 @@ const initialState = {
   pendingChineseName: "",
   pendingGrade: 10,
   pendingClassNo: 1,
+  pendingProfilePhoto: "",
   pendingVerificationWords: [],
   selectedProfileId: null,
   conversationIdentityMode: {},
@@ -185,6 +186,7 @@ function clearAuthDraftState() {
   state.pendingEmail = "";
   state.pendingCode = "";
   state.pendingVideoName = "";
+  state.pendingProfilePhoto = "";
   state.pendingVerificationWords = [];
   state.selectedProfileId = null;
 }
@@ -519,6 +521,7 @@ function mergeApiUsers(apiUsers = []) {
       classNo: apiUser.classNo || 1,
       status: apiUser.status,
       bio: apiUser.bio || "",
+      profilePhoto: apiUser.profilePhoto || "",
       followers: apiUser.followers !== undefined ? apiUser.followers : (existing?.followers || []),
       following: apiUser.following !== undefined ? apiUser.following : (existing?.following || []),
       online: true
@@ -1104,12 +1107,12 @@ function render() {
         <nav class="nav">
           ${visibleNav.map(([id, icon, label]) => `<button class="${view === id ? "active" : ""}" data-view="${id}"><span class="nav-ico">${icon}</span>${label}</button>`).join("")}
         </nav>
-        <div class="session">
+        <button class="session session-card-btn" data-action="open-settings">
           <strong>${escapeHtml(user.englishName)}</strong>
           <span>Grade ${user.grade}, Class ${user.classNo}</span>
           <span>${user.role === "admin" ? "Admin" : user.status}</span>
-          <button class="btn small ghost" data-action="logout" style="margin-top:10px;color:#fff;border-color:rgba(255,255,255,.25)">Logout</button>
-        </div>
+        </button>
+        <button class="btn small ghost" data-action="logout" style="margin-top:10px;color:#fff;border-color:rgba(255,255,255,.25)">Logout</button>
       </aside>
       <main class="main">${renderView()}</main>
       <aside class="rightbar">${renderRightbar()}</aside>
@@ -1460,6 +1463,12 @@ function renderAuth() {
         <div class="field"><label>Year (1-12)</label><input id="reg-grade" type="number" min="1" max="12" value="${Number(state.pendingGrade || 10)}" required></div>
         <div class="field"><label>Class (1-13)</label><input id="reg-class" type="number" min="1" max="13" value="${Number(state.pendingClassNo || 1)}" required></div>
       </div>
+      <div class="field">
+        <label>Profile picture</label>
+        <div id="reg-photo-dropzone" class="dropzone">Drag and drop profile photo here, or click to pick file.</div>
+        <input id="reg-photo" type="file" accept="image/*" required>
+        <div id="reg-photo-chips" class="file-chips"></div>
+      </div>
       <div class="row">
         <button class="btn primary" type="submit">Continue</button>
       </div>
@@ -1534,7 +1543,7 @@ function page(title, subtitle, content, actions = "") {
 
 function renderView() {
   const user = currentUser();
-  if (user.status !== "verified" && user.role !== "admin" && view !== "profile") {
+  if (user.status !== "verified" && user.role !== "admin" && view !== "profile" && view !== "settings") {
     return page("Verification pending", "Your account exists, but posting and messaging unlock after admin approval.", renderProfile());
   }
   const routes = {
@@ -1545,6 +1554,7 @@ function renderView() {
     messages: renderMessages,
     suggestions: renderSuggestions,
     profile: renderProfile,
+    settings: renderSettings,
     admin: renderAdmin
   };
   return (routes[view] || renderFeed)();
@@ -1914,6 +1924,36 @@ function renderSuggestions() {
   `);
 }
 
+function renderSettings() {
+  const user = currentUser();
+  if (!user) return page("Settings", "Loading settings...", `<section class="panel"><p class="muted">Please wait.</p></section>`);
+  return page("Settings", "Change profile and personalized preferences.", `
+    <section class="grid two">
+      <form class="panel grid" id="settings-profile-form">
+        <h3 style="margin:0">Profile Settings</h3>
+        <div class="field"><label>English name</label><input id="settings-en" value="${escapeHtml(user.englishName || "")}" required></div>
+        <div class="field"><label>Chinese name</label><input id="settings-cn" value="${escapeHtml(user.chineseName || "")}" required></div>
+        <div class="grid two">
+          <div class="field"><label>Year (1-12)</label><input id="settings-grade" type="number" min="1" max="12" value="${Number(user.grade || 10)}" required></div>
+          <div class="field"><label>Class (1-13)</label><input id="settings-class" type="number" min="1" max="13" value="${Number(user.classNo || 1)}" required></div>
+        </div>
+        <div class="field"><label>Bio</label><textarea id="settings-bio" placeholder="Tell people about yourself">${escapeHtml(user.bio || "")}</textarea></div>
+        <div class="field">
+          <label>Profile picture</label>
+          <div id="settings-photo-dropzone" class="dropzone">Drag and drop new profile photo here, or click to pick file.</div>
+          <input id="settings-photo" type="file" accept="image/*">
+          <div id="settings-photo-chips" class="file-chips"></div>
+        </div>
+        <div class="row"><button class="btn primary" type="submit">Save Settings</button></div>
+      </form>
+      <section class="panel">
+        <h3 style="margin-top:0">Personalization</h3>
+        <p class="muted">Set per-chat identity mode (public or anonymous) when you start a direct message.</p>
+      </section>
+    </section>
+  `);
+}
+
 function renderAdmin() {
   if (currentUser().role !== "admin") return page("Unavailable", "Admin access required.", "");
   const pending = state.adminVerifications || [];
@@ -2232,15 +2272,19 @@ function bindAuth() {
     }
   });
 
-  document.querySelector("#auth-profile-form")?.addEventListener("submit", (event) => {
+  document.querySelector("#auth-profile-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const englishName = document.querySelector("#reg-en").value.trim();
     const chineseName = document.querySelector("#reg-cn").value.trim();
     const grade = Number(document.querySelector("#reg-grade").value);
     const classNo = Number(document.querySelector("#reg-class").value);
+    const photoFile = document.querySelector("#reg-photo")?.files?.[0];
     if (!englishName || !chineseName) return toast("Enter both names");
     if (!Number.isInteger(grade) || grade < 1 || grade > 12) return toast("Year must be 1-12");
     if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return toast("Class must be 1-13");
+    if (!photoFile || !(photoFile.type || "").startsWith("image/")) return toast("Upload a profile picture");
+    const [uploadedPhoto] = await uploadFiles([photoFile]);
+    state.pendingProfilePhoto = uploadedPhoto?.url || "";
     state.pendingEnglishName = englishName;
     state.pendingChineseName = chineseName;
     state.pendingGrade = grade;
@@ -2267,6 +2311,7 @@ function bindAuth() {
           chineseName: state.pendingChineseName,
           grade: Number(state.pendingGrade),
           classNo: Number(state.pendingClassNo),
+          profilePhoto: String(state.pendingProfilePhoto || ""),
           verificationVideo: uploadedVideoUrl || videoFile.name
         })
       });
@@ -2284,6 +2329,37 @@ function bindAuth() {
 
   setupDropzone("verify-dropzone", "reg-video", false);
   bindFileChips("reg-video", "verify-file-chips");
+  setupDropzone("reg-photo-dropzone", "reg-photo", false);
+  bindFileChips("reg-photo", "reg-photo-chips");
+  setupDropzone("settings-photo-dropzone", "settings-photo", false);
+  bindFileChips("settings-photo", "settings-photo-chips");
+
+  document.querySelector("#settings-profile-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const englishName = String(document.querySelector("#settings-en")?.value || "").trim();
+    const chineseName = String(document.querySelector("#settings-cn")?.value || "").trim();
+    const grade = Number(document.querySelector("#settings-grade")?.value);
+    const classNo = Number(document.querySelector("#settings-class")?.value);
+    const bio = String(document.querySelector("#settings-bio")?.value || "").trim();
+    if (!englishName || !chineseName) return toast("Enter both names");
+    if (!Number.isInteger(grade) || grade < 1 || grade > 12) return toast("Year must be 1-12");
+    if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return toast("Class must be 1-13");
+    let profilePhoto = String(currentUser()?.profilePhoto || "");
+    const photoFile = document.querySelector("#settings-photo")?.files?.[0];
+    if (photoFile) {
+      if (!(photoFile.type || "").startsWith("image/")) return toast("Profile picture must be an image");
+      const [uploadedPhoto] = await uploadFiles([photoFile]);
+      profilePhoto = uploadedPhoto?.url || profilePhoto;
+    }
+    const result = await apiRequest("/me/profile", {
+      method: "PATCH",
+      body: JSON.stringify({ englishName, chineseName, grade, classNo, bio, profilePhoto })
+    });
+    mergeApiUser(result.user);
+    saveState();
+    toast("Settings saved");
+    render();
+  });
 
 }
 
@@ -2294,6 +2370,7 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "open-media") return;
+  if (action === "open-settings") view = "settings";
   if (action === "logout") {
     try {
       if (state.apiToken) await apiRequest("/auth/logout", { method: "POST", body: JSON.stringify({}) });

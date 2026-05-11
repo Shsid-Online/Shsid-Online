@@ -136,6 +136,18 @@ button {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.session-card-btn {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+.session-card-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
 .session strong,
 .session span {
   display: block;

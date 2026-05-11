@@ -19,6 +19,7 @@ const ALLOWED_UPLOAD_TYPES = [
   "video/mp4", "video/webm", "video/quicktime",
   "application/pdf"
 ];
+let hasUsersProfilePhotoColumnCache = null;
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
@@ -267,6 +268,7 @@ async function handleApi(request, env, url, route) {
 
     let user = await getUserByEmail(env, email);
     if (!user) {
+      const supportsProfilePhoto = await hasUsersProfilePhotoColumn(env);
       user = {
         id: id("usr"),
         email,
@@ -278,14 +280,22 @@ async function handleApi(request, env, url, route) {
         grade: null,
         class_no: null,
         bio: "",
+        profile_photo: "",
         verification_video: "",
         created_at: now(),
         updated_at: now()
       };
-      await env.DB.prepare(`insert into users (id, email, password_hash, role, status, english_name, chinese_name, grade, class_no, bio, verification_video, created_at, updated_at)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .bind(user.id, user.email, user.password_hash, user.role, user.status, user.english_name, user.chinese_name, user.grade, user.class_no, user.bio, user.verification_video, user.created_at, user.updated_at)
-        .run();
+      if (supportsProfilePhoto) {
+        await env.DB.prepare(`insert into users (id, email, password_hash, role, status, english_name, chinese_name, grade, class_no, bio, profile_photo, verification_video, created_at, updated_at)
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .bind(user.id, user.email, user.password_hash, user.role, user.status, user.english_name, user.chinese_name, user.grade, user.class_no, user.bio, user.profile_photo, user.verification_video, user.created_at, user.updated_at)
+          .run();
+      } else {
+        await env.DB.prepare(`insert into users (id, email, password_hash, role, status, english_name, chinese_name, grade, class_no, bio, verification_video, created_at, updated_at)
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .bind(user.id, user.email, user.password_hash, user.role, user.status, user.english_name, user.chinese_name, user.grade, user.class_no, user.bio, user.verification_video, user.created_at, user.updated_at)
+          .run();
+      }
     }
 
     if (user.password_hash) {
@@ -386,6 +396,31 @@ async function handleApi(request, env, url, route) {
     return json({ user: await userView(env, authUser, authUser) }, 200);
   }
 
+  if (method === "PATCH" && route === "/me/profile") {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const englishName = String(body.englishName || "").trim().slice(0, MAX_NAME_LEN);
+    const chineseName = String(body.chineseName || "").trim().slice(0, MAX_NAME_LEN);
+    const grade = Number(body.grade);
+    const classNo = Number(body.classNo);
+    const bio = String(body.bio || "").trim().slice(0, MAX_TEXT_LEN);
+    const profilePhoto = String(body.profilePhoto || "").trim().slice(0, 2000);
+    if (!englishName || !chineseName || !Number.isInteger(grade) || grade < 1 || grade > 12 || !Number.isInteger(classNo) || classNo < 1 || classNo > 13) {
+      return json({ error: "Name, grade 1-12, and class 1-13 are required" }, 400);
+    }
+    if (await hasUsersProfilePhotoColumn(env)) {
+      await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, profile_photo=?, updated_at=? where id=?")
+        .bind(englishName, chineseName, grade, classNo, bio, profilePhoto, now(), authUser.id)
+        .run();
+    } else {
+      await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, updated_at=? where id=?")
+        .bind(englishName, chineseName, grade, classNo, bio, now(), authUser.id)
+        .run();
+    }
+    const updated = await getUserById(env, authUser.id);
+    await audit(env, authUser.id, "profile_updated", {}, request);
+    return json({ user: await userView(env, updated, updated) }, 200);
+  }
+
   if (method === "POST" && route === "/auth/complete-profile") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     const englishName = String(body.englishName || "").trim().slice(0, MAX_NAME_LEN);
@@ -402,9 +437,16 @@ async function handleApi(request, env, url, route) {
     if (duplicate) return json({ error: "A student account with this real name already exists" }, 409);
 
     const status = authUser.role === "admin" ? "verified" : "pending_verification";
-    await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, verification_video=?, status=?, updated_at=? where id=?")
-      .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), String(body.verificationVideo || "pending-upload").slice(0, 200), status, now(), authUser.id)
-      .run();
+    const profilePhoto = String(body.profilePhoto || "").trim().slice(0, 2000);
+    if (await hasUsersProfilePhotoColumn(env)) {
+      await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, profile_photo=?, verification_video=?, status=?, updated_at=? where id=?")
+        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), profilePhoto, String(body.verificationVideo || "pending-upload").slice(0, 200), status, now(), authUser.id)
+        .run();
+    } else {
+      await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, verification_video=?, status=?, updated_at=? where id=?")
+        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), String(body.verificationVideo || "pending-upload").slice(0, 200), status, now(), authUser.id)
+        .run();
+    }
 
     const updated = await getUserById(env, authUser.id);
     await audit(env, authUser.id, "profile_completed", { status }, request);
@@ -1181,6 +1223,7 @@ async function userView(env, target, viewer) {
     grade: target.grade,
     classNo: target.class_no,
     bio: target.bio || "",
+    profilePhoto: target.profile_photo || "",
     verificationVideo: target.verification_video || "",
     createdAt: target.created_at,
     updatedAt: target.updated_at
@@ -1200,6 +1243,24 @@ async function userView(env, target, viewer) {
   }
 
   return safe;
+}
+
+async function hasUsersProfilePhotoColumn(env) {
+  if (hasUsersProfilePhotoColumnCache !== null) return hasUsersProfilePhotoColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(users)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (names.includes("profile_photo")) {
+      hasUsersProfilePhotoColumnCache = true;
+      return true;
+    }
+    await env.DB.prepare("alter table users add column profile_photo text default ''").run();
+    hasUsersProfilePhotoColumnCache = true;
+    return true;
+  } catch {
+    hasUsersProfilePhotoColumnCache = false;
+    return false;
+  }
 }
 
 function getAllowedOrigin(origin) {

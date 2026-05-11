@@ -11,6 +11,7 @@ create table if not exists users (
   grade integer check (grade >= 1 and grade <= 12),
   class_no integer check (class_no >= 1 and class_no <= 13),
   bio text default '',
+  profile_photo text default '',
   verification_video text default '',
   created_at text not null,
   updated_at text not null
