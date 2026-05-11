@@ -229,14 +229,35 @@ async function handleApi(request, env, url, route) {
   }
 
   const mediaMatch = route.match(/^\/media\/(.+)$/);
-  if (method === "GET" && mediaMatch) {
+  if ((method === "GET" || method === "HEAD") && mediaMatch) {
     const key = decodeURIComponent(mediaMatch[1]);
+    const head = await env.R2_BUCKET.head(key);
+    if (!head) return json({ error: "Not found" }, 404);
+    const headers = new Headers();
+    head.writeHttpMetadata(headers);
+    headers.set("etag", head.httpEtag);
+    headers.set("cache-control", "public, max-age=3600");
+    headers.set("accept-ranges", "bytes");
+
+    const range = parseRangeHeader(request.headers.get("range"), head.size);
+    if (range?.invalid) {
+      headers.set("content-range", `bytes */${head.size}`);
+      return new Response(null, { status: 416, headers });
+    }
+    if (range) {
+      const length = range.end - range.start + 1;
+      headers.set("content-length", String(length));
+      headers.set("content-range", `bytes ${range.start}-${range.end}/${head.size}`);
+      if (method === "HEAD") return new Response(null, { status: 206, headers });
+      const object = await env.R2_BUCKET.get(key, { range: { offset: range.start, length } });
+      if (!object) return json({ error: "Not found" }, 404);
+      return new Response(object.body, { status: 206, headers });
+    }
+
+    headers.set("content-length", String(head.size));
+    if (method === "HEAD") return new Response(null, { status: 200, headers });
     const object = await env.R2_BUCKET.get(key);
     if (!object) return json({ error: "Not found" }, 404);
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set("etag", object.httpEtag);
-    headers.set("cache-control", "public, max-age=3600");
     return new Response(object.body, { status: 200, headers });
   }
 
@@ -1148,14 +1169,42 @@ function safeName(name) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "file.bin";
 }
 
+function parseRangeHeader(rangeHeader, size) {
+  if (!rangeHeader) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim());
+  if (!match || !Number.isFinite(size) || size <= 0) return { invalid: true };
+
+  let start;
+  let end;
+  const rawStart = match[1];
+  const rawEnd = match[2];
+
+  if (rawStart === "" && rawEnd === "") return { invalid: true };
+  if (rawStart === "") {
+    const suffixLength = Number(rawEnd);
+    if (!Number.isFinite(suffixLength) || suffixLength <= 0) return { invalid: true };
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    start = Number(rawStart);
+    end = rawEnd === "" ? size - 1 : Number(rawEnd);
+  }
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= size) {
+    return { invalid: true };
+  }
+
+  return { start, end: Math.min(end, size - 1) };
+}
+
 function withCors(response, origin) {
   const headers = new Headers(response.headers);
   if (origin) {
     headers.set("access-control-allow-origin", origin);
     headers.set("access-control-allow-credentials", "true");
   }
-  headers.set("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS");
-  headers.set("access-control-allow-headers", "Content-Type, Authorization");
+  headers.set("access-control-allow-methods", "GET,HEAD,POST,PATCH,DELETE,OPTIONS");
+  headers.set("access-control-allow-headers", "Content-Type, Authorization, Range");
   headers.set("vary", "Origin");
   return new Response(response.body, { status: response.status, headers });
 }

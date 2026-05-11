@@ -169,3 +169,8 @@
   - Removed playback re-arbitration from video `play` events to prevent immediate pause/unpause loops.
   - Reset remembered autoplay winner whenever feed video observer is rebuilt.
   - Validation: `npm run check` passed.
+- 2026-05-11: Fixed uploaded video seeking/fast-forward behavior at media endpoint.
+  - Added HTTP Range support for `GET /api/media/*` in Worker, including `206 Partial Content`, `Content-Range`, `Accept-Ranges`, and `416` handling.
+  - Added `HEAD /api/media/*` support and allowed `Range` in CORS headers.
+  - This lets Chrome request later video byte ranges instead of jumping back to the current buffered position.
+  - Validation: `npm run check` passed.
