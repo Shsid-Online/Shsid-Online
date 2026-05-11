@@ -87,11 +87,11 @@ hydrateAuthFromUrl();
 const navItems = [
   ["feed", "FD", "Feed"],
   ["post", "+", "Post"],
-  ["students", "ST", "Students"],
-  ["messages", "MS", "Messages"],
+  ["students", "&#128269;", "Students"],
+  ["messages", "&#128172;", "Messages"],
   ["suggestions", "SG", "Suggestions"],
   ["profile", "PR", "Profile"],
-  ["admin", "AD", "Admin"]
+  ["admin", "&#128100;", "Admin"]
 ];
 
 function loadState() {
@@ -1657,7 +1657,10 @@ function renderFeed() {
     ? posts.map(renderPost).join("")
     : `<div class="empty-state">No posts yet. Share something positive or helpful to get the feed started.</div>`;
   return page("Feed", "Posts from followed students, categories, sticky announcements, comments, likes, and reports.", `
-    <section class="grid">${postsHtml}</section>
+    <div class="field" style="margin-bottom:16px">
+      <input id="feed-search" type="text" placeholder="Search posts..." style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd" />
+    </div>
+    <section class="grid" id="feed-posts">${postsHtml}</section>
     ${postsNextOffset != null ? `<div class="row" style="justify-content:center"><button class="btn" data-action="load-more-posts">Load more posts</button></div>` : ""}
   `);
 }
@@ -2025,8 +2028,13 @@ function renderSettings() {
         <div class="row"><button class="btn primary" type="submit">Save Settings</button></div>
       </form>
       <section class="panel">
-        <h3 style="margin-top:0">Personalization</h3>
-        <p class="muted">Set per-chat identity mode (public or anonymous) when you start a direct message.</p>
+        <h3 style="margin-top:0">Rules & Functions</h3>
+        <p style="margin:0 0 12px"><strong>Verification:</strong> Only verified SHSID students can post and message.</p>
+        <p style="margin:0 0 12px"><strong>Anonymous Posting:</strong> Choose anonymous when posting to hide your identity.</p>
+        <p style="margin:0 0 12px"><strong>Direct Messages:</strong> Send public or anonymous messages to other students.</p>
+        <p style="margin:0 0 12px"><strong>Reports:</strong> Report inappropriate content. Admins will review within 24 hours.</p>
+        <p style="margin:0 0 12px"><strong>Suggestions:</strong> Submit feedback and track admin responses.</p>
+        <p style="margin:0"><strong>Q&A Box:</strong> Other students can ask you questions on your profile.</p>
       </section>
     </section>
   `);
@@ -2164,6 +2172,14 @@ function bindEvents() {
       if (view === "messages") await refreshConversations();
       if (view === "feed") await refreshPosts();
       render();
+    });
+  });
+
+  document.querySelector("#feed-search")?.addEventListener("input", (event) => {
+    const query = String(event.target.value || "").trim().toLowerCase();
+    document.querySelectorAll("#feed-posts article.card").forEach((card) => {
+      const text = card.textContent?.toLowerCase() || "";
+      card.style.display = !query || text.includes(query) ? "" : "none";
     });
   });
 
