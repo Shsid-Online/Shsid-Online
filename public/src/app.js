@@ -57,6 +57,9 @@ let uploadCompleting = false;
 let postPublishInFlight = false;
 let modalLockedScrollY = 0;
 const postMediaIndexByPostId = {};
+let feedVideoObserver = null;
+const feedVideoVisibility = new Map();
+let feedVideoPlaybackTickScheduled = false;
 const preloadedMediaUrls = new Set();
 const loadedMediaUrls = new Set();
 const inputFileStore = {};
@@ -1083,8 +1086,66 @@ function render() {
   `;
   bindEvents();
   setupMediaLoadingIndicators();
+  setupFeedVideoAutoplay();
   preloadVisiblePostMedia();
   syncLiveChatLoop();
+}
+
+function scheduleFeedVideoPlaybackSync() {
+  if (feedVideoPlaybackTickScheduled) return;
+  feedVideoPlaybackTickScheduled = true;
+  requestAnimationFrame(() => {
+    feedVideoPlaybackTickScheduled = false;
+    syncMostVisibleFeedVideo();
+  });
+}
+
+function syncMostVisibleFeedVideo() {
+  const videos = [...document.querySelectorAll(".media-carousel .media-video")];
+  if (!videos.length) return;
+  let winner = null;
+  let bestRatio = 0;
+  for (const video of videos) {
+    const ratio = Number(feedVideoVisibility.get(video) || 0);
+    if (ratio > bestRatio) {
+      bestRatio = ratio;
+      winner = video;
+    }
+  }
+  for (const video of videos) {
+    if (video !== winner || bestRatio < 0.45) {
+      if (!video.paused) video.pause();
+      continue;
+    }
+    if (video.paused) {
+      video.play().catch(() => {
+        // Ignore autoplay blocks; user can still tap play.
+      });
+    }
+  }
+}
+
+function setupFeedVideoAutoplay() {
+  const videos = [...document.querySelectorAll(".media-carousel .media-video")];
+  if (feedVideoObserver) {
+    feedVideoObserver.disconnect();
+    feedVideoObserver = null;
+  }
+  feedVideoVisibility.clear();
+  if (!videos.length) return;
+  feedVideoObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      feedVideoVisibility.set(entry.target, entry.intersectionRatio);
+    }
+    scheduleFeedVideoPlaybackSync();
+  }, { threshold: [0, 0.2, 0.45, 0.65, 0.85, 1] });
+  videos.forEach((video) => {
+    video.muted = true;
+    video.playsInline = true;
+    feedVideoObserver.observe(video);
+    video.addEventListener("play", scheduleFeedVideoPlaybackSync);
+  });
+  scheduleFeedVideoPlaybackSync();
 }
 
 function renderUploadOverlay() {

@@ -142,3 +142,8 @@
   - Kept fixed frame layout while ensuring native video controls remain fully interactive (including timeline seeking).
   - Added `playsinline` on post videos for better mobile control behavior.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added one-at-a-time autoplay for post videos based on viewport visibility.
+  - Implemented IntersectionObserver on feed post video elements.
+  - At any time, only the most visible video plays; others are paused.
+  - Added visibility threshold gate (>=45%) to avoid autoplaying barely visible videos.
+  - Validation: `npm run check` passed.
