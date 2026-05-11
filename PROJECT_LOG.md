@@ -72,3 +72,7 @@
   - On successful `create-post`, now clears `post-media` file store and resets the file input immediately before feed transition.
   - Prevents stale composer file state from carrying into later renders after publish.
   - Validation: `npm run check` passed.
+- 2026-05-11: Fixed intermittent scroll-to-top when opening media popup.
+  - Replaced modal body lock behavior with fixed-position scroll lock (`body.style.position = fixed; top = -scrollY`) and explicit scroll restore on modal close.
+  - Prevents viewport jumping to top when image modal opens/closes on affected browsers.
+  - Validation: `npm run check` passed.

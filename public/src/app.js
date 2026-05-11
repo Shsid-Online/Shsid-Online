@@ -54,6 +54,7 @@ let uploadUi = { active: false, label: "", percent: 0 };
 let uploadTargetPercent = 0;
 let uploadProgressTimer = null;
 let uploadCompleting = false;
+let modalLockedScrollY = 0;
 const postMediaIndexByPostId = {};
 const preloadedMediaUrls = new Set();
 const loadedMediaUrls = new Set();
@@ -844,6 +845,14 @@ function showFormPopup(title, bodyHtml, modalClass = "") {
   const nativeRemove = node.remove.bind(node);
   node.remove = () => {
     document.body.classList.remove("modal-open");
+    const top = document.body.style.top;
+    document.body.style.position = "";
+    document.body.style.top = "";
+    document.body.style.width = "";
+    if (top) {
+      const y = Math.abs(parseInt(top, 10)) || modalLockedScrollY || 0;
+      window.scrollTo(0, y);
+    }
     nativeRemove();
   };
   node.innerHTML = `
@@ -857,6 +866,10 @@ function showFormPopup(title, bodyHtml, modalClass = "") {
   `;
   document.body.appendChild(node);
   document.body.classList.add("modal-open");
+  modalLockedScrollY = window.scrollY || window.pageYOffset || 0;
+  document.body.style.position = "fixed";
+  document.body.style.top = `-${modalLockedScrollY}px`;
+  document.body.style.width = "100%";
   node.querySelector("[data-close-popup]")?.addEventListener("click", () => node.remove());
   node.addEventListener("click", (event) => {
     if (event.target === node) node.remove();
