@@ -236,3 +236,9 @@
   - Changed Messages container from `class="grid two chat-layout"` to `class="chat-layout"` to avoid equal-column utility interference.
   - Made `.chat-layout` explicitly `display: grid` with `1fr / 3fr` columns as the authoritative layout rule.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added chat-header details menu and group/direct-specific info behavior.
+  - Added top-right `...` button in active chat header (`data-action="chat-info"`).
+  - Group chat: details popup now shows member list with avatar initials, grade/class, and You/Member chip.
+  - Direct chat: details popup now shows a miniature profile preview with quick "Open Full Profile" action.
+  - Removed top caption `Receiver: ...` for group chats (kept for direct chats only).
+  - Validation: `npm run check` passed.

@@ -1736,8 +1736,14 @@ function renderMessages() {
           : `<p class="muted">No conversations in this tab yet.</p>`}</div>
       </div>
       <div class="panel chat-panel chat-panel-thread">
-        <div class="between"><strong>${escapeHtml(active ? conversationDisplayTitle(active) : "No conversation")}</strong><span class="chip">Active</span></div>
-        <p class="muted" style="margin:8px 0 0">Receiver: ${escapeHtml(receiverName)}</p>
+        <div class="between">
+          <strong>${escapeHtml(active ? conversationDisplayTitle(active) : "No conversation")}</strong>
+          <div class="row">
+            <span class="chip">Active</span>
+            ${active ? `<button class="btn small" data-action="chat-info" data-id="${active.id}" aria-label="Chat details">...</button>` : ""}
+          </div>
+        </div>
+        ${active && !active.group ? `<p class="muted" style="margin:8px 0 0">Receiver: ${escapeHtml(receiverName)}</p>` : ""}
         ${active ? `<div class="row" style="margin:6px 0 0"><button class="btn small" data-action="rename-conv" data-id="${active.id}">Rename Chat</button></div>` : ""}
         ${counterpartId ? `<p class="muted" style="margin:6px 0 0">Remark: ${escapeHtml(counterpartRemark || "None")} <button class="btn small" data-action="edit-remark" data-id="${counterpartId}">Edit</button></p>` : ""}
         <div class="grid chat-messages-scroll" style="margin:14px 0">${(active?.messages || []).map((message) => `
@@ -1755,6 +1761,66 @@ function renderMessages() {
       </div>
     </section>
   `);
+}
+
+function showConversationDetailsPopup(conversation) {
+  if (!conversation) return;
+  if (conversation.group) {
+    const members = (conversation.members || [])
+      .map((memberId) => state.users.find((item) => item.id === memberId))
+      .filter(Boolean);
+    const memberRows = members.length
+      ? members.map((member) => `
+          <div class="row" style="justify-content:space-between;border:1px solid var(--line);border-radius:10px;padding:8px 10px">
+            <div class="row">
+              <div class="avatar">${initials(member)}</div>
+              <div>
+                <strong>${escapeHtml(member.englishName || "Unknown")}</strong>
+                <div class="muted">Grade ${escapeHtml(member.grade ?? "-")}, Class ${escapeHtml(member.classNo ?? "-")}</div>
+              </div>
+            </div>
+            <span class="chip">${member.id === currentUser().id ? "You" : "Member"}</span>
+          </div>
+        `).join("")
+      : `<p class="muted" style="margin:0">No member data available.</p>`;
+    showFormPopup("Group Members", `
+      <div class="grid">
+        <p class="muted" style="margin:0">${escapeHtml(conversation.title || "Group chat")} · ${members.length} members</p>
+        <div class="grid">${memberRows}</div>
+      </div>
+    `);
+    return;
+  }
+
+  const counterpartId = (conversation.members || []).find((memberId) => memberId !== currentUser().id) || "";
+  const user = state.users.find((item) => item.id === counterpartId);
+  if (!user) {
+    showPopup("Profile", "This profile is currently unavailable.");
+    return;
+  }
+  const popup = showFormPopup("Profile Preview", `
+    <div class="grid">
+      <div class="row">
+        <div class="avatar">${initials(user)}</div>
+        <div>
+          <strong>${escapeHtml(user.englishName || "Unknown")}</strong>
+          <div class="muted">${escapeHtml(user.chineseName || "")}</div>
+        </div>
+      </div>
+      <div class="muted">Grade ${escapeHtml(user.grade ?? "-")}, Class ${escapeHtml(user.classNo ?? "-")}</div>
+      <p style="margin:0">${escapeHtml(user.bio || "No bio yet.")}</p>
+      <div class="row">
+        <button class="btn small" type="button" data-action="view-profile" data-id="${user.id}">Open Full Profile</button>
+      </div>
+    </div>
+  `);
+  popup.querySelector('[data-action="view-profile"]')?.addEventListener("click", async () => {
+    popup.remove();
+    state.selectedProfileId = user.id;
+    view = "profile";
+    await refreshQnaForProfile(user.id);
+    render();
+  });
 }
 
 function renderStories() {
@@ -2357,6 +2423,12 @@ async function handleAction(action, id) {
     await apiRequest(`/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) });
     await refreshConversations();
     toast("Chat title updated");
+  }
+  if (action === "chat-info") {
+    const conv = state.conversations.find((item) => item.id === id);
+    if (!conv) return;
+    showConversationDetailsPopup(conv);
+    return;
   }
   if (action === "chat-tab-inbox") {
     conversationTab = "inbox";
