@@ -133,6 +133,17 @@ button {
   font-weight: 800;
 }
 
+.nav-ico-profile {
+  overflow: hidden;
+}
+
+.nav-profile-icon {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 .session {
   margin-top: auto;
   padding: 12px;

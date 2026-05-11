@@ -400,3 +400,7 @@
   - Feed post cards now render title when present.
   - Updated D1 schema for new environments with `posts.title` column.
   - Validation: `npm run check` passed.
+- 2026-05-11: Fixed `Post of the Day` click navigation repaint.
+  - `open-post-day` action was returning before the normal bottom-of-handler `render()` path.
+  - Added explicit `render()` before return in `open-post-day` branch so click immediately opens single-post view.
+  - Validation: `npm run check` passed.

@@ -1117,12 +1117,15 @@ function render() {
 
   const adminVisible = user.role === "admin";
   const visibleNav = navItems.filter((item) => item[0] !== "admin" || adminVisible);
+  const profileIconHtml = user.profilePhoto
+    ? `<img src="${escapeHtml(user.profilePhoto)}" alt="${escapeHtml(user.englishName || "Profile")}" class="nav-profile-icon" loading="lazy">`
+    : `${escapeHtml(initials(user))}`;
   document.querySelector("#app").innerHTML = `
     <div class="app ${view === "admin" ? "app-admin" : ""} ${view === "messages" ? "app-messages" : ""}">
       <aside class="sidebar">
         <div class="brand"><span class="brand-mark">S</span><span>SHSID Social</span></div>
         <nav class="nav">
-          ${visibleNav.map(([id, icon, label]) => `<button class="${view === id ? "active" : ""}" data-view="${id}"><span class="nav-ico">${icon}</span>${label}</button>`).join("")}
+          ${visibleNav.map(([id, icon, label]) => `<button class="${view === id ? "active" : ""}" data-view="${id}"><span class="nav-ico ${id === "profile" ? "nav-ico-profile" : ""}">${id === "profile" ? profileIconHtml : icon}</span>${label}</button>`).join("")}
         </nav>
         <button class="session session-card-btn" data-action="open-settings">
           <strong>${escapeHtml(user.englishName)}</strong>
