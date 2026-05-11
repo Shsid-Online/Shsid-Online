@@ -179,3 +179,9 @@
   - Reworked per-file progress math so single and multi-file uploads advance through signing, upload, and completion phases.
   - Kept 90-second upload timeout and clearer upload error messages.
   - Validation: `npm run check` passed.
+- 2026-05-11: Hardened feed video seeking/fast-forward behavior.
+  - Added a temporary seek lock so autoplay arbitration does not pause/play a video while the native scrubber is resolving a new timestamp.
+  - Ignored pause events caused by active seeking so scrubbing does not get misclassified as a user pause.
+  - Rebuilt feed video autoplay bindings after carousel prev/next swaps so newly displayed videos are observed and controlled correctly.
+  - Switched post video preload from metadata to auto to make byte-range seek requests smoother.
+  - Validation: `npm run check` passed.

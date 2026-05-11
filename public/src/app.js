@@ -65,8 +65,11 @@ let feedVideoManualControlUntil = 0;
 let feedVideoViewportListenersBound = false;
 let feedVideoCurrentAutoplay = null;
 let feedVideoLastSwitchAt = 0;
+let feedVideoSeekingVideo = null;
+let feedVideoSeekingUntil = 0;
 const feedVideoUserPaused = new WeakSet();
 const feedVideoProgrammaticPause = new WeakSet();
+const feedVideoControlsBound = new WeakSet();
 const preloadedMediaUrls = new Set();
 const loadedMediaUrls = new Set();
 const inputFileStore = {};
@@ -1107,6 +1110,10 @@ function scheduleFeedVideoPlaybackSync() {
   });
 }
 
+function isFeedVideoSeekLocked(video, nowMs = Date.now()) {
+  return Boolean(video && feedVideoSeekingVideo === video && video.isConnected && nowMs < feedVideoSeekingUntil);
+}
+
 function syncMostVisibleFeedVideo() {
   const videos = [...document.querySelectorAll(".media-carousel .media-video")];
   if (!videos.length) return;
@@ -1120,7 +1127,11 @@ function syncMostVisibleFeedVideo() {
   let candidateRatio = 0;
   let winner = null;
   let winnerRatio = 0;
-  if (manualActive) {
+  const seekLocked = isFeedVideoSeekLocked(feedVideoSeekingVideo, nowMs);
+  if (seekLocked) {
+    winner = feedVideoSeekingVideo;
+    winnerRatio = Math.max(Number(feedVideoVisibility.get(feedVideoSeekingVideo) || 0), 0.45);
+  } else if (manualActive) {
     winner = feedVideoManualControlVideo;
     winnerRatio = manualRatio;
   } else {
@@ -1153,6 +1164,7 @@ function syncMostVisibleFeedVideo() {
     }
   }
   for (const video of videos) {
+    if (seekLocked && video === feedVideoSeekingVideo) continue;
     if (video !== winner || winnerRatio < 0.45 || feedVideoUserPaused.has(video)) {
       if (!video.paused) {
         feedVideoProgrammaticPause.add(video);
@@ -1179,6 +1191,10 @@ function setupFeedVideoAutoplay() {
   }
   feedVideoVisibility.clear();
   feedVideoCurrentAutoplay = null;
+  if (!videos.includes(feedVideoSeekingVideo)) {
+    feedVideoSeekingVideo = null;
+    feedVideoSeekingUntil = 0;
+  }
   if (!videos.length) return;
   feedVideoObserver = new IntersectionObserver((entries) => {
     for (const entry of entries) {
@@ -1189,18 +1205,37 @@ function setupFeedVideoAutoplay() {
   videos.forEach((video) => {
     video.muted = true;
     video.playsInline = true;
+    video.preload = "auto";
     feedVideoObserver.observe(video);
-    const markManual = () => {
+    if (feedVideoControlsBound.has(video)) return;
+    feedVideoControlsBound.add(video);
+    const markManual = (durationMs = 2200) => {
+      const lockMs = typeof durationMs === "number" ? durationMs : 2200;
       feedVideoManualControlVideo = video;
-      feedVideoManualControlUntil = Date.now() + 2200;
+      feedVideoManualControlUntil = Date.now() + lockMs;
+    };
+    const markSeeking = () => {
+      feedVideoSeekingVideo = video;
+      feedVideoSeekingUntil = Date.now() + 5000;
+      markManual(5000);
+      scheduleFeedVideoPlaybackSync();
     };
     video.addEventListener("pointerdown", markManual);
     video.addEventListener("mousedown", markManual);
     video.addEventListener("touchstart", markManual, { passive: true });
-    video.addEventListener("seeking", markManual);
+    video.addEventListener("seeking", markSeeking);
+    video.addEventListener("seeked", () => {
+      if (feedVideoSeekingVideo === video) feedVideoSeekingUntil = Date.now() + 1200;
+      markManual(1200);
+      scheduleFeedVideoPlaybackSync();
+    });
     video.addEventListener("pause", () => {
       if (feedVideoProgrammaticPause.has(video)) {
         feedVideoProgrammaticPause.delete(video);
+        return;
+      }
+      if (video.seeking || isFeedVideoSeekLocked(video)) {
+        markManual(1800);
         return;
       }
       feedVideoUserPaused.add(video);
@@ -2602,7 +2637,7 @@ function renderPostMedia(item) {
       </div>
     `;
   }
-  if (type.startsWith("video/")) return `<div class="media-tile media-video-tile"><video class="media-content media-video" src="${escapeHtml(url)}" controls preload="metadata" playsinline></video></div>`;
+  if (type.startsWith("video/")) return `<div class="media-tile media-video-tile"><video class="media-content media-video" src="${escapeHtml(url)}" controls preload="auto" playsinline></video></div>`;
   return `<a class="media-tile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open file</a>`;
 }
 
@@ -2643,6 +2678,7 @@ function updatePostMediaCarousel(postId) {
   const stage = card.querySelector(".media-stage");
   if (stage) stage.innerHTML = renderPostMedia(media[current]);
   setupMediaLoadingIndicators(card);
+  setupFeedVideoAutoplay();
   const prevButton = card.querySelector('[data-action="media-prev"]');
   if (prevButton) prevButton.disabled = current === 0;
   const nextButton = card.querySelector('[data-action="media-next"]');
