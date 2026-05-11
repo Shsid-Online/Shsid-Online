@@ -193,3 +193,7 @@
   - `Shift+Enter` still inserts a newline.
   - Added in-flight guards so keyboard send respects the same busy/disabled behavior as clicking Send.
   - Validation: `npm run check` passed.
+- 2026-05-11: Minimized conversation list width in Messages layout.
+  - Updated `.chat-layout` column ratio to reduce the left conversation tab width and give more space to active chat content.
+  - Kept mobile behavior unchanged (`.chat-layout` still stacks to one column under 760px).
+  - Validation: `npm run check` passed.

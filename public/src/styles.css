@@ -729,7 +729,7 @@ button {
 }
 
 .chat-layout {
-  grid-template-columns: minmax(180px, 0.62fr) minmax(0, 1.9fr);
+  grid-template-columns: minmax(150px, 0.48fr) minmax(0, 2.08fr);
   align-items: start;
 }
 
