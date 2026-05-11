@@ -305,3 +305,8 @@
   - Added report preview column using live source content (post text/media summary or latest chat message).
   - Kept raw type/target ID and existing `Open Source`/`Resolve` actions for audit traceability.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added back button for viewing other users' profiles.
+  - Added `Back` button shown only when viewing someone else's profile.
+  - Added previous-view tracking (`profileBackView`) so return target is preserved (students/messages/admin/feed).
+  - Wired profile opens from messages popup and admin source jumps to set correct back target.
+  - Validation: `npm run check` passed.

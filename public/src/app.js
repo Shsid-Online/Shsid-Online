@@ -45,6 +45,7 @@ let conversationTab = "inbox";
 let adminChatMonitorFilter = "all";
 let adminActiveConversationId = "";
 let adminTab = "overview";
+let profileBackView = "students";
 let liveChatTimer = null;
 let liveChatPollInFlight = false;
 let liveChatSnapshot = "";
@@ -724,6 +725,7 @@ async function openAdminSource(target) {
     return;
   }
   if (target.kind === "user") {
+    profileBackView = view || "admin";
     state.selectedProfileId = target.id;
     view = "profile";
     await refreshQnaForProfile(target.id);
@@ -1786,6 +1788,7 @@ function showConversationDetailsPopup(conversation) {
   `);
   popup.querySelector('[data-action="view-profile"]')?.addEventListener("click", async () => {
     popup.remove();
+    profileBackView = "messages";
     state.selectedProfileId = user.id;
     view = "profile";
     await refreshQnaForProfile(user.id);
@@ -1820,6 +1823,7 @@ function renderProfile() {
     .sort((a, b) => at(b.createdAt) - at(a.createdAt));
   const isOwnProfile = user.id === me.id;
   return page("Profile", "Your public profile, verification status, Q&A box, notification settings, and privacy controls.", `
+    ${!isOwnProfile ? `<div class="row" style="margin-bottom:10px"><button class="btn small" data-action="profile-back">Back</button></div>` : ""}
     <section class="grid two">
       <div class="panel">
         <div class="row"><div class="avatar ${user.role === "admin" ? "admin" : ""}">${initials(user)}</div><div><h2>${escapeHtml(user.englishName)}</h2><p class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</p></div></div>
@@ -2364,9 +2368,23 @@ async function handleAction(action, id) {
     mergeApiUsers([result.user]);
   }
   if (action === "view-profile") {
+    profileBackView = view || "students";
     state.selectedProfileId = id;
     view = "profile";
     await refreshQnaForProfile(id);
+  }
+  if (action === "profile-back") {
+    state.selectedProfileId = null;
+    const nextView = profileBackView || "students";
+    view = nextView === "profile" ? "students" : nextView;
+    if (view === "students") await refreshStudents();
+    if (view === "messages") await refreshConversations();
+    if (view === "admin") {
+      await refreshAdminVerifications();
+      await refreshReports();
+      await refreshAuditLogs();
+    }
+    if (view === "feed") await refreshPosts();
   }
   if (action === "start-chat") {
     const target = state.users.find((item) => item.id === id);
