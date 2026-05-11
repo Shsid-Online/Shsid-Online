@@ -201,3 +201,8 @@
   - In message row rendering, the `receiver sees: ...` helper now shows only for non-admin senders.
   - Admin still sees anon/public label and `(real: ...)` where applicable.
   - Validation: `npm run check` passed.
+- 2026-05-11: Further widened group chat thread area.
+  - Reduced Messages conversation-list column share again and tightened grid gap for desktop.
+  - Added a dedicated <=1120px split with an even narrower list column so chat content stays readable on tablet/mid-size widths.
+  - Mobile one-column chat stacking remains unchanged.
+  - Validation: `npm run check` passed.
