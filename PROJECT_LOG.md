@@ -45,3 +45,7 @@
   - Fixed media open top-jump risk: post-image media button now explicitly uses `type="button"`.
   - Updated magnified viewer geometry: introduced fixed `.media-viewer-frame` and tightened modal dimensions so the background/frame scales consistently while media remains proportional (`object-fit: contain`).
   - Validation: `npm run check` passed.
+- 2026-05-11: Fixed post-owner delete permissions and cancel-state bug in delete confirmation.
+  - Post delete action is now visible to post owner as well as admin.
+  - `askConfirmPopup` now resolves `false` on all close paths (Cancel, top-right Close button, backdrop click), preventing unresolved promise/busy-state lock on delete buttons.
+  - Validation: `npm run check` passed.

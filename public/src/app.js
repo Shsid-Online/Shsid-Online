@@ -740,13 +740,18 @@ function askConfirmPopup(title, message, confirmLabel = "Confirm") {
         </div>
       </div>
     `);
-    popup.querySelector("[data-cancel]")?.addEventListener("click", () => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
       popup.remove();
-      resolve(false);
-    });
-    popup.querySelector("[data-confirm]")?.addEventListener("click", () => {
-      popup.remove();
-      resolve(true);
+      resolve(value);
+    };
+    popup.querySelector("[data-cancel]")?.addEventListener("click", () => finish(false));
+    popup.querySelector("[data-confirm]")?.addEventListener("click", () => finish(true));
+    popup.querySelector("[data-close-popup]")?.addEventListener("click", () => finish(false));
+    popup.addEventListener("click", (event) => {
+      if (event.target === popup) finish(false);
     });
   });
 }
@@ -1292,6 +1297,8 @@ function renderPost(post) {
   const author = state.users.find((u) => u.id === post.authorId);
   const likes = post.likes || [];
   const liked = likes.includes(state.currentUserId);
+  const isAdmin = currentUser().role === "admin";
+  const isOwner = post.authorId === state.currentUserId;
   const media = post.media || [];
   const mediaIndex = Math.max(0, Math.min((postMediaIndexByPostId[post.id] || 0), Math.max(0, media.length - 1)));
   const activeMedia = media.length ? media[mediaIndex] : null;
@@ -1340,7 +1347,8 @@ function renderPost(post) {
         <button class="btn small" data-action="comment-post" data-id="${post.id}">Comment</button>
         <button class="btn small" data-action="share-post" data-id="${post.id}">Share</button>
         <button class="btn small" data-action="report-post" data-id="${post.id}">Report</button>
-        ${currentUser().role === "admin" ? `<button class="btn small" data-action="toggle-sticky" data-id="${post.id}">${post.sticky ? "Unpin" : "Pin"}</button><button class="btn small danger" data-action="delete-post" data-id="${post.id}">Delete</button>` : ""}
+        ${isAdmin ? `<button class="btn small" data-action="toggle-sticky" data-id="${post.id}">${post.sticky ? "Unpin" : "Pin"}</button>` : ""}
+        ${isAdmin || isOwner ? `<button class="btn small danger" data-action="delete-post" data-id="${post.id}">Delete</button>` : ""}
       </div>
     </article>
   `;
