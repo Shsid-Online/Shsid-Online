@@ -112,3 +112,8 @@
   - Media content is absolutely positioned to fill the reserved frame with `object-fit: contain`.
   - This prevents post card height jumps while image/video bytes are still loading.
   - Validation: `npm run check` passed.
+- 2026-05-11: Upload process reliability/progress fix for stalled 0% reports.
+  - Added staged progress updates for non-multipart uploads so percent always advances during sign + PUT phases.
+  - Added per-upload PUT timeout (90s) with clear user-facing timeout error instead of silent long hang.
+  - Added final 99% progress step before completion handoff to smooth close behavior.
+  - Validation: `npm run check` passed.

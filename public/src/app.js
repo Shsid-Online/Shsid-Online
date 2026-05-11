@@ -2627,22 +2627,38 @@ async function uploadFiles(files, options = {}) {
   setUploadProgress("Uploading media", 0);
   let completed = false;
   try {
-    for (const file of files) {
+    const totalFiles = Math.max(1, files.length);
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      const basePct = Math.floor((index / totalFiles) * 100);
+      setUploadProgress("Uploading media", Math.max(1, basePct + 2));
       const shouldUseMultipart = file.size > 20 * 1024 * 1024 || (file.type || "").startsWith("video/");
       if (shouldUseMultipart) {
+        setUploadProgress("Uploading media", Math.max(uploadUi.percent, basePct + 8));
         const mediaUrl = await uploadFileMultipart(file, purpose);
+        setUploadProgress("Uploading media", Math.max(uploadUi.percent, basePct + Math.floor(100 / totalFiles) - 2));
         uploaded.push({ url: mediaUrl, type: file.type || "application/octet-stream", name: file.name });
         continue;
       }
+      setUploadProgress("Uploading media", Math.max(uploadUi.percent, basePct + 12));
       const sign = await apiRequest("/upload-url", {
         method: "POST",
         body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", purpose })
       });
-      const response = await fetch(sign.uploadUrl, {
-        method: "PUT",
-        headers: { "content-type": file.type || "application/octet-stream" },
-        body: file
-      });
+      setUploadProgress("Uploading media", Math.max(uploadUi.percent, basePct + 24));
+      const controller = new AbortController();
+      const uploadTimeout = setTimeout(() => controller.abort("upload-timeout"), 90_000);
+      let response;
+      try {
+        response = await fetch(sign.uploadUrl, {
+          method: "PUT",
+          headers: { "content-type": file.type || "application/octet-stream" },
+          body: file,
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(uploadTimeout);
+      }
       if (!response.ok) {
         let reason = "";
         try {
@@ -2654,14 +2670,21 @@ async function uploadFiles(files, options = {}) {
         const detail = typeof reason === "string" && reason.trim().length ? ` ${reason.trim()}` : "";
         throw new Error(`Upload failed (${file.name}):${detail || " Unknown upload error."}`);
       }
+      setUploadProgress("Uploading media", Math.max(uploadUi.percent, basePct + Math.floor(100 / totalFiles) - 1));
       uploaded.push({
         url: sign.mediaUrl,
         type: file.type || "application/octet-stream",
         name: file.name
       });
     }
+    setUploadProgress("Uploading media", 99);
     completed = true;
     return uploaded;
+  } catch (error) {
+    if (String(error?.name || "") === "AbortError" || String(error || "").includes("upload-timeout")) {
+      throw new Error("Upload timed out. Please retry with a smaller file or more stable connection.");
+    }
+    throw error;
   } finally {
     clearUploadProgress({ immediate: !completed });
   }
