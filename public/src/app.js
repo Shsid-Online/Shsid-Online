@@ -402,6 +402,7 @@ async function refreshPosts(reset = true) {
     const { posts: next, pagination } = await fetchPostsPage({ offset, limit: 10 });
     state.posts = reset ? next : [...state.posts, ...next];
     postsNextOffset = pagination?.nextOffset ?? null;
+    warmUserAssetCache();
     saveState();
     void ensurePostsAhead();
     void warmCategoryPools();
@@ -418,6 +419,7 @@ async function refreshConversations() {
     if (!state.conversations.some((item) => item.id === activeConversationId)) {
       activeConversationId = state.conversations[0]?.id;
     }
+    warmUserAssetCache();
     saveState();
   } catch (error) {
     console.error("refreshConversations failed", error);
@@ -582,6 +584,7 @@ async function refreshStudents() {
   try {
     const result = await apiRequest("/students");
     mergeApiUsers(result.students || []);
+    warmUserAssetCache();
     saveState();
   } catch (error) {
     console.error("refreshStudents failed", error);
@@ -598,6 +601,15 @@ function initials(user) {
   const name = String(user?.englishName || "").trim();
   if (!name) return "??";
   return name.split(/\s+/).map((part) => part[0] || "").join("").slice(0, 2).toUpperCase() || "??";
+}
+
+function renderAvatar(user, extraClass = "") {
+  const cls = ["avatar", extraClass].filter(Boolean).join(" ");
+  const photo = String(user?.profilePhoto || "").trim();
+  if (photo) {
+    return `<div class="${cls}"><img src="${escapeHtml(photo)}" alt="${escapeHtml(user?.englishName || "Profile")}" loading="lazy" /></div>`;
+  }
+  return `<div class="${cls}">${initials(user)}</div>`;
 }
 
 function timeAgo(ts) {
@@ -1543,7 +1555,7 @@ function page(title, subtitle, content, actions = "") {
 
 function renderView() {
   const user = currentUser();
-  if (user.status !== "verified" && user.role !== "admin" && view !== "profile" && view !== "settings") {
+  if (user.status !== "verified" && user.role !== "admin" && !["profile", "settings", "suggestions"].includes(view)) {
     return page("Verification pending", "Your account exists, but posting and messaging unlock after admin approval.", renderProfile());
   }
   const routes = {
@@ -1595,14 +1607,13 @@ function renderPost(post) {
   const liked = likes.includes(state.currentUserId);
   const isAdmin = currentUser().role === "admin";
   const isOwner = post.authorId === state.currentUserId;
-  const avatarLabel = post.anonymous ? "AN" : (author?.englishName ? initials(author) : "??");
   const media = post.media || [];
   const mediaIndex = Math.max(0, Math.min((postMediaIndexByPostId[post.id] || 0), Math.max(0, media.length - 1)));
   const activeMedia = media.length ? media[mediaIndex] : null;
   return `
     <article class="card" data-post-id="${post.id}">
       <div class="post-head">
-        <div class="avatar ${author?.role === "admin" ? "admin" : ""}">${avatarLabel}</div>
+        ${post.anonymous ? `<div class="avatar">AN</div>` : renderAvatar(author, author?.role === "admin" ? "admin" : "")}
         <div style="min-width:0">
           <div class="between">
             <strong>${escapeHtml(userName(post.authorId, post.anonymous))}</strong>
@@ -1675,7 +1686,7 @@ function renderStudents() {
     <section class="grid two">${state.users.filter((u) => u.role !== "admin" && u.status === "verified").map((user) => `
       <article class="panel" data-action="view-profile" data-id="${user.id}" style="cursor:pointer">
         <div class="between">
-          <div class="row"><div class="avatar">${initials(user)}</div><div><strong>${escapeHtml(user.englishName)}</strong><div class="muted">Grade ${user.grade}, Class ${user.classNo} · ${escapeHtml(user.chineseName)}</div></div></div>
+          <div class="row">${renderAvatar(user)}<div><strong>${escapeHtml(user.englishName)}</strong><div class="muted">Grade ${user.grade}, Class ${user.classNo} · ${escapeHtml(user.chineseName)}</div></div></div>
         </div>
         <p>${escapeHtml(user.bio)}</p>
         <div class="row">
@@ -1756,7 +1767,7 @@ function showConversationDetailsPopup(conversation) {
       ? members.map((member) => `
           <div class="row" style="justify-content:space-between;border:1px solid var(--line);border-radius:10px;padding:8px 10px">
             <div class="row">
-              <div class="avatar">${initials(member)}</div>
+              ${renderAvatar(member)}
               <div>
                 <strong>${escapeHtml(member.englishName || "Unknown")}</strong>
                 <div class="muted">Grade ${escapeHtml(member.grade ?? "-")}, Class ${escapeHtml(member.classNo ?? "-")}</div>
@@ -1791,7 +1802,7 @@ function showConversationDetailsPopup(conversation) {
   const popup = showFormPopup("Profile Preview", `
     <div class="grid">
       <div class="row">
-        <div class="avatar">${initials(user)}</div>
+        ${renderAvatar(user)}
         <div>
           <strong>${escapeHtml(user.englishName || "Unknown")}</strong>
           <div class="muted">${escapeHtml(user.chineseName || "")}</div>
@@ -1846,7 +1857,7 @@ function renderProfile() {
     ${!isOwnProfile ? `<div class="row" style="margin-bottom:10px"><button class="btn small" data-action="profile-back">Back</button></div>` : ""}
     <section class="grid two">
       <div class="panel">
-        <div class="row"><div class="avatar ${user.role === "admin" ? "admin" : ""}">${initials(user)}</div><div><h2>${escapeHtml(user.englishName)}</h2><p class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</p></div></div>
+        <div class="row">${renderAvatar(user, user.role === "admin" ? "admin" : "")}<div><h2>${escapeHtml(user.englishName)}</h2><p class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</p></div></div>
         <p>${escapeHtml(user.bio)}</p>
         <span class="status ${user.status === "verified" ? "green" : "gold"}">${user.status}</span>
       </div>
@@ -2901,6 +2912,24 @@ function preloadPostMediaAround(postId) {
     const item = media[idx];
     if (!item || typeof item === "string") return;
     preloadMediaByType(item.url, item.type || "");
+  });
+}
+
+function warmUserAssetCache() {
+  (state.users || []).forEach((user) => {
+    const photo = String(user?.profilePhoto || "").trim();
+    if (photo) preloadMediaByType(photo, "image/*");
+  });
+  (state.posts || []).forEach((post) => {
+    (post.media || []).forEach((item) => {
+      if (!item || typeof item === "string") return;
+      preloadMediaByType(item.url, item.type || "");
+    });
+  });
+  (state.conversations || []).forEach((conv) => {
+    (conv.messages || []).forEach((msg) => {
+      (msg.media || []).forEach((item) => preloadMediaByType(item?.url, item?.type || ""));
+    });
   });
 }
 

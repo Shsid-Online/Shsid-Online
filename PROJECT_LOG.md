@@ -331,3 +331,12 @@
   - Moved `Direct Messaging` and `Create Group Chat` buttons under the `Conversations` heading (stacked layout) instead of inline right-aligned.
   - Renamed `Create convo` button label to `Create Group Chat`.
   - Validation: `npm run check` passed.
+- 2026-05-11: Added clickable session-card Settings and signup profile-picture prompt.
+  - Left-bottom session name card is now clickable and opens a dedicated `Settings` screen.
+  - Added `Settings` view for profile edits (name, grade/class, bio, profile picture) and personalization notes.
+  - Added backend route `PATCH /me/profile` to persist settings updates without changing verification status.
+  - Signup profile step now requires a profile picture upload before continuing.
+  - `auth/complete-profile` now receives `profilePhoto` and stores it when DB supports `users.profile_photo`.
+  - Worker now auto-detects/adds `users.profile_photo` safely via pragma/alter table fallback.
+  - Updated D1 schema with `profile_photo` column for new environments.
+  - Validation: `npm run check` passed.
