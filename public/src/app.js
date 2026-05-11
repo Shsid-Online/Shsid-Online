@@ -298,6 +298,7 @@ function conversationCounterpartName(conversation) {
   const otherId = members.find((id) => id !== me.id);
   const baseName = otherId ? userName(otherId) : (conversation.title || "Direct message");
   const remark = otherId ? getRemarkForUser(otherId) : "";
+  if (getConversationIdentityMode(conversation.id) === "anonymous") return baseName;
   return remark ? `${remark} (${baseName})` : baseName;
 }
 
@@ -1681,15 +1682,11 @@ function renderMessages() {
   const { inbox, requests } = classifyConversations();
   const list = conversationTab === "requests" ? requests : inbox;
   const active = list.find((item) => item.id === activeConversationId) || list[0] || inbox[0] || requests[0];
-  const receiverName = active ? conversationCounterpartName(active) : "No receiver";
-  const identityMode = active ? getConversationIdentityMode(active.id) : "public";
   const requestView = conversationTab === "requests";
   const accepted = active ? Boolean(state.acceptedRequests?.[active.id]) : false;
   const firstAuthorId = active?.messages?.[0]?.authorId || "";
   const isReceiverPending = requestView && active && !accepted && firstAuthorId && firstAuthorId !== currentUser().id;
   const canSendInCurrentThread = !isReceiverPending;
-  const counterpartId = active && !active.group ? (active.members || []).find((memberId) => memberId !== currentUser().id) : "";
-  const counterpartRemark = counterpartId ? getRemarkForUser(counterpartId) : "";
   return page("Messages", "Real-time style direct and group messaging, anonymous sending, reporting, and admin monitoring.", `
     <section class="chat-layout">
       <div class="panel chat-panel chat-panel-list">
@@ -1711,13 +1708,12 @@ function renderMessages() {
             ${active ? `<button class="btn small" data-action="chat-info" data-id="${active.id}" aria-label="Chat details">...</button>` : ""}
           </div>
         </div>
-        ${active && !active.group ? `<p class="muted" style="margin:8px 0 0">Receiver: ${escapeHtml(receiverName)}</p>` : ""}
-        ${counterpartId ? `<p class="muted" style="margin:6px 0 0">Remark: ${escapeHtml(counterpartRemark || "None")} <button class="btn small" data-action="edit-remark" data-id="${counterpartId}">Edit</button></p>` : ""}
         <div class="grid chat-messages-scroll" style="margin:14px 0">${(active?.messages || []).map((message) => `
-          <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} ${(message.media || []).map((item) => renderChatMediaItem(item)).join("")} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${message.authorId === currentUser().id && currentUser().role !== "admin" ? `<span class="muted">· receiver sees: ${message.anonymous ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span>` : ""} ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
+          <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} ${(message.media || []).map((item) => renderChatMediaItem(item)).join("")} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
         `).join("")}</div>
         ${requestView && active && !accepted ? `<div class="row" style="margin-bottom:12px"><button class="btn primary" data-action="accept-request" data-id="${active.id}">Accept request</button><button class="btn danger" data-action="reject-request" data-id="${active.id}">Reject request</button></div>` : ""}
         ${isReceiverPending ? `<p class="muted" style="margin:0 0 10px">Accept this request before sending messages.</p>` : ""}
+        <div id="message-attach-strip" class="chat-attach-strip"></div>
         <div class="field chat-message-field"><label>Message</label><textarea id="message-text" class="chat-message-input" placeholder="Type a message"></textarea></div>
         <div class="row chat-compose-row">
           <label class="btn small icon-btn" title="Attach photo or video">
@@ -1729,7 +1725,6 @@ function renderMessages() {
             <span aria-hidden="true">📄</span>
           </label>
         </div>
-        <p class="muted" style="margin:0">Receiver will see you as: <span id="message-identity-preview">${identityMode === "anonymous" ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span></p>
         <div class="row">
           <button class="btn primary" data-action="send-message" data-id="${active?.id || ""}" ${canSendInCurrentThread ? "" : "disabled"}>Send</button>
         </div>
@@ -1793,6 +1788,7 @@ function showConversationDetailsPopup(conversation) {
       <p style="margin:0">${escapeHtml(user.bio || "No bio yet.")}</p>
       <div class="row">
         <button class="btn small" type="button" data-action="view-profile" data-id="${user.id}">Open Full Profile</button>
+        <button class="btn small" type="button" data-action="edit-remark" data-id="${user.id}">Set Remark</button>
         <button class="btn small" type="button" data-rename-conversation="${conversation.id}">Rename Chat</button>
       </div>
     </div>
@@ -2088,6 +2084,7 @@ function bindEvents() {
   });
 
   setupDropzone("post-dropzone", "post-media", true);  bindFileChips("post-media", "post-file-chips");
+  bindMessageAttachmentStrip();
 }
 
 function bindAuth() {
@@ -2480,8 +2477,13 @@ async function handleAction(action, id) {
       body: JSON.stringify({ text, media, anonymous })
     });
     document.querySelector("#message-text").value = "";
-    if (document.querySelector("#message-media-file")) document.querySelector("#message-media-file").value = "";
-    if (document.querySelector("#message-doc-file")) document.querySelector("#message-doc-file").value = "";
+    inputFileStore["message-media-file"] = [];
+    inputFileStore["message-doc-file"] = [];
+    const mediaInput = document.querySelector("#message-media-file");
+    if (mediaInput) setInputFiles(mediaInput, []);
+    const docInput = document.querySelector("#message-doc-file");
+    if (docInput) setInputFiles(docInput, []);
+    drawMessageAttachmentStrip();
     await refreshConversations();
   }
   if (action === "edit-remark") {
@@ -2751,8 +2753,7 @@ function askIdentityModePopup(receiverName) {
   return new Promise((resolve) => {
     const popup = showFormPopup("Choose Identity", `
       <div class="grid">
-        <p class="muted" style="margin:0">Receiver: ${escapeHtml(receiverName)}</p>
-        <p class="muted" style="margin:0">How should this receiver see your messages?</p>
+        <p class="muted" style="margin:0">Choose how messages appear in this chat with ${escapeHtml(receiverName)}.</p>
         <div class="row">
           <button class="btn primary" type="button" data-mode="public">Public (your name)</button>
           <button class="btn" type="button" data-mode="anonymous">Anonymous student</button>
@@ -2941,6 +2942,37 @@ function bindFileChips(inputId, chipsId) {
     draw();
   });
   draw();
+}
+
+function drawMessageAttachmentStrip() {
+  const strip = document.querySelector("#message-attach-strip");
+  if (!strip) return;
+  const mediaFiles = inputFileStore["message-media-file"] || [];
+  const docFiles = inputFileStore["message-doc-file"] || [];
+  const files = [...mediaFiles, ...docFiles];
+  strip.innerHTML = files.length ? files.map((file) => `<span class="chip">${escapeHtml(file.name)}</span>`).join("") : "";
+}
+
+function bindMessageAttachmentStrip() {
+  const mediaInput = document.querySelector("#message-media-file");
+  const docInput = document.querySelector("#message-doc-file");
+  const strip = document.querySelector("#message-attach-strip");
+  if (!mediaInput || !docInput || !strip) return;
+  inputFileStore["message-media-file"] = inputFileStore["message-media-file"] || [...(mediaInput.files || [])];
+  inputFileStore["message-doc-file"] = inputFileStore["message-doc-file"] || [...(docInput.files || [])];
+  const syncInputStore = (inputId, inputNode) => {
+    const incoming = [...(inputNode.files || [])];
+    const existing = inputFileStore[inputId] || [];
+    const merged = mergeUniqueFiles(existing, incoming);
+    inputFileStore[inputId] = merged;
+    inputFileSyncLock.add(inputId);
+    setInputFiles(inputNode, merged);
+    inputFileSyncLock.delete(inputId);
+    drawMessageAttachmentStrip();
+  };
+  mediaInput.addEventListener("change", () => syncInputStore("message-media-file", mediaInput));
+  docInput.addEventListener("change", () => syncInputStore("message-doc-file", docInput));
+  drawMessageAttachmentStrip();
 }
 
 function setupDropzone(zoneId, inputId, multiple) {

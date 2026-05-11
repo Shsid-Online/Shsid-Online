@@ -826,6 +826,14 @@ button {
   margin-bottom: 8px;
 }
 
+.chat-attach-strip {
+  min-height: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 6px;
+}
+
 .chat-message-input {
   min-height: 72px;
   padding: 8px 10px;

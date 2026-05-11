@@ -320,3 +320,10 @@
     - `GET /admin/suggestions`
     - `POST /admin/suggestions/:id` (stores response in status payload `responded::...` and notifies student).
   - Validation: `npm run check` passed.
+- 2026-05-11: Refined message composer/header identity and attachment UI.
+  - Added chat attachment strip above message field to show attached file/video/doc names before sending.
+  - Removed inline chat captions `Receiver: ...` and `Receiver will see you as: ...` from message thread UI.
+  - Moved direct-chat remark editing into the `...` (chat details) popup as `Set Remark`.
+  - Prevented remarks from showing in conversation display when that conversation identity mode is anonymous.
+  - Cleared message attachment strip/input stores immediately after send.
+  - Validation: `npm run check` passed.
