@@ -1738,8 +1738,9 @@ function renderMessages() {
       <div class="panel chat-panel chat-panel-thread">
         <div class="between">
           <strong>${escapeHtml(active ? conversationDisplayTitle(active) : "No conversation")}</strong>
-          <div class="row">
+          <div class="row chat-toolbar">
             <span class="chip">Active</span>
+            ${active ? `<button class="btn small danger-icon" data-action="report-message" data-id="${active.id}" aria-label="Report conversation">⚠</button>` : ""}
             ${active ? `<button class="btn small" data-action="chat-info" data-id="${active.id}" aria-label="Chat details">...</button>` : ""}
           </div>
         </div>
@@ -1750,12 +1751,20 @@ function renderMessages() {
         `).join("")}</div>
         ${requestView && active && !accepted ? `<div class="row" style="margin-bottom:12px"><button class="btn primary" data-action="accept-request" data-id="${active.id}">Accept request</button><button class="btn danger" data-action="reject-request" data-id="${active.id}">Reject request</button></div>` : ""}
         ${isReceiverPending ? `<p class="muted" style="margin:0 0 10px">Accept this request before sending messages.</p>` : ""}
-        <div class="field"><label>Message</label><textarea id="message-text" placeholder="Type a message"></textarea></div>
-        <div class="field"><label>Photo / Video</label><input id="message-media-file" type="file" accept="image/*,video/*" multiple /></div>
+        <div class="field chat-message-field"><label>Message</label><textarea id="message-text" class="chat-message-input" placeholder="Type a message"></textarea></div>
+        <div class="row chat-compose-row">
+          <label class="btn small icon-btn" title="Attach photo or video">
+            <input id="message-media-file" type="file" accept="image/*,video/*" multiple />
+            <span aria-hidden="true">🖼</span>
+          </label>
+          <label class="btn small icon-btn" title="Attach file">
+            <input id="message-doc-file" type="file" accept=".pdf,application/pdf" multiple />
+            <span aria-hidden="true">📄</span>
+          </label>
+        </div>
         <p class="muted" style="margin:0">Receiver will see you as: <span id="message-identity-preview">${identityMode === "anonymous" ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span></p>
         <div class="row">
           <button class="btn primary" data-action="send-message" data-id="${active?.id || ""}" ${canSendInCurrentThread ? "" : "disabled"}>Send</button>
-          <button class="btn" data-action="report-message" data-id="${active?.id || ""}">Report</button>
         </div>
       </div>
     </section>
@@ -2416,8 +2425,10 @@ async function handleAction(action, id) {
     if (!accepted && firstAuthorId && firstAuthorId !== user.id) return toast("Accept request before replying");
     const text = document.querySelector("#message-text").value.trim();
     const mediaFiles = [...(document.querySelector("#message-media-file")?.files || [])];
-    if ((!text && !mediaFiles.length) || !id) return toast("Enter a message or attach media");
-    const media = mediaFiles.length ? await uploadFiles(mediaFiles) : [];
+    const docFiles = [...(document.querySelector("#message-doc-file")?.files || [])];
+    const uploadFilesList = [...mediaFiles, ...docFiles];
+    if ((!text && !uploadFilesList.length) || !id) return toast("Enter a message or attach media");
+    const media = uploadFilesList.length ? await uploadFiles(uploadFilesList) : [];
     const anonymous = getConversationIdentityMode(id) === "anonymous";
     await apiRequest(`/conversations/${id}/messages`, {
       method: "POST",
@@ -2425,6 +2436,7 @@ async function handleAction(action, id) {
     });
     document.querySelector("#message-text").value = "";
     if (document.querySelector("#message-media-file")) document.querySelector("#message-media-file").value = "";
+    if (document.querySelector("#message-doc-file")) document.querySelector("#message-doc-file").value = "";
     await refreshConversations();
   }
   if (action === "edit-remark") {

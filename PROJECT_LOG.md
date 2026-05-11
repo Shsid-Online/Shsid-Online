@@ -247,3 +247,12 @@
   - Added `Rename Chat` button inside both details popups: Group Members and Direct Profile Preview.
   - Centralized rename logic in `renameConversation(conversationId)` and reused it for menu-triggered rename.
   - Validation: `npm run check` passed.
+- 2026-05-11: Compact Messages composer + icon-based report/upload controls.
+  - Moved conversation report action to the top-right chat header beside `...` as a red warning icon button (`⚠`).
+  - Removed bottom `Report` button from composer action row.
+  - Replaced full upload field block with compact icon pickers:
+    - photo/video icon (`🖼`) -> `#message-media-file`
+    - file icon (`📄`) -> `#message-doc-file` (PDF)
+  - Reduced message composer footprint with smaller textarea and tighter spacing.
+  - Updated send flow to combine both media and file pickers into one upload list and clear both inputs after send.
+  - Validation: `npm run check` passed.
