@@ -806,10 +806,7 @@ function openMediaViewer(url, type = "") {
 }
 
 function showSharePopup(url, text = "", postId = "") {
-  const meId = currentUser()?.id || "";
-  const conversations = (state.conversations || [])
-    .filter((conv) => Array.isArray(conv?.members) && conv.members.includes(meId))
-    .slice(0, 50);
+  const conversations = classifyConversations().inbox.slice(0, 50);
   const popup = showFormPopup("Share Post", `
     <div class="grid">
       <div class="field">

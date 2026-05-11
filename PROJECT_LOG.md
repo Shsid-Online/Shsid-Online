@@ -99,3 +99,7 @@
   - Removed unused `open-media` action handling branch in `handleAction`.
   - Kept core popup system intact for share/confirm/forms and kept video viewer behavior.
   - Validation: `npm run check` passed.
+- 2026-05-11: Restricted post sharing targets to accepted inbox conversations only.
+  - Share popup now sources selectable chats from `classifyConversations().inbox`.
+  - This blocks sharing to requests/unaccepted conversations and enforces "accepted into inbox" requirement.
+  - Validation: `npm run check` passed.
