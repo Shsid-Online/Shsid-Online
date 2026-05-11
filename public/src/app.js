@@ -734,59 +734,6 @@ function reportTargetPreview(report = {}) {
   return `Target ID: ${targetId || "-"}`;
 }
 
-function resolveAdminSourceTarget(targetType = "", targetId = "", metadata = {}) {
-  const normalizedType = String(targetType || "").trim().toLowerCase();
-  const normalizedId = String(targetId || "").trim();
-  const m = metadata && typeof metadata === "object" ? metadata : {};
-  const conversationId = String(m.conversationId || "").trim();
-  const postId = String(m.postId || "").trim();
-  const commentId = String(m.commentId || "").trim();
-  const userId = String(m.userId || "").trim();
-  if (conversationId || normalizedType === "conversation" || normalizedType === "chat") {
-    return { kind: "conversation", id: conversationId || normalizedId };
-  }
-  if (postId || normalizedType === "post") {
-    return { kind: "post", id: postId || normalizedId };
-  }
-  if (commentId || normalizedType === "comment") {
-    return { kind: "comment", id: commentId || normalizedId, postId: postId || "" };
-  }
-  if (userId || normalizedType === "user") {
-    return { kind: "user", id: userId || normalizedId };
-  }
-  if (normalizedId) return { kind: normalizedType || "unknown", id: normalizedId };
-  return null;
-}
-
-async function openAdminSource(target) {
-  if (!target?.id) {
-    toast("No source target available");
-    return;
-  }
-  if (target.kind === "conversation") {
-    view = "admin";
-    adminChatMonitorFilter = "all";
-    adminActiveConversationId = target.id;
-    await refreshConversations();
-    return;
-  }
-  if (target.kind === "post" || target.kind === "comment") {
-    view = "feed";
-    deepLinkedPostId = target.postId || target.id;
-    await refreshPosts();
-    if (target.kind === "comment" && deepLinkedPostId) openCommentPostId = deepLinkedPostId;
-    return;
-  }
-  if (target.kind === "user") {
-    profileBackView = view || "admin";
-    state.selectedProfileId = target.id;
-    view = "profile";
-    await refreshQnaForProfile(target.id);
-    return;
-  }
-  toast("Unsupported source target");
-}
-
 function toast(message) {
   const existing = document.querySelector(".toast");
   existing?.remove();
@@ -1682,9 +1629,11 @@ function renderSinglePost() {
 }
 
 function renderFeed() {
+  const searchQuery = state.feedSearchQuery?.trim().toLowerCase();
   const posts = [...state.posts].sort((a, b) => Number(b.sticky) - Number(a.sticky) || b.createdAt - a.createdAt);
-  const postsHtml = posts.length
-    ? posts.map(renderPost).join("")
+  const filtered = searchQuery ? posts.filter((p) => p.text?.toLowerCase().includes(searchQuery) || p.title?.toLowerCase().includes(searchQuery) || p.category?.toLowerCase().includes(searchQuery)) : posts;
+  const postsHtml = filtered.length
+    ? filtered.map(renderPost).join("")
     : `<div class="empty-state">No posts yet. Share something positive or helpful to get the feed started.</div>`;
   return page("Feed", "Posts from followed students, categories, sticky announcements, comments, likes, and reports.", `
     <div class="field" style="margin-bottom:16px">
@@ -2249,13 +2198,10 @@ function bindEvents() {
   });
 
   document.querySelector("#feed-search")?.addEventListener("input", (event) => {
-    const query = String(event.target.value || "").trim().toLowerCase();
+    const query = String(event.target.value || "").trim();
     state.feedSearchQuery = query;
     saveState();
-    document.querySelectorAll("#feed-posts article.card").forEach((card) => {
-      const text = card.textContent?.toLowerCase() || "";
-      card.style.display = !query || text.includes(query) ? "" : "none";
-    });
+    render();
   });
 
   document.querySelectorAll("[data-action]").forEach((button) => {
@@ -3050,18 +2996,6 @@ async function handleAction(action, id) {
       if (targetId) await refreshStudents();
     });
     return;
-  }
-  if (action === "open-report-source") {
-    const report = state.reports.find((item) => item.id === id);
-    if (!report) return;
-    const target = resolveAdminSourceTarget(report.type, report.targetId, report.metadata || {});
-    await openAdminSource(target);
-  }
-  if (action === "open-audit-source") {
-    const entry = state.audit.find((item) => item.id === id);
-    if (!entry) return;
-    const target = resolveAdminSourceTarget("", "", entry.metadata || {});
-    await openAdminSource(target);
   }
   if (action === "mark-read") {
     await apiRequest("/notifications/read-all", { method: "POST", body: JSON.stringify({}) });
