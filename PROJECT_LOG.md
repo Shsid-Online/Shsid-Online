@@ -256,3 +256,8 @@
   - Reduced message composer footprint with smaller textarea and tighter spacing.
   - Updated send flow to combine both media and file pickers into one upload list and clear both inputs after send.
   - Validation: `npm run check` passed.
+- 2026-05-11: Matched Admin message monitor row format to chat view.
+  - Updated admin monitor message rendering to include the same chat-style message row structure.
+  - Added attachment rendering in admin monitor via `renderChatMediaItem(...)`.
+  - Kept anon/public label and explicit `(real: ...)` indicator for anonymous entries in admin monitor.
+  - Validation: `npm run check` passed.

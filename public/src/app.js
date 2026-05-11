@@ -1961,7 +1961,14 @@ function renderAdmin() {
           </div>
           <div class="grid" style="max-height:360px;overflow:auto;align-content:start">
             <strong>${escapeHtml(activeMonitored ? conversationDisplayTitle(activeMonitored, true) : "No chat selected")}</strong>
-            ${(activeMonitored?.messages || []).map((message) => `<div class="comment"><strong>${escapeHtml(userName(message.authorId, false))}</strong> <span class="muted">(${message.anonymous ? "anon" : "public"})</span><br>${escapeHtml(message.text || "")}</div>`).join("") || `<p class="muted">No messages yet.</p>`}
+            ${(activeMonitored?.messages || []).map((message) => `
+              <div class="comment" style="margin:0">
+                <strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text || "")}
+                ${(message.media || []).map((item) => renderChatMediaItem(item)).join("")}
+                <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span>
+                ${message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId, false))})</span>` : ""}
+              </div>
+            `).join("") || `<p class="muted">No messages yet.</p>`}
           </div>
         </div>
       </div>
