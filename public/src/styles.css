@@ -768,13 +768,13 @@ button {
 }
 
 .chat-panel-list .row {
-  gap: 4px;
+  gap: 6px;
 }
 
 .chat-panel-list .btn {
-  min-height: 26px;
-  padding: 4px 6px;
-  font-size: 11px;
+  min-height: 34px;
+  padding: 6px 8px;
+  font-size: 12px;
 }
 
 .chat-panel-list .chat-list-scroll .btn {
