@@ -1744,7 +1744,6 @@ function renderMessages() {
           </div>
         </div>
         ${active && !active.group ? `<p class="muted" style="margin:8px 0 0">Receiver: ${escapeHtml(receiverName)}</p>` : ""}
-        ${active ? `<div class="row" style="margin:6px 0 0"><button class="btn small" data-action="rename-conv" data-id="${active.id}">Rename Chat</button></div>` : ""}
         ${counterpartId ? `<p class="muted" style="margin:6px 0 0">Remark: ${escapeHtml(counterpartRemark || "None")} <button class="btn small" data-action="edit-remark" data-id="${counterpartId}">Edit</button></p>` : ""}
         <div class="grid chat-messages-scroll" style="margin:14px 0">${(active?.messages || []).map((message) => `
           <div class="comment" style="margin:0"><strong>${escapeHtml(userName(message.authorId, message.anonymous))}:</strong> ${escapeHtml(message.text)} ${(message.media || []).map((item) => renderChatMediaItem(item)).join("")} <span class="muted">(${message.anonymous ? "anonymous" : "public"})</span> ${message.authorId === currentUser().id && currentUser().role !== "admin" ? `<span class="muted">· receiver sees: ${message.anonymous ? "Anonymous student" : escapeHtml(userName(currentUser().id))}</span>` : ""} ${currentUser().role === "admin" && message.anonymous ? `<span class="muted">(real: ${escapeHtml(userName(message.authorId))})</span>` : ""}</div>
@@ -1783,12 +1782,19 @@ function showConversationDetailsPopup(conversation) {
           </div>
         `).join("")
       : `<p class="muted" style="margin:0">No member data available.</p>`;
-    showFormPopup("Group Members", `
+    const popup = showFormPopup("Group Members", `
       <div class="grid">
         <p class="muted" style="margin:0">${escapeHtml(conversation.title || "Group chat")} · ${members.length} members</p>
         <div class="grid">${memberRows}</div>
+        <div class="row">
+          <button class="btn small" type="button" data-rename-conversation="${conversation.id}">Rename Chat</button>
+        </div>
       </div>
     `);
+    popup.querySelector('[data-rename-conversation]')?.addEventListener("click", async () => {
+      popup.remove();
+      await renameConversation(conversation.id);
+    });
     return;
   }
 
@@ -1811,6 +1817,7 @@ function showConversationDetailsPopup(conversation) {
       <p style="margin:0">${escapeHtml(user.bio || "No bio yet.")}</p>
       <div class="row">
         <button class="btn small" type="button" data-action="view-profile" data-id="${user.id}">Open Full Profile</button>
+        <button class="btn small" type="button" data-rename-conversation="${conversation.id}">Rename Chat</button>
       </div>
     </div>
   `);
@@ -1821,6 +1828,22 @@ function showConversationDetailsPopup(conversation) {
     await refreshQnaForProfile(user.id);
     render();
   });
+  popup.querySelector('[data-rename-conversation]')?.addEventListener("click", async () => {
+    popup.remove();
+    await renameConversation(conversation.id);
+  });
+}
+
+async function renameConversation(conversationId) {
+  const conv = state.conversations.find((item) => item.id === conversationId);
+  if (!conv) return;
+  const next = await askTextPopup("Rename Chat", "New title", conv.title || "Conversation");
+  if (next == null) return;
+  const title = next.trim();
+  if (!title) return toast("Title cannot be empty");
+  await apiRequest(`/conversations/${conversationId}`, { method: "PATCH", body: JSON.stringify({ title }) });
+  await refreshConversations();
+  toast("Chat title updated");
 }
 
 function renderStories() {
@@ -2414,15 +2437,7 @@ async function handleAction(action, id) {
   }
   if (action === "open-conv") activeConversationId = id;
   if (action === "rename-conv") {
-    const conv = state.conversations.find((item) => item.id === id);
-    if (!conv) return;
-    const next = await askTextPopup("Rename Chat", "New title", conv.title || "Conversation");
-    if (next == null) return;
-    const title = next.trim();
-    if (!title) return toast("Title cannot be empty");
-    await apiRequest(`/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) });
-    await refreshConversations();
-    toast("Chat title updated");
+    await renameConversation(id);
   }
   if (action === "chat-info") {
     const conv = state.conversations.find((item) => item.id === id);

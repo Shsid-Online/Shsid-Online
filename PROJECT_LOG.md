@@ -242,3 +242,8 @@
   - Direct chat: details popup now shows a miniature profile preview with quick "Open Full Profile" action.
   - Removed top caption `Receiver: ...` for group chats (kept for direct chats only).
   - Validation: `npm run check` passed.
+- 2026-05-11: Moved Rename Chat into the `...` details menu.
+  - Removed standalone `Rename Chat` button row from the thread header area.
+  - Added `Rename Chat` button inside both details popups: Group Members and Direct Profile Preview.
+  - Centralized rename logic in `renameConversation(conversationId)` and reused it for menu-triggered rename.
+  - Validation: `npm run check` passed.
