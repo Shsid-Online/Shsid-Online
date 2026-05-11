@@ -382,3 +382,8 @@
   - Student card subtitle now shows secondary/chinese name immediately after english name, followed by grade/class.
   - Changed from: `Grade/Class · Chinese name` to `Chinese name · Grade/Class`.
   - Validation: `npm run check` passed.
+- 2026-05-11: Reduced post-entry repetition in navigation/feed.
+  - Changed sidebar Post icon marker from `PT` to `+`.
+  - Removed redundant `New post` button from Feed top actions.
+  - Post creation remains accessible via the left sidebar `Post` tab.
+  - Validation: `npm run check` passed.

@@ -596,7 +596,7 @@ async function refreshStudents() {
 }
 
 function userName(id, anonymous = false) {
-  if (anonymous) return "Anonymous student";
+  if (anonymous) return "Anonymous";
   const user = state.users.find((item) => item.id === id);
   return user ? user.englishName : "Unknown";
 }
