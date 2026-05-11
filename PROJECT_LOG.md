@@ -121,3 +121,8 @@
   - Switched multipart chunk uploader to sequential mode (`concurrency = 1`) to avoid parallel stream lock conflicts in affected browser/runtime paths.
   - Changed chunk response parsing to single-read text parse (`response.text()` then JSON parse) to avoid body-reader lock edge cases.
   - Validation: `npm run check` passed.
+- 2026-05-11: Fixed root cause of multipart upload reader-lock failures (stalls around 8%).
+  - Worker `handleApi` was parsing JSON for `PUT /multipart/*`, consuming the request body stream before `uploadPart`.
+  - Added `/multipart/` to binary PUT bypass so request body is not read/parsing attempts are skipped.
+  - This prevents `ReadableStream ... has been locked to a reader` errors in multipart upload path.
+  - Validation: `npm run check` passed.

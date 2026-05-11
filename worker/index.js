@@ -49,7 +49,11 @@ export default {
 
 async function handleApi(request, env, url, route) {
   const method = request.method || "GET";
-  const isBinaryUploadPut = method === "PUT" && (route.startsWith("/upload/") || route.startsWith("/verification-upload/"));
+  const isBinaryUploadPut = method === "PUT" && (
+    route.startsWith("/upload/") ||
+    route.startsWith("/verification-upload/") ||
+    route.startsWith("/multipart/")
+  );
   const body = method === "GET" || method === "HEAD" || isBinaryUploadPut ? {} : await readJson(request);
 
   if (method === "GET" && route === "/health") {
