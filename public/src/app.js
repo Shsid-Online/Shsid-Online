@@ -2052,7 +2052,10 @@ function renderProfile() {
     <section class="grid two">
       <div class="panel">
         <div class="row">${renderAvatar(user, user.role === "admin" ? "admin" : "")}<div><h2>${escapeHtml(user.englishName)}</h2><p class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</p></div></div>
-        <p>${escapeHtml(user.bio)}</p>
+        <div style="margin-top:10px">
+          <strong>Bio</strong>
+          <p style="margin:6px 0 0">${escapeHtml(user.bio || "No bio added yet.")}</p>
+        </div>
         <span class="status ${user.status === "verified" ? "green" : "gold"}">${user.status}</span>
         ${!isOwnProfile ? `
           <div class="row" style="margin-top:12px">

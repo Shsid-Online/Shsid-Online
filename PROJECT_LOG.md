@@ -525,3 +525,7 @@
   - Updated page subtext across Feed, Create Post, Students, Messages, Profile, Suggestions, Settings, Admin, Shared Post, and Verification Pending views.
   - Replaced developer-style explanatory lines with concise user-facing intros.
   - Validation: `npm run check` passed.
+- 2026-05-12: Made bio explicit on full profile page.
+  - Added labeled `Bio` section under profile header in the main profile view.
+  - Shows fallback text `No bio added yet.` when bio is empty.
+  - Validation: `npm run check` passed.
