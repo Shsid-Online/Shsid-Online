@@ -449,3 +449,8 @@
   - Added `navDataSignature(view)` snapshot logic and changed `refreshDataForView()` to rerender only when fetched data actually changed.
   - This prevents extra repaint cycles for Messages/Suggestions/Profile while keeping background refresh.
   - Validation: `npm run check` passed.
+- 2026-05-12: Removed UI flash/twitch sources on tab switch.
+  - Removed global `transition: all` from `*` selector in `public/src/styles.css`.
+  - Removed `.main` mount `fadeIn` animation that replayed on each rerender.
+  - Result: tab/view switches no longer flash from repeated global animation transitions.
+  - Validation: `npm run check` passed.
