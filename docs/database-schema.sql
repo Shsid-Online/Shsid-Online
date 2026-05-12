@@ -57,6 +57,7 @@ create table comments (
   post_id uuid not null references posts(id) on delete cascade,
   author_id uuid not null references users(id) on delete cascade,
   body text not null,
+  reply_to uuid references comments(id) on delete cascade,
   anonymous boolean not null default false,
   deleted_at timestamptz,
   created_at timestamptz not null default now()

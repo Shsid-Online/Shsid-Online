@@ -42,6 +42,7 @@ let authEmailSubmitIntent = "login";
 let authRequestInFlight = false;
 let resendCooldownUntil = 0;
 let openCommentPostId = null;
+let openReplyCommentKey = null;
 let postsNextOffset = null;
 let deepLinkedPostId = "";
 let conversationTab = "inbox";
@@ -1663,6 +1664,35 @@ function renderPost(post) {
   const media = post.media || [];
   const mediaIndex = Math.max(0, Math.min((postMediaIndexByPostId[post.id] || 0), Math.max(0, media.length - 1)));
   const activeMedia = media.length ? media[mediaIndex] : null;
+  const comments = Array.isArray(post.comments) ? post.comments : [];
+  const renderComment = (comment, nested = false) => {
+    const key = `${post.id}:${comment.id}`;
+    const replies = comments.filter((item) => item.replyTo === comment.id);
+    return `
+      <div class="comment${nested ? " comment-reply" : ""}">
+        <p style="margin:0">
+          <strong>${escapeHtml(userName(comment.authorId, comment.anonymous))}:</strong> ${escapeHtml(comment.text)}
+          ${currentUser().role === "admin" ? `<button class="btn small danger" style="margin-left:8px" data-action="delete-comment" data-id="${post.id}:${comment.id}">Delete</button>` : ""}
+          <button class="btn small" style="margin-left:8px" data-action="reply-comment" data-id="${post.id}:${comment.id}">Reply</button>
+        </p>
+        ${openReplyCommentKey === key ? `
+          <div class="comment-composer" style="margin-top:8px">
+            <textarea id="reply-text-${post.id}-${comment.id}" placeholder="Write a reply..."></textarea>
+            <div class="row">
+              <select id="reply-anon-${post.id}-${comment.id}" class="btn small">
+                <option value="false">Public</option>
+                <option value="true">Anonymous</option>
+              </select>
+              <button class="btn small primary" data-action="submit-reply" data-id="${post.id}:${comment.id}">Reply</button>
+              <button class="btn small" data-action="close-reply" data-id="${post.id}:${comment.id}">Cancel</button>
+            </div>
+          </div>
+        ` : ""}
+        ${replies.length ? `<div class="comment-replies">${replies.map((reply) => renderComment(reply, true)).join("")}</div>` : ""}
+      </div>
+    `;
+  };
+  const rootComments = comments.filter((comment) => !comment.replyTo);
   return `
     <article class="card" data-post-id="${post.id}">
       <div class="post-head">
@@ -1689,12 +1719,7 @@ function renderPost(post) {
           ${media.length > 1 ? `<div class="media-dots">${media.map((_, idx) => `<span class="media-dot ${idx === mediaIndex ? "active" : ""}"></span>`).join("")}</div>` : ""}
         </div>
       ` : ""}
-      ${(post.comments || []).map((comment) => `
-        <p class="comment">
-          <strong>${escapeHtml(userName(comment.authorId, comment.anonymous))}:</strong> ${escapeHtml(comment.text)}
-          ${currentUser().role === "admin" ? `<button class="btn small danger" style="margin-left:8px" data-action="delete-comment" data-id="${post.id}:${comment.id}">Delete</button>` : ""}
-        </p>
-      `).join("")}
+      ${rootComments.map((comment) => renderComment(comment)).join("")}
       ${openCommentPostId === post.id ? `
         <div class="comment-composer">
           <textarea id="comment-text-${post.id}" placeholder="Write a comment..."></textarea>
@@ -2635,12 +2660,28 @@ async function handleAction(action, id) {
   if (action === "close-comment") {
     openCommentPostId = null;
   }
+  if (action === "reply-comment") {
+    openReplyCommentKey = openReplyCommentKey === id ? null : id;
+  }
+  if (action === "close-reply") {
+    openReplyCommentKey = null;
+  }
   if (action === "submit-comment") {
     const text = String(document.querySelector(`#comment-text-${id}`)?.value || "").trim();
     const anonymous = document.querySelector(`#comment-anon-${id}`)?.value === "true";
     if (!text) return toast("Enter a comment");
     await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous }) });
     openCommentPostId = null;
+    await refreshPosts();
+  }
+  if (action === "submit-reply") {
+    const [postId, commentId] = String(id || "").split(":");
+    if (!postId || !commentId) return;
+    const text = String(document.querySelector(`#reply-text-${postId}-${commentId}`)?.value || "").trim();
+    const anonymous = document.querySelector(`#reply-anon-${postId}-${commentId}`)?.value === "true";
+    if (!text) return toast("Enter a reply");
+    await apiRequest(`/posts/${postId}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous, replyTo: commentId }) });
+    openReplyCommentKey = null;
     await refreshPosts();
   }
   if (action === "report-post") {

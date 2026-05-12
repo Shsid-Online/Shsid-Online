@@ -758,7 +758,19 @@ async function handleApi(req, res, url) {
     if (!post) return notFound(res);
     const text = String(body.text || "").trim();
     if (!text) return sendJson(res, 400, { error: "Comment text is required" }, req);
-    const comment = { id: id("cmt"), authorId: user.id, anonymous: Boolean(body.anonymous), text: text.slice(0, MAX_TEXT_LEN), createdAt: now(), deletedAt: null };
+    const replyTo = String(body.replyTo || "").trim();
+    if (replyTo && !post.comments.some((item) => item.id === replyTo && !item.deletedAt)) {
+      return sendJson(res, 400, { error: "Reply target not found" }, req);
+    }
+    const comment = {
+      id: id("cmt"),
+      authorId: user.id,
+      anonymous: Boolean(body.anonymous),
+      text: text.slice(0, MAX_TEXT_LEN),
+      replyTo: replyTo || null,
+      createdAt: now(),
+      deletedAt: null
+    };
     post.comments.push(comment);
     store.audit(user.id, "comment_created", { postId: post.id, commentId: comment.id });
     store.save();

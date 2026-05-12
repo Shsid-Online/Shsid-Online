@@ -454,3 +454,15 @@
   - Removed `.main` mount `fadeIn` animation that replayed on each rerender.
   - Result: tab/view switches no longer flash from repeated global animation transitions.
   - Validation: `npm run check` passed.
+- 2026-05-12: Added comment reply feature (threaded replies).
+  - Frontend: users can click `Reply` on any comment, write a nested reply, and submit with public/anonymous mode.
+  - Frontend rendering now groups comments into root comments + nested replies (`replyTo`).
+  - Worker API: `POST /api/posts/:id/comments` now accepts optional `replyTo`, validates target comment exists on same post, and stores `reply_to`.
+  - Worker migration fallback: auto-adds `comments.reply_to` column via `hasCommentsReplyToColumn()` if missing.
+  - Local Node API parity: `POST /api/posts/:id/comments` now supports optional `replyTo` with validation.
+  - Schema/docs updated:
+    - `d1/schema.sql` comments table includes `reply_to`.
+    - `docs/database-schema.sql` comments table includes `reply_to`.
+    - `docs/api-contract.md` comments endpoint body now documents optional `replyTo`.
+  - Styles: added nested reply indentation blocks for clearer threaded display.
+  - Validation: `npm run check` passed.

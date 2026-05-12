@@ -45,6 +45,7 @@ create table if not exists comments (
   post_id text not null references posts(id),
   author_id text not null references users(id),
   text text not null,
+  reply_to text references comments(id),
   anonymous integer not null default 0,
   deleted_at text,
   created_at text not null

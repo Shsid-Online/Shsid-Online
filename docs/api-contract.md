@@ -63,7 +63,7 @@ User objects are privacy-filtered by viewer:
   - Soft-deletes the post (`deletedAt` set).
 - `POST /posts/:id/like`
 - `POST /posts/:id/comments`
-  - Body: `{ "text": "...", "anonymous": false }`
+  - Body: `{ "text": "...", "anonymous": false, "replyTo": "optional-comment-id" }`
 - `POST /reports`
   - Body: `{ "targetType": "post", "targetId": "<id>", "reason": "..." }`
 

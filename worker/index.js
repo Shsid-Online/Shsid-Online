@@ -21,6 +21,7 @@ const ALLOWED_UPLOAD_TYPES = [
 ];
 let hasUsersProfilePhotoColumnCache = null;
 let hasPostsTitleColumnCache = null;
+let hasCommentsReplyToColumnCache = null;
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
@@ -563,19 +564,31 @@ async function handleApi(request, env, url, route) {
     if (!text) return json({ error: "Comment text is required" }, 400);
     const post = await env.DB.prepare("select id from posts where id=? and deleted_at is null").bind(postCommentMatch[1]).first();
     if (!post) return json({ error: "Not found" }, 404);
+    const replyTo = String(body.replyTo || "").trim();
+    if (replyTo) {
+      const target = await env.DB.prepare("select id from comments where id=? and post_id=? and deleted_at is null").bind(replyTo, post.id).first();
+      if (!target) return json({ error: "Reply target not found" }, 400);
+    }
 
     const comment = {
       id: id("cmt"),
       post_id: post.id,
       author_id: authUser.id,
       text: text.slice(0, MAX_TEXT_LEN),
+      reply_to: replyTo || null,
       anonymous: body.anonymous ? 1 : 0,
       deleted_at: null,
       created_at: now()
     };
-    await env.DB.prepare("insert into comments (id, post_id, author_id, text, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?)")
-      .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.anonymous, comment.deleted_at, comment.created_at)
-      .run();
+    if (await hasCommentsReplyToColumn(env)) {
+      await env.DB.prepare("insert into comments (id, post_id, author_id, text, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
+        .run();
+    } else {
+      await env.DB.prepare("insert into comments (id, post_id, author_id, text, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.anonymous, comment.deleted_at, comment.created_at)
+        .run();
+    }
     await audit(env, authUser.id, "comment_created", { postId: post.id, commentId: comment.id }, request);
 
     return json({ comment: fromDbComment(comment) }, 201);
@@ -1254,6 +1267,7 @@ function fromDbComment(row) {
     postId: row.post_id,
     authorId: row.author_id,
     text: row.text,
+    replyTo: row.reply_to || null,
     anonymous: Boolean(row.anonymous),
     deletedAt: row.deleted_at,
     createdAt: row.created_at
@@ -1358,6 +1372,24 @@ async function hasPostsTitleColumn(env) {
     return true;
   } catch {
     hasPostsTitleColumnCache = false;
+    return false;
+  }
+}
+
+async function hasCommentsReplyToColumn(env) {
+  if (hasCommentsReplyToColumnCache !== null) return hasCommentsReplyToColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(comments)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (names.includes("reply_to")) {
+      hasCommentsReplyToColumnCache = true;
+      return true;
+    }
+    await env.DB.prepare("alter table comments add column reply_to text").run();
+    hasCommentsReplyToColumnCache = true;
+    return true;
+  } catch {
+    hasCommentsReplyToColumnCache = false;
     return false;
   }
 }

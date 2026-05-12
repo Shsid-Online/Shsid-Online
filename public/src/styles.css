@@ -705,6 +705,17 @@ body {
   font-size: 14px;
 }
 
+.comment-replies {
+  margin-top: 8px;
+  margin-left: 18px;
+  border-left: 2px solid #dbe7ff;
+  padding-left: 10px;
+}
+
+.comment-reply {
+  background: #f2f6ff;
+}
+
 
 .video-tile {
   min-height: 280px;
