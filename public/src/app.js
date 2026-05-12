@@ -1645,8 +1645,32 @@ function renderFeed() {
   const searchQuery = state.feedSearchQuery?.trim().toLowerCase();
   const posts = [...state.posts].sort((a, b) => Number(b.sticky) - Number(a.sticky) || b.createdAt - a.createdAt);
   const filtered = searchQuery ? posts.filter((p) => p.text?.toLowerCase().includes(searchQuery) || p.title?.toLowerCase().includes(searchQuery) || p.category?.toLowerCase().includes(searchQuery)) : posts;
+  const postsByCategory = new Map();
+  for (const category of CONTENT_CATEGORIES) postsByCategory.set(category, []);
+  postsByCategory.set("other", []);
+  for (const post of filtered) {
+    const category = String(post.category || "").trim().toLowerCase();
+    if (postsByCategory.has(category)) postsByCategory.get(category).push(post);
+    else postsByCategory.get("other").push(post);
+  }
+  const orderedCategories = [...CONTENT_CATEGORIES, "other"];
+  const categorySections = orderedCategories
+    .filter((category) => (postsByCategory.get(category) || []).length > 0)
+    .map((category) => {
+      const rows = postsByCategory.get(category) || [];
+      const label = category === "other" ? "Other" : `${category[0].toUpperCase()}${category.slice(1)}`;
+      return `
+        <section class="panel feed-category-block">
+          <div class="between feed-category-head">
+            <h3>${escapeHtml(label)}</h3>
+            <span class="muted">${rows.length} post${rows.length === 1 ? "" : "s"}</span>
+          </div>
+          <div class="grid">${rows.map(renderPost).join("")}</div>
+        </section>
+      `;
+    }).join("");
   const postsHtml = filtered.length
-    ? filtered.map(renderPost).join("")
+    ? categorySections
     : `<div class="empty-state">No posts yet. Share something positive or helpful to get the feed started.</div>`;
   return page("Feed", "Posts from followed students, categories, sticky announcements, comments, likes, and reports.", `
     <div class="field" style="margin-bottom:16px">

@@ -490,3 +490,9 @@
   - Rightbar now renders `Safety Status` only when `currentUser().role === "admin"`.
   - Students/normal users only see Notifications + Post of the Day.
   - Validation: `npm run check` passed.
+- 2026-05-12: Separated feed posts into category blocks.
+  - `renderFeed()` now groups filtered posts by category (`school`, `lifestyle`, `gaming`, `academic`, `shitpost`, plus `other`).
+  - Feed renders each category as its own section with heading and post count.
+  - Existing search and load-more behavior remains intact.
+  - Added category block styles for clearer section boundaries.
+  - Validation: `npm run check` passed.
