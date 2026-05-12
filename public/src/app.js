@@ -1974,20 +1974,37 @@ function renderProfile() {
     .filter((post) => post.authorId === user.id && !post.deletedAt)
     .sort((a, b) => at(b.createdAt) - at(a.createdAt));
   const isOwnProfile = user.id === me.id;
-  return page("Profile", "Your public profile, verification status, Q&A box, notification settings, and privacy controls.", `
+  return page("Profile", "Your public profile, verification status, question box, notification settings, and privacy controls.", `
     ${!isOwnProfile ? `<div class="row" style="margin-bottom:10px"><button class="btn small" data-action="profile-back">Back</button></div>` : ""}
     <section class="grid two">
       <div class="panel">
         <div class="row">${renderAvatar(user, user.role === "admin" ? "admin" : "")}<div><h2>${escapeHtml(user.englishName)}</h2><p class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</p></div></div>
         <p>${escapeHtml(user.bio)}</p>
         <span class="status ${user.status === "verified" ? "green" : "gold"}">${user.status}</span>
+        ${!isOwnProfile ? `
+          <div class="row" style="margin-top:12px">
+            <button class="btn" data-action="start-chat" data-id="${user.id}">Message</button>
+          </div>
+        ` : ""}
       </div>
       <div class="panel" style="min-height:200px">
         <div class="between" style="margin-bottom:10px">
-          <h3 style="margin:0">Q&A Box</h3>
-          ${!isOwnProfile ? `<button class="btn small" data-action="ask-qna" data-id="${user.id}">Ask Question</button>` : ""}
+          <h3 style="margin:0">Question Box</h3>
         </div>
-        ${questions.length ? questions.map((q) => `<button class="comment qna-item" data-action="open-qna" data-id="${q.id}" style="text-align:left"><strong>${escapeHtml(q.question)}</strong><br>${escapeHtml(q.answer || "Waiting for answer")}</button>`).join("") : `<p class="muted">No questions yet.</p>`}
+        <div class="question-box-grid">
+          ${!isOwnProfile ? `
+            <button class="question-box-card question-box-compose" data-action="ask-qna" data-id="${user.id}">
+              <strong>Send A Question</strong>
+              <span>Tap to write and send a question to ${escapeHtml(user.englishName)}.</span>
+            </button>
+          ` : ""}
+          ${questions.length ? questions.map((q) => `
+            <button class="question-box-card" data-action="open-qna" data-id="${q.id}">
+              <strong>${escapeHtml(q.question)}</strong>
+              <span>${escapeHtml(q.answer || "Waiting for answer")}</span>
+            </button>
+          `).join("") : `<p class="muted">No questions yet.</p>`}
+        </div>
       </div>
     </section>
     <section class="panel" style="margin-top:16px">
@@ -2782,7 +2799,7 @@ async function handleAction(action, id) {
     if (!mode) return;
     const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: [id], group: false }) });
     setConversationIdentityMode(result.conversation.id, mode);
-    conversationTab = "requests";
+    conversationTab = "sent";
     await refreshConversations();
     activeConversationId = result.conversation.id;
     view = "messages";

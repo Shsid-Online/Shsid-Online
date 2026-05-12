@@ -474,3 +474,15 @@
   - Updated `renderMessages()` accepted-state calculation to match classification logic.
   - Result: conversations move out of `Sent/Requests` and into `Inbox` once accepted/replied.
   - Validation: `npm run check` passed.
+- 2026-05-12: Fixed student Suggestions submit UI missing.
+  - Root cause: non-admin `renderSuggestions()` only showed history; no compose textarea/button rendered, so `submit-suggestion` action could not be triggered.
+  - Added `Send a Suggestion` panel with `#suggestion-text` textarea and `Submit Suggestion` button (`data-action="submit-suggestion"`).
+  - Validation: `npm run check` passed.
+- 2026-05-12: Updated profile messaging + question-box UI and responsive text behavior.
+  - Replaced compact `Q&A` list area with larger `Question Box` cards that can be tapped to send/view questions.
+  - Kept same backend behavior: `ask-qna` and `open-qna` actions unchanged.
+  - Added profile-level `Message` button for non-self profiles.
+  - Changed `start-chat` flow to open newly created direct chats in `Sent` tab (instead of `Requests`).
+  - Added responsive text wrapping and mobile heading scaling to better conform across window sizes.
+  - Added dedicated question-box styles for less compact, clearer interaction.
+  - Validation: `npm run check` passed.

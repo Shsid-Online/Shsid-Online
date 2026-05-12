@@ -32,6 +32,8 @@ body {
   background: var(--bg);
   background-attachment: fixed;
   color: var(--ink);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .app {
@@ -716,6 +718,43 @@ body {
   background: #f2f6ff;
 }
 
+.question-box-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.question-box-card {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 14px;
+  text-align: left;
+  display: grid;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.question-box-card strong {
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.question-box-card span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.question-box-card:hover {
+  border-color: #b9cdfd;
+  background: #eef4ff;
+}
+
+.question-box-compose {
+  border-style: dashed;
+}
+
 
 .video-tile {
   min-height: 280px;
@@ -1158,6 +1197,10 @@ body.modal-open {
   .main {
     padding: 16px;
   }
+
+  h1 { font-size: 24px; line-height: 1.25; }
+  h2 { font-size: 20px; line-height: 1.25; }
+  h3 { font-size: 17px; line-height: 1.3; }
 
   .grid.two,
   .grid.three {
