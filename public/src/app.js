@@ -2181,7 +2181,33 @@ function renderRightbar() {
 let renderFrameScheduled = false;
 let navRefreshSeq = 0;
 
+function navDataSignature(targetView) {
+  if (targetView === "messages") {
+    return JSON.stringify((state.conversations || []).map((conv) => [conv.id, (conv.messages || []).length, conv.updatedAt || "", conv.lastMessageAt || ""]));
+  }
+  if (targetView === "suggestions") {
+    return JSON.stringify((state.suggestions || []).map((item) => [item.id, item.status || "", item.updatedAt || "", item.createdAt || item.created_at || ""]));
+  }
+  if (targetView === "profile") {
+    const profileId = state.selectedProfileId || state.currentUserId || "";
+    const rows = (state.qna || []).filter((item) => item.profileId === profileId);
+    return JSON.stringify(rows.map((item) => [item.id, item.answer || "", item.updatedAt || "", item.createdAt || ""]));
+  }
+  if (targetView === "feed") {
+    return JSON.stringify((state.posts || []).map((post) => [post.id, post.updatedAt || "", post.createdAt || "", (post.comments || []).length, (post.likes || []).length]));
+  }
+  if (targetView === "admin") {
+    return JSON.stringify({
+      v: (state.adminVerifications || []).map((item) => [item.id, item.status || "", item.updatedAt || ""]),
+      r: (state.reports || []).map((item) => [item.id, item.status || "", item.resolvedAt || "", item.updatedAt || ""]),
+      a: (state.audit || []).map((item) => [item.id, item.createdAt || "", item.action || ""])
+    });
+  }
+  return "";
+}
+
 async function refreshDataForView(targetView, seq) {
+  const before = navDataSignature(targetView);
   try {
     if (targetView === "profile") {
       await refreshQnaForProfile(state.currentUserId);
@@ -2197,7 +2223,8 @@ async function refreshDataForView(targetView, seq) {
   } catch (error) {
     console.error("refreshDataForView failed", error);
   } finally {
-    if (seq === navRefreshSeq) render();
+    const after = navDataSignature(targetView);
+    if (seq === navRefreshSeq && before !== after) render();
   }
 }
 
@@ -2214,6 +2241,7 @@ function bindEvents() {
       }
       const nextView = viewButton.dataset.view;
       if (!nextView) return;
+      if (nextView === view) return;
       view = nextView;
       if (view === "profile") {
         state.selectedProfileId = null;

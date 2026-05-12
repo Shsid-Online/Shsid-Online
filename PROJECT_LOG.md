@@ -444,3 +444,8 @@
   - `apiRequest()` now attaches `error.status` from HTTP response.
   - `refreshSuggestions()` admin path now falls back to `/suggestions` when status is 404 (not only message text matching).
   - Validation: `npm run check` passed.
+- 2026-05-12: Reduced tab "twitch" caused by redundant nav rerenders.
+  - Added same-view guard in delegated nav handler (`if (nextView === view) return`).
+  - Added `navDataSignature(view)` snapshot logic and changed `refreshDataForView()` to rerender only when fetched data actually changed.
+  - This prevents extra repaint cycles for Messages/Suggestions/Profile while keeping background refresh.
+  - Validation: `npm run check` passed.
