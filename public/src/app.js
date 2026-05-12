@@ -2465,7 +2465,7 @@ function navDataSignature(targetView) {
     return JSON.stringify(rows.map((item) => [item.id, item.answer || "", item.updatedAt || "", item.createdAt || ""]));
   }
   if (targetView === "feed") {
-    return JSON.stringify((state.posts || []).map((post) => [post.id, post.updatedAt || "", post.createdAt || "", (post.comments || []).length, (post.likes || []).length]));
+    return JSON.stringify((state.posts || []).map((post) => [post.id, post.updatedAt || "", post.createdAt || "", (post.comments || []).length, (post.likes || []).length, (post.hearts || []).length, (post.savedBy || []).length]));
   }
   if (targetView === "admin") {
     return JSON.stringify({
@@ -2481,7 +2481,7 @@ async function refreshDataForView(targetView, seq) {
   const before = navDataSignature(targetView);
   try {
     if (targetView === "profile") {
-      await refreshQnaForProfile(state.currentUserId);
+      await refreshQnaForProfile(state.selectedProfileId || state.currentUserId);
     }
     if (targetView === "suggestions") await refreshSuggestions();
     if (targetView === "admin") {
@@ -3440,8 +3440,16 @@ async function handleAction(action, id) {
     const title = String(document.querySelector("#ad-title")?.value || "").trim();
     const body = String(document.querySelector("#ad-body")?.value || "").trim();
     const url = String(document.querySelector("#ad-url")?.value || "").trim();
+    const allowedSlots = new Set(["top_banner", "feed_inline", "students_inline", "popup"]);
     if (!slot || !title) return toast("Slot and title are required");
+    if (!allowedSlots.has(slot)) return toast("Invalid ad slot");
     await apiRequest("/admin/ads", { method: "POST", body: JSON.stringify({ slot, title, body, url, active: true }) });
+    const titleInput = document.querySelector("#ad-title");
+    const bodyInput = document.querySelector("#ad-body");
+    const urlInput = document.querySelector("#ad-url");
+    if (titleInput) titleInput.value = "";
+    if (bodyInput) bodyInput.value = "";
+    if (urlInput) urlInput.value = "";
     await refreshAds();
     toast("Ad created");
   }

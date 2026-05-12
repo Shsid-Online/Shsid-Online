@@ -567,3 +567,9 @@
   - Added strict ad slot validation (`top_banner`, `feed_inline`, `students_inline`, `popup`) in Worker and Node admin ad create endpoints.
   - Added state migration guard for `adLastPopupAt`.
   - Validation: `npm run check` passed.
+- 2026-05-12: Additional bug-fix pass toward 60-target sweep.
+  - Fixed profile data refresh target mismatch in nav background refresh (`selectedProfileId || currentUserId`).
+  - Expanded feed change-signature to include hearts/saves so feed updates rerender correctly after those actions.
+  - Added admin-side slot whitelist validation in frontend ad-create action.
+  - Added ad-create form reset after successful create to prevent accidental duplicate submissions.
+  - Validation: `npm run check` passed.
