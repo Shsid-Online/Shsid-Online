@@ -76,9 +76,9 @@ const commonHeaders = {
   "x-frame-options": "DENY",
   "referrer-policy": "strict-origin-when-cross-origin",
   "permissions-policy": "camera=(), microphone=(), geolocation=()",
-  "x-content-type-options": "nosniff",
   "x-xss-protection": "1; mode=block",
-  "strict-transport-security": "max-age=31536000; includeSubDomains"
+  "strict-transport-security": "max-age=31536000; includeSubDomains",
+  "content-security-policy": "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; img-src 'self' data: https: blob:; media-src 'self' https: blob:; connect-src 'self' https://www.shsid.online https://shsid.online; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'self'"
 };
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "https://www.shsid.online,https://shsid.online").split(",").map((o) => o.trim());
 function getCorsOrigin(origin) {

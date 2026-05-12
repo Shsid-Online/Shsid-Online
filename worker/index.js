@@ -30,8 +30,13 @@ const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
   "referrer-policy": "strict-origin-when-cross-origin",
-  "strict-transport-security": "max-age=31536000; includeSubDomains"
+  "strict-transport-security": "max-age=31536000; includeSubDomains",
+  "permissions-policy": "camera=(), microphone=(), geolocation=()",
+  "content-security-policy": "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; img-src 'self' data: https: blob:; media-src 'self' https: blob:; connect-src 'self' https://www.shsid.online https://shsid.online; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'self'"
 };
+const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_RATE_MAX = 25;
+const authRateMap = new Map();
 
 export default {
   async fetch(request, env) {
@@ -268,6 +273,7 @@ async function handleApi(request, env, url, route) {
   }
 
   if (method === "POST" && route === "/auth/start") {
+    if (isAuthRateLimited(request, "auth_start")) return json({ error: "Too many requests. Please try again later." }, 429);
     const email = String(body.email || "").trim().toLowerCase();
     if (!isEmailAddress(email)) return json({ error: "Enter a valid email address" }, 400);
 
@@ -323,6 +329,7 @@ async function handleApi(request, env, url, route) {
   }
 
   if (method === "POST" && route === "/auth/verify-code") {
+    if (isAuthRateLimited(request, "auth_verify")) return json({ error: "Too many requests. Please try again later." }, 429);
     const email = String(body.email || "").trim().toLowerCase();
     const code = normalizeVerificationCode(body.code);
     const key = `email:${email}`;
@@ -345,6 +352,7 @@ async function handleApi(request, env, url, route) {
   }
 
   if (method === "POST" && route === "/auth/register") {
+    if (isAuthRateLimited(request, "auth_register")) return json({ error: "Too many requests. Please try again later." }, 429);
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
     if (password.length < 8) return json({ error: "Password must be at least 8 characters" }, 400);
@@ -374,6 +382,7 @@ async function handleApi(request, env, url, route) {
   }
 
   if (method === "POST" && route === "/auth/login") {
+    if (isAuthRateLimited(request, "auth_login")) return json({ error: "Too many requests. Please try again later." }, 429);
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
     const user = await getUserByEmail(env, email);
@@ -1529,6 +1538,27 @@ async function ensureAdsTable(env) {
 function getAllowedOrigin(origin) {
   if (!origin) return null;
   return ALLOWED_ORIGINS.includes(origin) ? origin : null;
+}
+
+function getClientIp(request) {
+  const cfIp = String(request.headers.get("cf-connecting-ip") || "").trim();
+  if (cfIp) return cfIp;
+  const xff = String(request.headers.get("x-forwarded-for") || "").trim();
+  if (!xff) return "unknown";
+  return xff.split(",")[0].trim() || "unknown";
+}
+
+function isAuthRateLimited(request, scope = "auth") {
+  const nowMs = Date.now();
+  const key = `${scope}:${getClientIp(request)}`;
+  const row = authRateMap.get(key) || { count: 0, start: nowMs };
+  if (nowMs - row.start > AUTH_RATE_WINDOW_MS) {
+    authRateMap.set(key, { count: 1, start: nowMs });
+    return false;
+  }
+  row.count += 1;
+  authRateMap.set(key, row);
+  return row.count > AUTH_RATE_MAX;
 }
 
 function safeName(name) {

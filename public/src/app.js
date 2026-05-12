@@ -270,11 +270,24 @@ function renderAdCard(slot, fallback = "Ad placeholder", { showPlaceholder = tru
   }
   const title = String(ad.title || "Sponsored");
   const body = String(ad.body || "");
-  const url = String(ad.url || "").trim();
+  const url = safeExternalUrl(ad.url || "");
   const inner = `<strong>${escapeHtml(title)}</strong><p class="muted">${escapeHtml(body)}</p>`;
   return url
     ? `<a class="panel ad-card" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${inner}</a>`
     : `<article class="panel ad-card">${inner}</article>`;
+}
+
+function safeExternalUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    const protocol = String(parsed.protocol || "").toLowerCase();
+    if (protocol !== "http:" && protocol !== "https:") return "";
+    return parsed.href;
+  } catch {
+    return "";
+  }
 }
 
 function normalizeConversation(conversation) {
