@@ -2031,6 +2031,16 @@ function renderSuggestions() {
     `);
   }
   return page("Suggestions", "View your suggestion history and admin responses.", `
+    <section class="panel" style="margin-bottom:14px">
+      <h2 style="margin-top:0">Send a Suggestion</h2>
+      <div class="field">
+        <label>Your suggestion</label>
+        <textarea id="suggestion-text" placeholder="Share a platform idea, bug report, or improvement..."></textarea>
+      </div>
+      <div class="row">
+        <button class="btn primary" data-action="submit-suggestion">Submit Suggestion</button>
+      </div>
+    </section>
     <section class="panel">
       <h2 style="margin-top:0">Your Suggestion History</h2>
       <div class="grid">
