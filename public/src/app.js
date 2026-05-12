@@ -32,7 +32,8 @@ const initialState = {
   acceptedRequests: {},
   rejectedRequests: {},
   contactRemarks: {},
-  feedSearchQuery: ""
+  feedSearchQuery: "",
+  feedEngagementFilter: "all"
 };
 
 let state = loadState();
@@ -235,6 +236,8 @@ function normalizePost(post) {
   const copy = { ...post };
   copy.createdAt = at(copy.createdAt);
   copy.likes = Array.isArray(copy.likes) ? copy.likes : [];
+  copy.hearts = Array.isArray(copy.hearts) ? copy.hearts : [];
+  copy.savedBy = Array.isArray(copy.savedBy) ? copy.savedBy : [];
   copy.media = Array.isArray(copy.media) ? copy.media : [];
   copy.comments = (copy.comments || []).map((comment) => ({ ...comment, createdAt: at(comment.createdAt) }));
   delete copy.author;
@@ -1665,8 +1668,16 @@ function renderSinglePost() {
 
 function renderFeed() {
   const searchQuery = state.feedSearchQuery?.trim().toLowerCase();
+  const engagementFilter = String(state.feedEngagementFilter || "all");
+  const meId = state.currentUserId;
   const posts = [...state.posts].sort((a, b) => Number(b.sticky) - Number(a.sticky) || b.createdAt - a.createdAt);
-  const filtered = searchQuery ? posts.filter((p) => p.text?.toLowerCase().includes(searchQuery) || p.title?.toLowerCase().includes(searchQuery) || p.category?.toLowerCase().includes(searchQuery)) : posts;
+  const searched = searchQuery ? posts.filter((p) => p.text?.toLowerCase().includes(searchQuery) || p.title?.toLowerCase().includes(searchQuery) || p.category?.toLowerCase().includes(searchQuery)) : posts;
+  const filtered = searched.filter((post) => {
+    if (engagementFilter === "hearted") return (post.hearts || []).includes(meId);
+    if (engagementFilter === "liked-private") return (post.likes || []).includes(meId);
+    if (engagementFilter === "saved") return (post.savedBy || []).includes(meId);
+    return true;
+  });
   const postsByCategory = new Map();
   for (const category of CONTENT_CATEGORIES) postsByCategory.set(category, []);
   postsByCategory.set("other", []);
@@ -1695,8 +1706,18 @@ function renderFeed() {
     ? categorySections
     : `<div class="empty-state">No posts yet. Share something positive or helpful to get the feed started.</div>`;
   return page("Feed", "Posts from followed students, categories, sticky announcements, comments, likes, and reports.", `
-    <div class="field" style="margin-bottom:16px">
-      <input id="feed-search" type="text" placeholder="Search posts..." style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd" />
+    <div class="grid two" style="margin-bottom:16px">
+      <div class="field" style="margin:0">
+        <input id="feed-search" type="text" placeholder="Search posts..." style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd" />
+      </div>
+      <div class="field" style="margin:0">
+        <select id="feed-engagement-filter">
+          <option value="all" ${engagementFilter === "all" ? "selected" : ""}>All posts</option>
+          <option value="hearted" ${engagementFilter === "hearted" ? "selected" : ""}>Hearted (public)</option>
+          <option value="liked-private" ${engagementFilter === "liked-private" ? "selected" : ""}>Liked (private)</option>
+          <option value="saved" ${engagementFilter === "saved" ? "selected" : ""}>Saved posts</option>
+        </select>
+      </div>
     </div>
     <section class="grid" id="feed-posts">${postsHtml}</section>
     ${postsNextOffset != null ? `<div id="load-more-container" class="row" style="justify-content:center"><button class="btn" data-action="load-more-posts">Load more posts</button></div>` : ""}
@@ -1706,7 +1727,11 @@ function renderFeed() {
 function renderPost(post) {
   const author = state.users.find((u) => u.id === post.authorId);
   const likes = post.likes || [];
+  const hearts = post.hearts || [];
+  const saves = post.savedBy || [];
   const liked = likes.includes(state.currentUserId);
+  const hearted = hearts.includes(state.currentUserId);
+  const saved = saves.includes(state.currentUserId);
   const isAdmin = currentUser().role === "admin";
   const isOwner = post.authorId === state.currentUserId;
   const media = post.media || [];
@@ -1782,7 +1807,9 @@ function renderPost(post) {
         </div>
       ` : ""}
       <div class="post-actions">
-        <button class="btn small" data-action="like-post" data-id="${post.id}">${liked ? "Liked" : "Like"} · ${likes.length}</button>
+        <button class="btn small" data-action="heart-post" data-id="${post.id}">${hearted ? "Hearted" : "Heart"} · ${hearts.length}</button>
+        <button class="btn small" data-action="like-post" data-id="${post.id}">${liked ? "Private liked" : "Thumb like"} · ${likes.length}</button>
+        <button class="btn small" data-action="save-post" data-id="${post.id}">${saved ? "Saved" : "Save"} · ${saves.length}</button>
         <button class="btn small" data-action="comment-post" data-id="${post.id}">Comment</button>
         <button class="btn small" data-action="share-post" data-id="${post.id}">Share</button>
         <button class="btn small" data-action="report-post" data-id="${post.id}">Report</button>
@@ -2281,6 +2308,17 @@ function renderRightbar() {
   `;
 }
 
+function renderNotificationsPanelOnly() {
+  const rightbar = document.querySelector(".rightbar");
+  if (!rightbar) return;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderRightbar();
+  const next = wrapper.firstElementChild;
+  if (!next) return;
+  rightbar.innerHTML = next.innerHTML;
+  bindEvents();
+}
+
 let renderFrameScheduled = false;
 let navRefreshSeq = 0;
 
@@ -2376,6 +2414,12 @@ function bindEvents() {
   if (feedSearch) feedSearch.oninput = (event) => {
     const query = String(event.target.value || "").trim();
     state.feedSearchQuery = query;
+    saveState();
+    render();
+  };
+  const feedFilter = document.querySelector("#feed-engagement-filter");
+  if (feedFilter) feedFilter.onchange = (event) => {
+    state.feedEngagementFilter = String(event.target.value || "all");
     saveState();
     render();
   };
@@ -2711,6 +2755,16 @@ async function handleAction(action, id) {
   }
   if (action === "like-post") {
     const result = await apiRequest(`/posts/${id}/like`, { method: "POST", body: JSON.stringify({}) });
+    const idx = state.posts.findIndex((item) => item.id === id);
+    if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+  }
+  if (action === "heart-post") {
+    const result = await apiRequest(`/posts/${id}/heart`, { method: "POST", body: JSON.stringify({}) });
+    const idx = state.posts.findIndex((item) => item.id === id);
+    if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+  }
+  if (action === "save-post") {
+    const result = await apiRequest(`/posts/${id}/save`, { method: "POST", body: JSON.stringify({}) });
     const idx = state.posts.findIndex((item) => item.id === id);
     if (idx >= 0) state.posts[idx] = normalizePost(result.post);
   }
@@ -3176,6 +3230,9 @@ async function handleAction(action, id) {
   if (action === "mark-read") {
     await apiRequest("/notifications/read-all", { method: "POST", body: JSON.stringify({}) });
     await refreshNotifications();
+    saveState();
+    renderNotificationsPanelOnly();
+    return;
   }
   if (action === "ask-qna") {
     const payload = await askQnaPopup();

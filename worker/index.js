@@ -22,6 +22,7 @@ const ALLOWED_UPLOAD_TYPES = [
 let hasUsersProfilePhotoColumnCache = null;
 let hasPostsTitleColumnCache = null;
 let hasCommentsReplyToColumnCache = null;
+let hasPostsEngagementColumnsCache = null;
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
@@ -525,13 +526,21 @@ async function handleApi(request, env, url, route) {
       text: text.slice(0, MAX_TEXT_LEN),
       media: JSON.stringify(media),
       likes: "[]",
+      hearts: "[]",
+      saved_by: "[]",
       anonymous: body.anonymous ? 1 : 0,
       sticky: 0,
       deleted_at: null,
       created_at: now()
     };
 
-    if (await hasPostsTitleColumn(env)) {
+    const hasTitle = await hasPostsTitleColumn(env);
+    const hasEngagementColumns = await hasPostsEngagementColumns(env);
+    if (hasTitle && hasEngagementColumns) {
+      await env.DB.prepare("insert into posts (id, author_id, title, category, text, media, likes, hearts, saved_by, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(post.id, post.author_id, post.title, post.category, post.text, post.media, post.likes, post.hearts, post.saved_by, post.anonymous, post.sticky, post.deleted_at, post.created_at)
+        .run();
+    } else if (hasTitle) {
       await env.DB.prepare("insert into posts (id, author_id, title, category, text, media, likes, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(post.id, post.author_id, post.title, post.category, post.text, post.media, post.likes, post.anonymous, post.sticky, post.deleted_at, post.created_at)
         .run();
@@ -554,6 +563,38 @@ async function handleApi(request, env, url, route) {
     const nextLikes = likes.includes(authUser.id) ? likes.filter((v) => v !== authUser.id) : [...likes, authUser.id];
     await env.DB.prepare("update posts set likes=? where id=?").bind(JSON.stringify(nextLikes), row.id).run();
     row.likes = JSON.stringify(nextLikes);
+    if (!likes.includes(authUser.id) && row.author_id && row.author_id !== authUser.id) {
+      await createNotification(env, row.author_id, "post_like_private", `${notificationActorName(authUser)} privately liked your post.`);
+    }
+    return json({ post: fromDbPost(row) }, 200);
+  }
+
+  const postHeartMatch = route.match(/^\/posts\/([^/]+)\/heart$/);
+  if (method === "POST" && postHeartMatch) {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const row = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postHeartMatch[1]).first();
+    if (!row) return json({ error: "Not found" }, 404);
+    await hasPostsEngagementColumns(env);
+    const hearts = jsonArray(row.hearts);
+    const nextHearts = hearts.includes(authUser.id) ? hearts.filter((v) => v !== authUser.id) : [...hearts, authUser.id];
+    await env.DB.prepare("update posts set hearts=? where id=?").bind(JSON.stringify(nextHearts), row.id).run();
+    row.hearts = JSON.stringify(nextHearts);
+    if (!hearts.includes(authUser.id) && row.author_id && row.author_id !== authUser.id) {
+      await createNotification(env, row.author_id, "post_heart_public", `${notificationActorName(authUser)} hearted your post.`);
+    }
+    return json({ post: fromDbPost(row) }, 200);
+  }
+
+  const postSaveMatch = route.match(/^\/posts\/([^/]+)\/save$/);
+  if (method === "POST" && postSaveMatch) {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const row = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postSaveMatch[1]).first();
+    if (!row) return json({ error: "Not found" }, 404);
+    await hasPostsEngagementColumns(env);
+    const savedBy = jsonArray(row.saved_by);
+    const nextSavedBy = savedBy.includes(authUser.id) ? savedBy.filter((v) => v !== authUser.id) : [...savedBy, authUser.id];
+    await env.DB.prepare("update posts set saved_by=? where id=?").bind(JSON.stringify(nextSavedBy), row.id).run();
+    row.saved_by = JSON.stringify(nextSavedBy);
     return json({ post: fromDbPost(row) }, 200);
   }
 
@@ -590,6 +631,10 @@ async function handleApi(request, env, url, route) {
         .run();
     }
     await audit(env, authUser.id, "comment_created", { postId: post.id, commentId: comment.id }, request);
+    const postOwner = await env.DB.prepare("select author_id from posts where id=?").bind(post.id).first();
+    if (postOwner?.author_id && postOwner.author_id !== authUser.id) {
+      await createNotification(env, postOwner.author_id, "post_comment", `${notificationActorName(authUser)} commented on your post.`);
+    }
 
     return json({ comment: fromDbComment(comment) }, 201);
   }
@@ -887,6 +932,10 @@ async function handleApi(request, env, url, route) {
       .bind(message.id, message.conversation_id, message.author_id, message.text, message.anonymous, message.deleted_at, message.created_at)
       .run();
     await audit(env, authUser.id, "message_created", { conversationId: conversation.id, messageId: message.id }, request);
+    for (const memberId of members) {
+      if (!memberId || memberId === authUser.id) continue;
+      await createNotification(env, memberId, "message_new", `${notificationActorName(authUser)} sent you a new message.`);
+    }
 
     return json({ message: messageViewModel(message) }, 201);
   }
@@ -1254,6 +1303,8 @@ function fromDbPost(row) {
     text: row.text,
     media: jsonArray(row.media),
     likes: jsonArray(row.likes),
+    hearts: jsonArray(row.hearts),
+    savedBy: jsonArray(row.saved_by),
     anonymous: Boolean(row.anonymous),
     sticky: Boolean(row.sticky),
     deletedAt: row.deleted_at,
@@ -1390,6 +1441,21 @@ async function hasCommentsReplyToColumn(env) {
     return true;
   } catch {
     hasCommentsReplyToColumnCache = false;
+    return false;
+  }
+}
+
+async function hasPostsEngagementColumns(env) {
+  if (hasPostsEngagementColumnsCache !== null) return hasPostsEngagementColumnsCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(posts)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (!names.includes("hearts")) await env.DB.prepare("alter table posts add column hearts text default '[]'").run();
+    if (!names.includes("saved_by")) await env.DB.prepare("alter table posts add column saved_by text default '[]'").run();
+    hasPostsEngagementColumnsCache = true;
+    return true;
+  } catch {
+    hasPostsEngagementColumnsCache = false;
     return false;
   }
 }
@@ -1556,6 +1622,18 @@ async function audit(env, actorId, action, metadata = {}, request = null) {
   } catch {
     // Best-effort logging only.
   }
+}
+
+async function createNotification(env, userId, type, body) {
+  if (!userId) return;
+  await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
+    .bind(id("ntf"), userId, String(type || "notice").slice(0, 50), String(body || "").slice(0, 500), null, now())
+    .run();
+}
+
+function notificationActorName(user) {
+  const raw = String(user?.english_name || user?.email || "A student").trim();
+  return raw.slice(0, 80) || "A student";
 }
 
 function requireUploadSigningSecret(env) {

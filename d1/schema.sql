@@ -34,6 +34,8 @@ create table if not exists posts (
   text text not null default '',
   media text not null default '[]',
   likes text not null default '[]',
+  hearts text not null default '[]',
+  saved_by text not null default '[]',
   anonymous integer not null default 0,
   sticky integer not null default 0,
   deleted_at text,

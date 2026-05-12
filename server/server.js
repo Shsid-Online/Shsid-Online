@@ -728,6 +728,8 @@ async function handleApi(req, res, url) {
       text: sanitizedText,
       media: Array.isArray(body.media) ? body.media.slice(0, 9) : [],
       likes: [],
+      hearts: [],
+      savedBy: [],
       comments: [],
       sticky: false,
       createdAt: now(),
@@ -745,7 +747,39 @@ async function handleApi(req, res, url) {
     if (!user) return;
     const post = store.data.posts.find((item) => item.id === postLikeMatch[1] && !item.deletedAt);
     if (!post) return notFound(res);
-    post.likes = post.likes.includes(user.id) ? post.likes.filter((item) => item !== user.id) : [...post.likes, user.id];
+    const wasLiked = post.likes.includes(user.id);
+    post.likes = wasLiked ? post.likes.filter((item) => item !== user.id) : [...post.likes, user.id];
+    if (!wasLiked && post.authorId && post.authorId !== user.id) {
+      store.data.notifications.push({ id: id("ntf"), userId: post.authorId, type: "post_like_private", body: `${user.englishName || "A student"} privately liked your post.`, readAt: null, createdAt: now() });
+    }
+    store.save();
+    return sendJson(res, 200, { post });
+  }
+
+  const postHeartMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/heart$/);
+  if (method === "POST" && postHeartMatch) {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const post = store.data.posts.find((item) => item.id === postHeartMatch[1] && !item.deletedAt);
+    if (!post) return notFound(res);
+    post.hearts ||= [];
+    const wasHearted = post.hearts.includes(user.id);
+    post.hearts = wasHearted ? post.hearts.filter((item) => item !== user.id) : [...post.hearts, user.id];
+    if (!wasHearted && post.authorId && post.authorId !== user.id) {
+      store.data.notifications.push({ id: id("ntf"), userId: post.authorId, type: "post_heart_public", body: `${user.englishName || "A student"} hearted your post.`, readAt: null, createdAt: now() });
+    }
+    store.save();
+    return sendJson(res, 200, { post });
+  }
+
+  const postSaveMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/save$/);
+  if (method === "POST" && postSaveMatch) {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const post = store.data.posts.find((item) => item.id === postSaveMatch[1] && !item.deletedAt);
+    if (!post) return notFound(res);
+    post.savedBy ||= [];
+    post.savedBy = post.savedBy.includes(user.id) ? post.savedBy.filter((item) => item !== user.id) : [...post.savedBy, user.id];
     store.save();
     return sendJson(res, 200, { post });
   }
@@ -772,6 +806,9 @@ async function handleApi(req, res, url) {
       deletedAt: null
     };
     post.comments.push(comment);
+    if (post.authorId && post.authorId !== user.id) {
+      store.data.notifications.push({ id: id("ntf"), userId: post.authorId, type: "post_comment", body: `${user.englishName || "A student"} commented on your post.`, readAt: null, createdAt: now() });
+    }
     store.audit(user.id, "comment_created", { postId: post.id, commentId: comment.id });
     store.save();
     return sendJson(res, 201, { comment });
@@ -870,6 +907,10 @@ async function handleApi(req, res, url) {
     if (!text) return sendJson(res, 400, { error: "Message text is required" }, req);
     const message = { id: id("msg"), authorId: user.id, anonymous: Boolean(body.anonymous), text: text.slice(0, MAX_TEXT_LEN), createdAt: now(), deletedAt: null };
     conversation.messages.push(message);
+    for (const memberId of conversation.members || []) {
+      if (!memberId || memberId === user.id) continue;
+      store.data.notifications.push({ id: id("ntf"), userId: memberId, type: "message_new", body: `${user.englishName || "A student"} sent you a new message.`, readAt: null, createdAt: now() });
+    }
     store.audit(user.id, "message_created", { conversationId: conversation.id, messageId: message.id });
     store.save();
     return sendJson(res, 201, { message });
