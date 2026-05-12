@@ -74,6 +74,7 @@ let feedVideoCurrentAutoplay = null;
 let feedVideoLastSwitchAt = 0;
 let feedVideoSeekingVideo = null;
 let feedVideoSeekingUntil = 0;
+let feedVideoVisibilityListenerBound = false;
 const feedVideoUserPaused = new WeakSet();
 const feedVideoProgrammaticPause = new WeakSet();
 const feedVideoControlsBound = new WeakSet();
@@ -1321,6 +1322,13 @@ function setupFeedVideoAutoplay() {
     window.addEventListener("resize", scheduleFeedVideoPlaybackSync);
     feedVideoViewportListenersBound = true;
   }
+  if (!feedVideoVisibilityListenerBound) {
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) pauseAllFeedVideos();
+      else if (view === "feed") scheduleFeedVideoPlaybackSync();
+    });
+    feedVideoVisibilityListenerBound = true;
+  }
   scheduleFeedVideoPlaybackSync();
 }
 
@@ -1476,10 +1484,10 @@ async function pollLiveChatUpdates() {
   if (liveChatPollInFlight || !state.apiToken) return;
   liveChatPollInFlight = true;
   try {
+    const before = conversationsSnapshot();
     await refreshConversations();
-    liveChatSnapshot = conversationsSnapshot();
     const next = conversationsSnapshot();
-    if (next !== liveChatSnapshot) {
+    if (next !== before) {
       liveChatSnapshot = next;
       render();
     }
@@ -1758,9 +1766,16 @@ function renderPost(post) {
   const mediaIndex = Math.max(0, Math.min((postMediaIndexByPostId[post.id] || 0), Math.max(0, media.length - 1)));
   const activeMedia = media.length ? media[mediaIndex] : null;
   const comments = Array.isArray(post.comments) ? post.comments : [];
+  const repliesByParentId = new Map();
+  for (const comment of comments) {
+    const parentId = comment.replyTo || "";
+    if (!parentId) continue;
+    if (!repliesByParentId.has(parentId)) repliesByParentId.set(parentId, []);
+    repliesByParentId.get(parentId).push(comment);
+  }
   const renderComment = (comment, nested = false) => {
     const key = `${post.id}:${comment.id}`;
-    const replies = comments.filter((item) => item.replyTo === comment.id);
+    const replies = repliesByParentId.get(comment.id) || [];
     return `
       <div class="comment${nested ? " comment-reply" : ""}">
         <p style="margin:0">
@@ -2339,7 +2354,31 @@ function renderNotificationsPanelOnly() {
   const next = wrapper.firstElementChild;
   if (!next) return;
   rightbar.innerHTML = next.innerHTML;
-  bindEvents();
+  const markReadButton = rightbar.querySelector('[data-action="mark-read"]');
+  if (markReadButton) {
+    markReadButton.onclick = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (markReadButton.dataset.busy === "1") return;
+      markReadButton.dataset.busy = "1";
+      markReadButton.disabled = true;
+      try {
+        await handleAction("mark-read", "");
+      } finally {
+        markReadButton.dataset.busy = "0";
+        markReadButton.disabled = false;
+      }
+    };
+  }
+  rightbar.querySelectorAll('[data-action="open-post-day"]').forEach((button) => {
+    button.onclick = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const id = button.dataset.id || "";
+      if (!id) return;
+      await handleAction("open-post-day", id);
+    };
+  });
 }
 
 let renderFrameScheduled = false;

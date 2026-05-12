@@ -534,3 +534,9 @@
   - Added `pauseAllFeedVideos()` and call path in `setupFeedVideoAutoplay()` when leaving Feed to force-stop any playing feed media videos.
   - Also disconnects feed observer and clears visibility state when not on Feed.
   - Validation: `npm run check` passed.
+- 2026-05-12: Pre-launch optimization pass before final bug check.
+  - Fixed live chat polling diff logic in `pollLiveChatUpdates()` (compare snapshot before/after refresh).
+  - Optimized threaded comment rendering from repeated O(n^2) filtering to parent->replies map lookup.
+  - Optimized notification read refresh to update rightbar panel bindings only (avoids full `bindEvents()` rebinding pass).
+  - Added feed video lifecycle polish: one-time `visibilitychange` hook to pause in background and resume sync on return.
+  - Validation: `npm run check` passed.
