@@ -486,3 +486,7 @@
   - Added responsive text wrapping and mobile heading scaling to better conform across window sizes.
   - Added dedicated question-box styles for less compact, clearer interaction.
   - Validation: `npm run check` passed.
+- 2026-05-12: Removed `Safety Status` card for non-admin users.
+  - Rightbar now renders `Safety Status` only when `currentUser().role === "admin"`.
+  - Students/normal users only see Notifications + Post of the Day.
+  - Validation: `npm run check` passed.

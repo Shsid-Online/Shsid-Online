@@ -2216,6 +2216,7 @@ function renderRightbar() {
   const user = currentUser();
   const unread = state.notifications.filter((item) => item.userId === user.id && !item.read);
   const leaders = [...state.posts].sort((a, b) => b.likes.length - a.likes.length).slice(0, 3);
+  const isAdmin = user?.role === "admin";
   return `
     <div class="grid">
       <section class="panel">
@@ -2226,10 +2227,10 @@ function renderRightbar() {
         <strong>Post of the Day</strong>
         ${leaders.map((post) => `<button class="comment post-day-item" style="margin:10px 0 0;text-align:left;width:100%" data-action="open-post-day" data-id="${post.id}">${escapeHtml(post.category)} · ${post.likes.length} likes<br>${escapeHtml(post.text.slice(0, 80))}</button>`).join("")}
       </section>
-      <section class="panel">
+      ${isAdmin ? `<section class="panel">
         <strong>Safety Status</strong>
         <p class="muted">Rate limits, upload scanning, email delivery, and push delivery are production backend tasks documented in the launch plan.</p>
-      </section>
+      </section>` : ""}
     </div>
   `;
 }
