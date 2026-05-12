@@ -298,6 +298,10 @@ function classifyConversations() {
   for (const conv of all) {
     if (state.rejectedRequests?.[conv.id]) continue;
     const firstMessage = (conv.messages || [])[0];
+    if (!firstMessage) {
+      inbox.push(conv);
+      continue;
+    }
     const acceptedByLocal = Boolean(state.acceptedRequests?.[conv.id]);
     const acceptedByReply = Boolean(firstMessage && (conv.messages || []).some((message) => message.authorId && message.authorId !== firstMessage.authorId));
     const accepted = acceptedByLocal || acceptedByReply;
@@ -1952,7 +1956,7 @@ function renderMessages() {
   const accepted = acceptedByLocal || acceptedByReply;
   const isMeSender = active && firstAuthorId === currentUser().id;
   const isReceiverPending = requestView && active && !accepted && firstAuthorId && firstAuthorId !== currentUser().id;
-  const canSendInCurrentThread = !isReceiverPending;
+  const canSendInCurrentThread = Boolean(active?.id) && !isReceiverPending;
   return page("Messages", "Chat with classmates in direct or group conversations.", `
     <section class="chat-layout">
       <div class="panel chat-panel chat-panel-list">
@@ -2490,7 +2494,13 @@ async function refreshDataForView(targetView, seq) {
       await refreshAuditLogs();
     }
     if (targetView === "messages") await refreshConversations();
-    if (targetView === "feed") await refreshPosts();
+    if (targetView === "feed") {
+      if (!(state.posts || []).length) await refreshPosts();
+      else {
+        void ensurePostsAhead();
+        void warmCategoryPools();
+      }
+    }
   } catch (error) {
     console.error("refreshDataForView failed", error);
   } finally {
@@ -3051,6 +3061,7 @@ async function handleAction(action, id) {
   }
   if (action === "send-message") {
     const conversation = state.conversations.find((item) => item.id === id);
+    if (!conversation || !id) return toast("Select a conversation first");
     const firstAuthorId = conversation?.messages?.[0]?.authorId || "";
     const acceptedByLocal = Boolean(state.acceptedRequests?.[id]);
     const acceptedByReply = Boolean(firstAuthorId && (conversation?.messages || []).some((message) => message.authorId && message.authorId !== firstAuthorId));
@@ -3156,7 +3167,7 @@ async function handleAction(action, id) {
         if (!mode) return;
         const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: [targetId], group: false }) });
         setConversationIdentityMode(result.conversation.id, mode);
-        conversationTab = "requests";
+        conversationTab = "sent";
         await refreshConversations();
         activeConversationId = result.conversation.id;
         popup.remove();
@@ -3203,11 +3214,11 @@ async function handleAction(action, id) {
       if (!memberIds.length) return toast("Select at least one member");
       const title = String(popup.querySelector("#create-convo-title").value || "").trim();
       const payload = { memberIds, group: memberIds.length > 1, title: title || undefined };
-      await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
+      const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
       popup.remove();
       await refreshConversations();
-      conversationTab = "requests";
-      activeConversationId = state.conversations[0]?.id;
+      conversationTab = payload.group ? "inbox" : "sent";
+      activeConversationId = result?.conversation?.id || state.conversations[0]?.id;
       toast("Conversation created");
       render();
     });

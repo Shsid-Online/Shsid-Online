@@ -573,3 +573,11 @@
   - Added admin-side slot whitelist validation in frontend ad-create action.
   - Added ad-create form reset after successful create to prevent accidental duplicate submissions.
   - Validation: `npm run check` passed.
+
+## 2026-05-12 - Bug batch: nav/messages stability + request/sent routing
+- Fixed conversation classification edge case where threads with no first message were incorrectly treated as requests; now they open in inbox.
+- Reduced feed-tab twitch/flash by avoiding full `refreshPosts()` on every nav switch; now only refreshes when empty and otherwise warms/prefetches.
+- Hardened Messages send guard: send button now stays disabled when no active conversation and action handler returns a clear toast if missing conversation id.
+- Fixed direct-message flow from Messages popup to route new direct chats into `Sent` (not `Requests`).
+- Fixed create-conversation flow to use API response conversation id and route tab by conversation type (group -> inbox, direct -> sent).
+- Validation: `npm run check` passed.
