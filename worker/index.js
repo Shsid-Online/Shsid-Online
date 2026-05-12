@@ -23,6 +23,7 @@ let hasUsersProfilePhotoColumnCache = null;
 let hasPostsTitleColumnCache = null;
 let hasCommentsReplyToColumnCache = null;
 let hasPostsEngagementColumnsCache = null;
+let hasAdsTableCache = null;
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
@@ -1016,6 +1017,58 @@ async function handleApi(request, env, url, route) {
     return json({ suggestions: rows.results || [], pagination: { limit: 100, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
   }
 
+  if (method === "GET" && route === "/ads") {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    await ensureAdsTable(env);
+    const rows = authUser.role === "admin"
+      ? await env.DB.prepare("select * from ads order by created_at desc").all()
+      : await env.DB.prepare("select * from ads where active=1 order by created_at desc").all();
+    const ads = (rows.results || []).map((row) => ({
+      id: row.id,
+      slot: row.slot,
+      title: row.title,
+      body: row.body,
+      url: row.url || "",
+      active: Boolean(row.active),
+      createdAt: row.created_at
+    }));
+    return json({ ads, pagination: { limit: 200, offset: 0, total: ads.length, nextOffset: null } }, 200);
+  }
+
+  if (method === "POST" && route === "/admin/ads") {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    await ensureAdsTable(env);
+    const slot = String(body.slot || "").trim().slice(0, 40);
+    const title = String(body.title || "").trim().slice(0, 120);
+    const text = String(body.body || "").trim().slice(0, 320);
+    const url = String(body.url || "").trim().slice(0, 500);
+    if (!slot || !title) return json({ error: "Slot and title are required" }, 400);
+    const ad = { id: id("ad"), slot, title, body: text, url, active: body.active === false ? 0 : 1, created_at: now() };
+    await env.DB.prepare("insert into ads (id, slot, title, body, url, active, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+      .bind(ad.id, ad.slot, ad.title, ad.body, ad.url, ad.active, ad.created_at)
+      .run();
+    return json({ ad: { id: ad.id, slot: ad.slot, title: ad.title, body: ad.body, url: ad.url, active: Boolean(ad.active), createdAt: ad.created_at } }, 201);
+  }
+
+  const adminAdToggleMatch = route.match(/^\/admin\/ads\/([^/]+)\/toggle$/);
+  if (method === "POST" && adminAdToggleMatch) {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    await ensureAdsTable(env);
+    const row = await env.DB.prepare("select * from ads where id=?").bind(adminAdToggleMatch[1]).first();
+    if (!row) return json({ error: "Not found" }, 404);
+    const nextActive = row.active ? 0 : 1;
+    await env.DB.prepare("update ads set active=? where id=?").bind(nextActive, row.id).run();
+    return json({ ad: { id: row.id, slot: row.slot, title: row.title, body: row.body, url: row.url || "", active: Boolean(nextActive), createdAt: row.created_at } }, 200);
+  }
+
+  const adminAdDeleteMatch = route.match(/^\/admin\/ads\/([^/]+)$/);
+  if (method === "DELETE" && adminAdDeleteMatch) {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    await ensureAdsTable(env);
+    await env.DB.prepare("delete from ads where id=?").bind(adminAdDeleteMatch[1]).run();
+    return json({ ok: true }, 200);
+  }
+
   if (method === "POST" && route === "/suggestions") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     const text = String(body.text || "").trim();
@@ -1456,6 +1509,17 @@ async function hasPostsEngagementColumns(env) {
     return true;
   } catch {
     hasPostsEngagementColumnsCache = false;
+    return false;
+  }
+}
+
+async function ensureAdsTable(env) {
+  if (hasAdsTableCache) return true;
+  try {
+    await env.DB.prepare("create table if not exists ads (id text primary key, slot text not null, title text not null, body text not null default '', url text not null default '', active integer not null default 1, created_at text not null)").run();
+    hasAdsTableCache = true;
+    return true;
+  } catch {
     return false;
   }
 }

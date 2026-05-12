@@ -13,6 +13,7 @@ const initialState = {
   bans: [],
   qna: [],
   suggestions: [],
+  ads: [],
   notifications: [],
   audit: [],
   adminVerifications: [],
@@ -33,7 +34,9 @@ const initialState = {
   rejectedRequests: {},
   contactRemarks: {},
   feedSearchQuery: "",
-  feedEngagementFilter: "all"
+  feedEngagementFilter: "all",
+  adSwapCount: 0,
+  nextAdPopupAt: 6
 };
 
 let state = loadState();
@@ -103,7 +106,10 @@ function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (!saved) return structuredClone(initialState);
   try {
-    return { ...structuredClone(initialState), ...JSON.parse(saved) };
+    const merged = { ...structuredClone(initialState), ...JSON.parse(saved) };
+    if (!Number.isInteger(merged.adSwapCount) || merged.adSwapCount < 0) merged.adSwapCount = 0;
+    if (!Number.isInteger(merged.nextAdPopupAt) || merged.nextAdPopupAt < 6 || merged.nextAdPopupAt > 7) merged.nextAdPopupAt = 6;
+    return merged;
   } catch {
     return structuredClone(initialState);
   }
@@ -244,6 +250,26 @@ function normalizePost(post) {
   delete copy.author;
   delete copy.adminAuthor;
   return copy;
+}
+
+function nextAdPopupThreshold() {
+  return 6 + Math.floor(Math.random() * 2);
+}
+
+function activeAdsBySlot(slot) {
+  return (state.ads || []).filter((ad) => ad?.slot === slot && ad?.active);
+}
+
+function renderAdCard(slot, fallback = "Ad placeholder") {
+  const ad = activeAdsBySlot(slot)[0];
+  if (!ad) return `<article class="panel ad-card ad-placeholder"><strong>${escapeHtml(fallback)}</strong><p class="muted">Ad space</p></article>`;
+  const title = String(ad.title || "Sponsored");
+  const body = String(ad.body || "");
+  const url = String(ad.url || "").trim();
+  const inner = `<strong>${escapeHtml(title)}</strong><p class="muted">${escapeHtml(body)}</p>`;
+  return url
+    ? `<a class="panel ad-card" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${inner}</a>`
+    : `<article class="panel ad-card">${inner}</article>`;
 }
 
 function normalizeConversation(conversation) {
@@ -531,6 +557,17 @@ async function refreshSuggestions() {
   }
 }
 
+async function refreshAds() {
+  if (!state.apiToken) return;
+  try {
+    const result = await apiRequest("/ads");
+    state.ads = Array.isArray(result.ads) ? result.ads : [];
+    saveState();
+  } catch (error) {
+    console.error("refreshAds failed", error);
+  }
+}
+
 async function refreshQnaForProfile(profileId) {
   if (!state.apiToken || !profileId) return;
   try {
@@ -589,6 +626,7 @@ async function bootstrapSession() {
     await ensureDeepLinkedPostLoaded();
     await refreshConversations();
     await refreshNotifications();
+    await refreshAds();
     await refreshSuggestions();
     await refreshVerificationQueue();
     if (result.user.role === "admin") {
@@ -1648,11 +1686,13 @@ function renderAuth() {
 }
 
 function page(title, subtitle, content, actions = "") {
+  const topBanner = renderAdCard("top_banner", "Top banner ad");
   return `
     <div class="topbar">
       <div><h1>${title}</h1><p>${subtitle}</p></div>
       <div class="row">${actions}</div>
     </div>
+    ${topBanner}
     ${content}
   `;
 }
@@ -1726,7 +1766,7 @@ function renderFeed() {
             <h3>${escapeHtml(label)}</h3>
             <span class="muted">${rows.length} post${rows.length === 1 ? "" : "s"}</span>
           </div>
-          <div class="grid">${rows.map(renderPost).join("")}</div>
+          <div class="grid">${rows.map((post, idx) => `${idx > 0 && idx % 12 === 0 ? renderAdCard("feed_inline", "Feed sponsor") : ""}${renderPost(post)}`).join("")}</div>
         </section>
       `;
     }).join("");
@@ -1876,8 +1916,10 @@ function renderComposer() {
 }
 
 function renderStudents() {
+  const students = state.users.filter((u) => u.role !== "admin" && u.status === "verified");
   return page("Students", "Meet verified classmates and start conversations.", `
-    <section class="grid two">${state.users.filter((u) => u.role !== "admin" && u.status === "verified").map((user) => `
+    <section class="grid two">${students.map((user, idx) => `
+      ${idx > 0 && idx % 20 === 0 ? renderAdCard("students_inline", "Student section sponsor") : ""}
       <article class="panel" data-action="view-profile" data-id="${user.id}" style="cursor:pointer">
         <div class="between">
           <div class="row">${renderAvatar(user)}<div><strong>${escapeHtml(user.englishName)}</strong><div class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</div></div></div>
@@ -2218,6 +2260,31 @@ function renderSettings() {
         <p style="margin:0 0 12px"><strong>Suggestions:</strong> Submit feedback and track admin responses.</p>
         <p style="margin:0"><strong>Q&A Box:</strong> Other students can ask you questions on your profile.</p>
       </section>
+      ${user.role === "admin" ? `
+      <section class="panel">
+        <h3 style="margin-top:0">Ad Manager</h3>
+        <div class="grid two">
+          <div class="field"><label>Slot</label><select id="ad-slot"><option value="top_banner">Top banner</option><option value="feed_inline">Feed inline</option><option value="students_inline">Students inline</option><option value="popup">Popup</option></select></div>
+          <div class="field"><label>Title</label><input id="ad-title" placeholder="Ad title"></div>
+          <div class="field"><label>Body</label><input id="ad-body" placeholder="Short ad text"></div>
+          <div class="field"><label>URL (optional)</label><input id="ad-url" placeholder="https://..."></div>
+        </div>
+        <div class="row"><button class="btn primary" data-action="create-ad">Create Ad</button></div>
+        <div class="grid" style="margin-top:12px">
+          ${(state.ads || []).length ? (state.ads || []).map((ad) => `
+            <div class="comment" style="margin:0">
+              <strong>${escapeHtml(ad.slot || "slot")}</strong> · ${ad.active ? "active" : "inactive"}<br>
+              ${escapeHtml(ad.title || "Untitled")}<br>
+              <span class="muted">${escapeHtml(ad.body || "")}</span>
+              <div class="row" style="margin-top:8px">
+                <button class="btn small" data-action="toggle-ad" data-id="${ad.id}">${ad.active ? "Disable" : "Enable"}</button>
+                <button class="btn small danger" data-action="delete-ad" data-id="${ad.id}">Delete</button>
+              </div>
+            </div>
+          `).join("") : `<p class="muted">No ads yet.</p>`}
+        </div>
+      </section>
+      ` : ""}
     </section>
   `);
 }
@@ -2444,12 +2511,21 @@ function bindEvents() {
       }
       const nextView = viewButton.dataset.view;
       if (!nextView) return;
-      if (nextView === view) return;
+      const isSwap = nextView !== view;
+      if (!isSwap) return;
       view = nextView;
       if (view === "profile") {
         state.selectedProfileId = null;
       }
       render();
+      state.adSwapCount = Number(state.adSwapCount || 0) + 1;
+      if (state.adSwapCount >= Number(state.nextAdPopupAt || 6)) {
+        const popupAd = activeAdsBySlot("popup")[0];
+        if (popupAd) showPopup(popupAd.title || "Sponsored", `${popupAd.body || "Ad placeholder"}${popupAd.url ? `\n\n${popupAd.url}` : ""}`);
+        state.adSwapCount = 0;
+        state.nextAdPopupAt = nextAdPopupThreshold();
+      }
+      saveState();
       navRefreshSeq += 1;
       void refreshDataForView(view, navRefreshSeq);
       return;
@@ -3352,6 +3428,26 @@ async function handleAction(action, id) {
     await apiRequest(`/admin/suggestions/${id}`, { method: "POST", body: JSON.stringify({ response: clean }) });
     await refreshSuggestions();
     toast("Suggestion response sent");
+  }
+  if (action === "create-ad") {
+    const slot = String(document.querySelector("#ad-slot")?.value || "").trim();
+    const title = String(document.querySelector("#ad-title")?.value || "").trim();
+    const body = String(document.querySelector("#ad-body")?.value || "").trim();
+    const url = String(document.querySelector("#ad-url")?.value || "").trim();
+    if (!slot || !title) return toast("Slot and title are required");
+    await apiRequest("/admin/ads", { method: "POST", body: JSON.stringify({ slot, title, body, url, active: true }) });
+    await refreshAds();
+    toast("Ad created");
+  }
+  if (action === "toggle-ad") {
+    await apiRequest(`/admin/ads/${id}/toggle`, { method: "POST", body: JSON.stringify({}) });
+    await refreshAds();
+    toast("Ad updated");
+  }
+  if (action === "delete-ad") {
+    await apiRequest(`/admin/ads/${id}`, { method: "DELETE", body: JSON.stringify({}) });
+    await refreshAds();
+    toast("Ad deleted");
   }
   saveState();
   render();

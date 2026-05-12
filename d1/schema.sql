@@ -157,6 +157,16 @@ create table if not exists suggestions (
   created_at text not null
 );
 
+create table if not exists ads (
+  id text primary key,
+  slot text not null,
+  title text not null,
+  body text not null default '',
+  url text not null default '',
+  active integer not null default 1,
+  created_at text not null
+);
+
 create index if not exists idx_users_email on users(email);
 create index if not exists idx_users_status on users(status);
 create index if not exists idx_posts_author on posts(author_id);

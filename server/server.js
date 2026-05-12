@@ -1100,6 +1100,51 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { suggestions: items, pagination });
   }
 
+  if (method === "GET" && url.pathname === "/api/ads") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    store.data.ads ||= [];
+    const rows = user.role === "admin" ? store.data.ads : store.data.ads.filter((ad) => ad.active);
+    return sendJson(res, 200, { ads: rows, pagination: { limit: 200, offset: 0, total: rows.length, nextOffset: null } });
+  }
+
+  if (method === "POST" && url.pathname === "/api/admin/ads") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const slot = String(body.slot || "").trim().slice(0, 40);
+    const title = String(body.title || "").trim().slice(0, 120);
+    const adBody = String(body.body || "").trim().slice(0, 320);
+    const adUrl = String(body.url || "").trim().slice(0, 500);
+    if (!slot || !title) return sendJson(res, 400, { error: "Slot and title are required" });
+    store.data.ads ||= [];
+    const ad = { id: id("ad"), slot, title, body: adBody, url: adUrl, active: body.active === false ? false : true, createdAt: now() };
+    store.data.ads.push(ad);
+    store.save();
+    return sendJson(res, 201, { ad });
+  }
+
+  const adminAdToggleMatch = url.pathname.match(/^\/api\/admin\/ads\/([^/]+)\/toggle$/);
+  if (method === "POST" && adminAdToggleMatch) {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    store.data.ads ||= [];
+    const ad = store.data.ads.find((item) => item.id === adminAdToggleMatch[1]);
+    if (!ad) return notFound(res);
+    ad.active = !ad.active;
+    store.save();
+    return sendJson(res, 200, { ad });
+  }
+
+  const adminAdDeleteMatch = url.pathname.match(/^\/api\/admin\/ads\/([^/]+)$/);
+  if (method === "DELETE" && adminAdDeleteMatch) {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    store.data.ads ||= [];
+    store.data.ads = store.data.ads.filter((item) => item.id !== adminAdDeleteMatch[1]);
+    store.save();
+    return sendJson(res, 200, { ok: true });
+  }
+
   if (method === "POST" && url.pathname === "/api/suggestions") {
     const user = requireAuth(req, res);
     if (!user) return;

@@ -94,6 +94,17 @@ User objects are privacy-filtered by viewer:
   - Lists the authenticated user’s submissions.
 - `POST /suggestions`
   - Body: `{ "text": "..." }`
+- `GET /admin/suggestions` (admin)
+- `POST /admin/suggestions/:id` (admin)
+  - Body: `{ "response": "..." }`
+
+## Ads
+
+- `GET /ads`
+- `POST /admin/ads` (admin)
+  - Body: `{ "slot": "top_banner|feed_inline|students_inline|popup", "title": "...", "body": "...", "url": "optional", "active": true }`
+- `POST /admin/ads/:id/toggle` (admin)
+- `DELETE /admin/ads/:id` (admin)
 
 ## Notifications
 

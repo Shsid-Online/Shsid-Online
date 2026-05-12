@@ -755,6 +755,16 @@ body {
   border-style: dashed;
 }
 
+.ad-card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+
+.ad-placeholder {
+  border-style: dashed;
+}
+
 
 .video-tile {
   min-height: 280px;
