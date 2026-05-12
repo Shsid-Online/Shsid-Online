@@ -496,3 +496,9 @@
   - Existing search and load-more behavior remains intact.
   - Added category block styles for clearer section boundaries.
   - Validation: `npm run check` passed.
+- 2026-05-12: Added explicit startup loading screen to prevent blank initial page.
+  - Introduced `isBootstrappingSession` flag around `bootstrapSession()`.
+  - `bootstrapSession()` now triggers immediate render before async `/me` fetch.
+  - `renderAuth()` now shows a dedicated `Logging in...` screen while session restore is in progress.
+  - Result: opening the website shows `Logging in...` instead of a blank screen.
+  - Validation: `npm run check` passed.

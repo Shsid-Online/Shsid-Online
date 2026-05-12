@@ -50,6 +50,7 @@ let adminChatMonitorFilter = "all";
 let adminActiveConversationId = "";
 let adminTab = "overview";
 let profileBackView = "students";
+let isBootstrappingSession = false;
 let liveChatTimer = null;
 let liveChatPollInFlight = false;
 let liveChatSnapshot = "";
@@ -569,7 +570,10 @@ function mergeApiUsers(apiUsers = []) {
 }
 
 async function bootstrapSession() {
+  isBootstrappingSession = true;
+  render();
   if (!state.apiToken) {
+    isBootstrappingSession = false;
     render();
     return;
   }
@@ -597,6 +601,8 @@ async function bootstrapSession() {
     state.authMode = "login";
     state.authStep = "email";
     saveState();
+  } finally {
+    isBootstrappingSession = false;
   }
   render();
 }
@@ -1462,6 +1468,22 @@ async function pollLiveChatUpdates() {
 }
 
 function renderAuth() {
+  if (isBootstrappingSession) {
+    document.querySelector("#app").innerHTML = `
+      <section class="auth-screen">
+        <div class="auth-card">
+          <div class="brand" style="color:var(--ink);margin-bottom:18px"><span class="brand-mark">S</span><span>SHSID Social</span></div>
+          <h2>Logging in...</h2>
+          <p class="muted">Restoring your session. Please wait a moment.</p>
+        </div>
+        <div class="auth-art">
+          <h1>Private social networking for verified SHSID students.</h1>
+          <p>Feed, messaging, profiles, reports, verification, and admin moderation in one school-only platform.</p>
+        </div>
+      </section>
+    `;
+    return;
+  }
   const step = state.authStep || "email";
   const mode = state.authMode || "login";
   const title = step === "email" ? "Sign in faster"
