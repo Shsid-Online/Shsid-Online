@@ -1152,10 +1152,12 @@ function doRender() {
 }
 
 function scheduleFeedVideoPlaybackSync() {
+  if (view !== "feed") return;
   if (feedVideoPlaybackTickScheduled) return;
   feedVideoPlaybackTickScheduled = true;
   requestAnimationFrame(() => {
     feedVideoPlaybackTickScheduled = false;
+    if (view !== "feed") return;
     syncMostVisibleFeedVideo();
   });
 }
@@ -1165,6 +1167,7 @@ function isFeedVideoSeekLocked(video, nowMs = Date.now()) {
 }
 
 function syncMostVisibleFeedVideo() {
+  if (view !== "feed" || document.hidden) return;
   const videos = [...document.querySelectorAll(".media-carousel .media-video")];
   if (!videos.length) return;
   const nowMs = Date.now();
@@ -1233,7 +1236,24 @@ function syncMostVisibleFeedVideo() {
   }
 }
 
+function pauseAllFeedVideos() {
+  const videos = [...document.querySelectorAll(".media-carousel .media-video")];
+  videos.forEach((video) => {
+    if (!video.paused) video.pause();
+  });
+  feedVideoCurrentAutoplay = null;
+}
+
 function setupFeedVideoAutoplay() {
+  if (view !== "feed") {
+    if (feedVideoObserver) {
+      feedVideoObserver.disconnect();
+      feedVideoObserver = null;
+    }
+    feedVideoVisibility.clear();
+    pauseAllFeedVideos();
+    return;
+  }
   const videos = [...document.querySelectorAll(".media-carousel .media-video")];
   if (feedVideoObserver) {
     feedVideoObserver.disconnect();

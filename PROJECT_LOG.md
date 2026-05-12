@@ -529,3 +529,8 @@
   - Added labeled `Bio` section under profile header in the main profile view.
   - Shows fallback text `No bio added yet.` when bio is empty.
   - Validation: `npm run check` passed.
+- 2026-05-12: Fixed random post-video autoplay outside Feed.
+  - Added hard guards so feed autoplay scheduler/sync only run when `view === "feed"` and tab is visible.
+  - Added `pauseAllFeedVideos()` and call path in `setupFeedVideoAutoplay()` when leaving Feed to force-stop any playing feed media videos.
+  - Also disconnects feed observer and clears visibility state when not on Feed.
+  - Validation: `npm run check` passed.
