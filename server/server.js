@@ -1065,6 +1065,29 @@ async function handleApi(req, res, url) {
     return sendJson(res, 201, { suggestion });
   }
 
+  if (method === "GET" && url.pathname === "/api/admin/suggestions") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const all = [...store.data.suggestions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const { items, pagination } = paginate(all, url, { limit: 100, maxLimit: 200 });
+    return sendJson(res, 200, { suggestions: items, pagination });
+  }
+
+  const adminSuggestionMatch = url.pathname.match(/^\/api\/admin\/suggestions\/([^/]+)$/);
+  if (method === "POST" && adminSuggestionMatch) {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const suggestion = store.data.suggestions.find((item) => item.id === adminSuggestionMatch[1]);
+    if (!suggestion) return notFound(res);
+    const response = String(body.response || "").trim();
+    if (!response) return sendJson(res, 400, { error: "Response is required" });
+    suggestion.status = `responded::${response}`;
+    suggestion.updatedAt = now();
+    store.audit(admin.id, "suggestion_replied", { suggestionId: suggestion.id });
+    store.save();
+    return sendJson(res, 200, { suggestion });
+  }
+
   if (method === "GET" && url.pathname === "/api/admin/verifications") {
     const admin = requireAdmin(req, res);
     if (!admin) return;

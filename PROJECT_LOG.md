@@ -413,3 +413,34 @@
   - Initials now prioritize first-name + last-name initials (2 letters) when multiple name tokens exist.
   - Single-token names now use first 2 letters.
   - Validation: `npm run check` passed.
+- 2026-05-12: Fixed slow navigation tab switching caused by awaited network refreshes on click.
+  - Navigation now updates `view` and calls `render()` immediately on click.
+  - Added background refresh flow (`refreshDataForView`) for profile/suggestions/admin/messages/feed data.
+  - Added `navRefreshSeq` guard so only the latest tab-refresh request triggers final re-render.
+  - Result: category/tab transitions feel instant instead of waiting for API round trips.
+  - Validation: `npm run check` passed.
+- 2026-05-12: Fixed follow-up nav regression where only first click worked.
+  - Root cause: `bindEvents()` had a one-time `eventsBound` guard while `render()` replaces `#app` HTML, so new nav/action buttons lost listeners after first render.
+  - Removed one-time guard so listeners are rebound to freshly rendered nodes each render cycle.
+  - Validation: `npm run check` passed.
+- 2026-05-12: Hardened render-cycle event binding to prevent post-tab navigation lockups.
+  - Converted `bindEvents()` handlers for `[data-view]`, `[data-action]`, `#feed-search`, and `#message-text` from additive listeners to idempotent `onclick`/`oninput`/`onkeydown` assignments.
+  - This prevents stacked/missing handlers across repeated rerenders and keeps navigation usable after switching into Post and back.
+  - Validation: `npm run check` passed.
+- 2026-05-12: Replaced per-node click listeners with delegated click handling on `#app`.
+  - `bindEvents()` now routes `[data-view]` and `[data-action]` clicks through a single `#app.onclick` handler.
+  - This removes dependence on element-level rebinding and prevents nav/action dead clicks after rerenders.
+  - Keeps immediate tab switch + background refresh behavior.
+  - Validation: `npm run check` passed.
+- 2026-05-12: Fixed suggestions 404 and mobile web-app meta warning.
+  - Added `<meta name="mobile-web-app-capable" content="yes">` to `public/index.html` alongside existing Apple meta tag.
+  - Frontend `refreshSuggestions()` now gracefully falls back to `/suggestions` when `/admin/suggestions` returns Not found.
+  - Added local Node API parity routes in `server/server.js`:
+    - `GET /api/admin/suggestions`
+    - `POST /api/admin/suggestions/:id` (stores admin reply in `status` as `responded::...`).
+  - Validation: `npm run check` passed.
+- 2026-05-12: Confirmed live `/api/admin/suggestions` endpoint returns 404 in production and hardened frontend fallback.
+  - Live check: `https://www.shsid.online/api/admin/suggestions` responds `404 {"error":"Not found"}`.
+  - `apiRequest()` now attaches `error.status` from HTTP response.
+  - `refreshSuggestions()` admin path now falls back to `/suggestions` when status is 404 (not only message text matching).
+  - Validation: `npm run check` passed.

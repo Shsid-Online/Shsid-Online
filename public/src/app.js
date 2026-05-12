@@ -214,7 +214,9 @@ async function apiRequest(path, options = {}) {
   const body = await response.json();
   if (!response.ok) {
     const message = [body.error, body.detail].filter(Boolean).join(": ");
-    throw new Error(message || "Request failed");
+    const error = new Error(message || "Request failed");
+    error.status = response.status;
+    throw error;
   }
   return body;
 }
@@ -496,7 +498,15 @@ async function refreshSuggestions() {
     const isAdmin = currentUser()?.role === "admin";
     let result;
     if (isAdmin) {
-      result = await apiRequest("/admin/suggestions");
+      try {
+        result = await apiRequest("/admin/suggestions");
+      } catch (error) {
+        if (error?.status === 404 || String(error.message || "").toLowerCase().includes("not found")) {
+          result = await apiRequest("/suggestions");
+        } else {
+          throw error;
+        }
+      }
     } else {
       result = await apiRequest("/suggestions");
     }
@@ -2168,62 +2178,79 @@ function renderRightbar() {
   `;
 }
 
-let eventsBound = false;
 let renderFrameScheduled = false;
+let navRefreshSeq = 0;
+
+async function refreshDataForView(targetView, seq) {
+  try {
+    if (targetView === "profile") {
+      await refreshQnaForProfile(state.currentUserId);
+    }
+    if (targetView === "suggestions") await refreshSuggestions();
+    if (targetView === "admin") {
+      await refreshAdminVerifications();
+      await refreshReports();
+      await refreshAuditLogs();
+    }
+    if (targetView === "messages") await refreshConversations();
+    if (targetView === "feed") await refreshPosts();
+  } catch (error) {
+    console.error("refreshDataForView failed", error);
+  } finally {
+    if (seq === navRefreshSeq) render();
+  }
+}
 
 function bindEvents() {
-  if (eventsBound) return;
-  eventsBound = true;
-  document.querySelectorAll("[data-view]").forEach((button) => {
-    button.addEventListener("click", async () => {
+  const appRoot = document.querySelector("#app");
+  if (appRoot) appRoot.onclick = async (event) => {
+    const viewButton = event.target.closest("[data-view]");
+    if (viewButton) {
+      event.preventDefault();
+      event.stopPropagation();
       if (postPublishInFlight || uploadUi.active) {
         toast("Upload in progress. Please wait for completion.");
         return;
       }
-      view = button.dataset.view;
+      const nextView = viewButton.dataset.view;
+      if (!nextView) return;
+      view = nextView;
       if (view === "profile") {
         state.selectedProfileId = null;
-        await refreshQnaForProfile(state.currentUserId);
       }
-      if (view === "suggestions") await refreshSuggestions();
-      if (view === "admin") {
-        await refreshAdminVerifications();
-        await refreshReports();
-        await refreshAuditLogs();
-      }
-      if (view === "messages") await refreshConversations();
-      if (view === "feed") await refreshPosts();
       render();
-    });
-  });
+      navRefreshSeq += 1;
+      void refreshDataForView(view, navRefreshSeq);
+      return;
+    }
 
-  document.querySelector("#feed-search")?.addEventListener("input", (event) => {
+    const actionButton = event.target.closest("[data-action]");
+    if (!actionButton) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (actionButton.dataset.busy === "1") return;
+    actionButton.dataset.busy = "1";
+    actionButton.disabled = true;
+    try {
+      await handleAction(actionButton.dataset.action, actionButton.dataset.id);
+    } catch (error) {
+      toast(error.message || "Action failed");
+    } finally {
+      actionButton.dataset.busy = "0";
+      actionButton.disabled = false;
+    }
+  };
+
+  const feedSearch = document.querySelector("#feed-search");
+  if (feedSearch) feedSearch.oninput = (event) => {
     const query = String(event.target.value || "").trim();
     state.feedSearchQuery = query;
     saveState();
     render();
-  });
-
-  document.querySelectorAll("[data-action]").forEach((button) => {
-    button.addEventListener("click", async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (button.dataset.busy === "1") return;
-      button.dataset.busy = "1";
-      button.disabled = true;
-      try {
-        await handleAction(button.dataset.action, button.dataset.id);
-      } catch (error) {
-        toast(error.message || "Action failed");
-      } finally {
-        button.dataset.busy = "0";
-        button.disabled = false;
-      }
-    });
-  });
+  };
 
   const messageBox = document.querySelector("#message-text");
-  messageBox?.addEventListener("keydown", async (event) => {
+  if (messageBox) messageBox.onkeydown = async (event) => {
     if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
     event.preventDefault();
     const sendButton = document.querySelector('[data-action="send-message"]');
@@ -2239,7 +2266,7 @@ function bindEvents() {
       sendButton.dataset.busy = "0";
       sendButton.disabled = false;
     }
-  });
+  };
 
   setupDropzone("post-dropzone", "post-media", true);  bindFileChips("post-media", "post-file-chips");
   bindMessageAttachmentStrip();
