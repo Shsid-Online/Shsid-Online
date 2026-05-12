@@ -261,10 +261,12 @@ function classifyConversations() {
   const requestsSent = [];
   for (const conv of all) {
     if (state.rejectedRequests?.[conv.id]) continue;
-    if (state.acceptedRequests?.[conv.id]) inbox.push(conv);
+    const firstMessage = (conv.messages || [])[0];
+    const acceptedByLocal = Boolean(state.acceptedRequests?.[conv.id]);
+    const acceptedByReply = Boolean(firstMessage && (conv.messages || []).some((message) => message.authorId && message.authorId !== firstMessage.authorId));
+    const accepted = acceptedByLocal || acceptedByReply;
+    if (accepted) inbox.push(conv);
     else {
-      const otherId = (conv.members || []).find((m) => m !== meId);
-      const firstMessage = (conv.messages || [])[0];
       const isSender = firstMessage && firstMessage.authorId === meId;
       if (isSender) requestsSent.push(conv);
       else requestsReceived.push(conv);
@@ -1789,8 +1791,10 @@ function renderMessages() {
   const active = list.find((item) => item.id === activeConversationId) || list[0] || inbox[0] || requests[0] || requestsSent[0];
   const requestView = conversationTab === "requests";
   const sentView = conversationTab === "sent";
-  const accepted = active ? Boolean(state.acceptedRequests?.[active.id]) : false;
   const firstAuthorId = active?.messages?.[0]?.authorId || "";
+  const acceptedByLocal = active ? Boolean(state.acceptedRequests?.[active.id]) : false;
+  const acceptedByReply = Boolean(firstAuthorId && (active?.messages || []).some((message) => message.authorId && message.authorId !== firstAuthorId));
+  const accepted = acceptedByLocal || acceptedByReply;
   const isMeSender = active && firstAuthorId === currentUser().id;
   const isReceiverPending = requestView && active && !accepted && firstAuthorId && firstAuthorId !== currentUser().id;
   const canSendInCurrentThread = !isReceiverPending;
@@ -2775,8 +2779,10 @@ async function handleAction(action, id) {
   }
   if (action === "send-message") {
     const conversation = state.conversations.find((item) => item.id === id);
-    const accepted = Boolean(state.acceptedRequests?.[id]);
     const firstAuthorId = conversation?.messages?.[0]?.authorId || "";
+    const acceptedByLocal = Boolean(state.acceptedRequests?.[id]);
+    const acceptedByReply = Boolean(firstAuthorId && (conversation?.messages || []).some((message) => message.authorId && message.authorId !== firstAuthorId));
+    const accepted = acceptedByLocal || acceptedByReply;
     if (!accepted && firstAuthorId && firstAuthorId !== user.id) return toast("Accept request before replying");
     const text = document.querySelector("#message-text").value.trim();
     const mediaFiles = [...(document.querySelector("#message-media-file")?.files || [])];

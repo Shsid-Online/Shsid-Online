@@ -466,3 +466,11 @@
     - `docs/api-contract.md` comments endpoint body now documents optional `replyTo`.
   - Styles: added nested reply indentation blocks for clearer threaded display.
   - Validation: `npm run check` passed.
+- 2026-05-12: Fixed request->inbox transition once chat is accepted/responded.
+  - Updated chat classification to treat a conversation as accepted when either:
+    - local accept flag exists (`acceptedRequests[conversationId]`), or
+    - the non-first author has replied in the thread (cross-user acceptance signal).
+  - Updated `send-message` acceptance gate to use the same acceptance logic.
+  - Updated `renderMessages()` accepted-state calculation to match classification logic.
+  - Result: conversations move out of `Sent/Requests` and into `Inbox` once accepted/replied.
+  - Validation: `npm run check` passed.
