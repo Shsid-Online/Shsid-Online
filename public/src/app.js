@@ -1632,7 +1632,7 @@ function page(title, subtitle, content, actions = "") {
 function renderView() {
   const user = currentUser();
   if (user.status !== "verified" && user.role !== "admin" && !["profile", "settings", "suggestions"].includes(view)) {
-    return page("Verification pending", "Your account exists, but posting and messaging unlock after admin approval.", renderProfile());
+    return page("Verification pending", "Your account is active. Full access unlocks after admin approval.", renderProfile());
   }
   const routes = {
     feed: renderFeed,
@@ -1651,14 +1651,14 @@ function renderView() {
 function renderSinglePost() {
   const post = state.posts.find((item) => item.id === deepLinkedPostId);
   if (!post) {
-    return page("Shared Post", "Opening shared post...", `
+    return page("Shared Post", "Getting your shared post ready.", `
       <section class="panel">
         <p class="muted">Loading post…</p>
         <div class="row"><button class="btn" data-action="back-feed">Back to feed</button></div>
       </section>
     `);
   }
-  return page("Shared Post", "This is the single post shared with you.", `
+  return page("Shared Post", "Here is the post shared with you.", `
     <section class="grid">
       <div class="row"><button class="btn" data-action="back-feed">Back to feed</button></div>
       ${renderPost(post)}
@@ -1705,7 +1705,7 @@ function renderFeed() {
   const postsHtml = filtered.length
     ? categorySections
     : `<div class="empty-state">No posts yet. Share something positive or helpful to get the feed started.</div>`;
-  return page("Feed", "Posts from followed students, categories, sticky announcements, comments, likes, and reports.", `
+  return page("Feed", "Catch up with what students are sharing right now.", `
     <div class="grid two" style="margin-bottom:16px">
       <div class="field" style="margin:0">
         <input id="feed-search" type="text" placeholder="Search posts..." style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd" />
@@ -1821,7 +1821,7 @@ function renderPost(post) {
 }
 
 function renderComposer() {
-  return page("Create Post", "Post publicly or anonymously with text, photos, and videos.", `
+  return page("Create Post", "Share something with your classmates.", `
     <section class="composer">
       <div class="field"><label>Title (not required)</label><input id="post-title" placeholder="Optional title"></div>
       <div class="field"><label>Post text (not required)</label><textarea id="post-text" placeholder="What do you want to share?"></textarea></div>
@@ -1841,7 +1841,7 @@ function renderComposer() {
 }
 
 function renderStudents() {
-  return page("Students", "Browse verified classmates, follow profiles, message students, and ask Q&A box questions.", `
+  return page("Students", "Meet verified classmates and start conversations.", `
     <section class="grid two">${state.users.filter((u) => u.role !== "admin" && u.status === "verified").map((user) => `
       <article class="panel" data-action="view-profile" data-id="${user.id}" style="cursor:pointer">
         <div class="between">
@@ -1871,7 +1871,7 @@ function renderMessages() {
   const isMeSender = active && firstAuthorId === currentUser().id;
   const isReceiverPending = requestView && active && !accepted && firstAuthorId && firstAuthorId !== currentUser().id;
   const canSendInCurrentThread = !isReceiverPending;
-  return page("Messages", "Real-time style direct and group messaging, anonymous sending, reporting, and admin monitoring.", `
+  return page("Messages", "Chat with classmates in direct or group conversations.", `
     <section class="chat-layout">
       <div class="panel chat-panel chat-panel-list">
         <div class="chat-section" style="margin-bottom:12px">
@@ -2047,7 +2047,7 @@ function renderProfile() {
     .filter((post) => post.authorId === user.id && !post.deletedAt)
     .sort((a, b) => at(b.createdAt) - at(a.createdAt));
   const isOwnProfile = user.id === me.id;
-  return page("Profile", "Your public profile, verification status, question box, notification settings, and privacy controls.", `
+  return page("Profile", "Your profile, updates, and question box.", `
     ${!isOwnProfile ? `<div class="row" style="margin-bottom:10px"><button class="btn small" data-action="profile-back">Back</button></div>` : ""}
     <section class="grid two">
       <div class="panel">
@@ -2095,7 +2095,7 @@ function renderSuggestions() {
   if (!user) return page("Suggestions", "Loading suggestions...", `<section class="panel"><p class="muted">Please wait.</p></section>`);
   const rows = [...(state.suggestions || [])].sort((a, b) => at(b.created_at || b.createdAt) - at(a.created_at || a.createdAt));
   if (user.role === "admin") {
-    return page("Suggestions", "Read student suggestions and send direct admin responses.", `
+    return page("Suggestions", "Review student ideas and reply directly.", `
       <section class="panel">
         <h2 style="margin-top:0">Student Suggestions</h2>
         <div class="grid">
@@ -2120,7 +2120,7 @@ function renderSuggestions() {
       </section>
     `);
   }
-  return page("Suggestions", "View your suggestion history and admin responses.", `
+  return page("Suggestions", "Share ideas and track replies from admins.", `
     <section class="panel" style="margin-bottom:14px">
       <h2 style="margin-top:0">Send a Suggestion</h2>
       <div class="field">
@@ -2152,7 +2152,7 @@ function renderSuggestions() {
 function renderSettings() {
   const user = currentUser();
   if (!user) return page("Settings", "Loading settings...", `<section class="panel"><p class="muted">Please wait.</p></section>`);
-  return page("Settings", "Change profile and personalized preferences.", `
+  return page("Settings", "Update your profile and preferences.", `
     <section class="grid two">
       <form class="panel grid" id="settings-profile-form">
         <h3 style="margin:0">Profile Settings</h3>
@@ -2200,7 +2200,7 @@ function renderAdmin() {
       <button class="btn ${adminTab === "chat" ? "primary" : ""}" data-action="admin-tab" data-id="chat">Chat Monitor</button>
     </div>
   `;
-  return page("Admin", "Verification, reports, bans, audit trails, anonymous author visibility, and compliance exports.", `
+  return page("Admin", "Manage safety, verification, and moderation tools.", `
     <section class="admin-grid">
       ${adminTabs}
       ${adminTab === "chat" ? `

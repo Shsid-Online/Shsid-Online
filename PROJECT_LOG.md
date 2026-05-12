@@ -502,3 +502,26 @@
   - `renderAuth()` now shows a dedicated `Logging in...` screen while session restore is in progress.
   - Result: opening the website shows `Logging in...` instead of a blank screen.
   - Validation: `npm run check` passed.
+- 2026-05-12: Added targeted notification refresh + engagement features + notification events.
+  - Notification read optimization:
+    - `mark-read` now updates notifications panel only (`renderNotificationsPanelOnly`) and avoids full app rerender.
+  - Notification event coverage:
+    - Added notifications for new private likes, public hearts, post comments, and new messages.
+    - Implemented in Worker API and Node API parity.
+  - Post engagement model:
+    - Added public heart action (`POST /posts/:id/heart`).
+    - Kept thumb-like as private like (`POST /posts/:id/like`).
+    - Added save action (`POST /posts/:id/save`).
+  - Feed filters to see engagement-specific posts:
+    - Added `All / Hearted (public) / Liked (private) / Saved posts` filter.
+    - Posts still category-separated after filtering.
+  - Data/schema updates:
+    - Worker `fromDbPost` now returns `hearts` and `savedBy` arrays.
+    - Added Worker migration helper for `posts.hearts` and `posts.saved_by` columns.
+    - Updated `d1/schema.sql` posts table defaults for `hearts` and `saved_by`.
+    - Updated API docs for new heart/save endpoints.
+  - Validation: `npm run check` passed.
+- 2026-05-12: Rewrote page subtitle copy to short intro-style text.
+  - Updated page subtext across Feed, Create Post, Students, Messages, Profile, Suggestions, Settings, Admin, Shared Post, and Verification Pending views.
+  - Replaced developer-style explanatory lines with concise user-facing intros.
+  - Validation: `npm run check` passed.
