@@ -36,7 +36,8 @@ const initialState = {
   feedSearchQuery: "",
   feedEngagementFilter: "all",
   adSwapCount: 0,
-  nextAdPopupAt: 6
+  nextAdPopupAt: 6,
+  adLastPopupAt: 0
 };
 
 let state = loadState();
@@ -109,6 +110,7 @@ function loadState() {
     const merged = { ...structuredClone(initialState), ...JSON.parse(saved) };
     if (!Number.isInteger(merged.adSwapCount) || merged.adSwapCount < 0) merged.adSwapCount = 0;
     if (!Number.isInteger(merged.nextAdPopupAt) || merged.nextAdPopupAt < 6 || merged.nextAdPopupAt > 7) merged.nextAdPopupAt = 6;
+    if (!Number.isFinite(Number(merged.adLastPopupAt))) merged.adLastPopupAt = 0;
     return merged;
   } catch {
     return structuredClone(initialState);
@@ -260,9 +262,12 @@ function activeAdsBySlot(slot) {
   return (state.ads || []).filter((ad) => ad?.slot === slot && ad?.active);
 }
 
-function renderAdCard(slot, fallback = "Ad placeholder") {
+function renderAdCard(slot, fallback = "Ad placeholder", { showPlaceholder = true } = {}) {
   const ad = activeAdsBySlot(slot)[0];
-  if (!ad) return `<article class="panel ad-card ad-placeholder"><strong>${escapeHtml(fallback)}</strong><p class="muted">Ad space</p></article>`;
+  if (!ad) {
+    if (!showPlaceholder) return "";
+    return `<article class="panel ad-card ad-placeholder"><strong>${escapeHtml(fallback)}</strong><p class="muted">Ad space</p></article>`;
+  }
   const title = String(ad.title || "Sponsored");
   const body = String(ad.body || "");
   const url = String(ad.url || "").trim();
@@ -1686,7 +1691,7 @@ function renderAuth() {
 }
 
 function page(title, subtitle, content, actions = "") {
-  const topBanner = renderAdCard("top_banner", "Top banner ad");
+  const topBanner = renderAdCard("top_banner", "Top banner ad", { showPlaceholder: false });
   return `
     <div class="topbar">
       <div><h1>${title}</h1><p>${subtitle}</p></div>
@@ -2037,8 +2042,6 @@ function showConversationDetailsPopup(conversation) {
       popup.remove();
       const ok = await askConfirmPopup("Delete Chat", "Delete this chat for you? Others will still see it.", "Delete");
       if (!ok) return;
-      if (!state.acceptedRequests || typeof state.acceptedRequests !== "object") state.acceptedRequests = {};
-      state.acceptedRequests[conversation.id] = false;
       state.deletedChats = state.deletedChats || {};
       state.deletedChats[conversation.id] = true;
       saveState();
@@ -2088,8 +2091,6 @@ function showConversationDetailsPopup(conversation) {
     popup.remove();
     const ok = await askConfirmPopup("Delete Chat", "Delete this chat for you? Others will still see it.", "Delete");
     if (!ok) return;
-    if (!state.acceptedRequests || typeof state.acceptedRequests !== "object") state.acceptedRequests = {};
-    state.acceptedRequests[conversation.id] = false;
     state.deletedChats = state.deletedChats || {};
     state.deletedChats[conversation.id] = true;
     saveState();
@@ -2519,9 +2520,14 @@ function bindEvents() {
       }
       render();
       state.adSwapCount = Number(state.adSwapCount || 0) + 1;
-      if (state.adSwapCount >= Number(state.nextAdPopupAt || 6)) {
+      const nowMs = Date.now();
+      const popupCooldownOk = nowMs - Number(state.adLastPopupAt || 0) >= 60_000;
+      if (state.adSwapCount >= Number(state.nextAdPopupAt || 6) && popupCooldownOk) {
         const popupAd = activeAdsBySlot("popup")[0];
-        if (popupAd) showPopup(popupAd.title || "Sponsored", `${popupAd.body || "Ad placeholder"}${popupAd.url ? `\n\n${popupAd.url}` : ""}`);
+        if (popupAd && (popupAd.title || popupAd.body || popupAd.url)) {
+          showPopup(popupAd.title || "Sponsored", `${popupAd.body || "Ad placeholder"}${popupAd.url ? `\n\n${popupAd.url}` : ""}`);
+          state.adLastPopupAt = nowMs;
+        }
         state.adSwapCount = 0;
         state.nextAdPopupAt = nextAdPopupThreshold();
       }

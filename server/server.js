@@ -41,6 +41,7 @@ const MAX_NAME_LEN = 100;
 const MAX_TITLE_LEN = 200;
 const MAX_REASON_LEN = 1000;
 const MAX_CATEGORY_LEN = 50;
+const AD_SLOTS = new Set(["top_banner", "feed_inline", "students_inline", "popup"]);
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -1116,6 +1117,7 @@ async function handleApi(req, res, url) {
     const adBody = String(body.body || "").trim().slice(0, 320);
     const adUrl = String(body.url || "").trim().slice(0, 500);
     if (!slot || !title) return sendJson(res, 400, { error: "Slot and title are required" });
+    if (!AD_SLOTS.has(slot)) return sendJson(res, 400, { error: "Invalid ad slot" });
     store.data.ads ||= [];
     const ad = { id: id("ad"), slot, title, body: adBody, url: adUrl, active: body.active === false ? false : true, createdAt: now() };
     store.data.ads.push(ad);

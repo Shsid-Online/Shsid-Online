@@ -540,3 +540,30 @@
   - Optimized notification read refresh to update rightbar panel bindings only (avoids full `bindEvents()` rebinding pass).
   - Added feed video lifecycle polish: one-time `visibilitychange` hook to pause in background and resume sync on return.
   - Validation: `npm run check` passed.
+- 2026-05-12: Added ad placeholder system with admin deployment controls and multiple placements.
+  - New ad slots: `top_banner`, `feed_inline`, `students_inline`, `popup`.
+  - Popup cadence: navigation swap counter shows popup ads every 6-7 swaps (`adSwapCount` + randomized `nextAdPopupAt`).
+  - Frontend placements:
+    - Top banner ad on page layouts.
+    - Feed inline ad roughly every 12 posts in category sections.
+    - Students inline ad every 20 profile cards.
+    - Popup ad via `showPopup()` on swap cadence.
+  - Admin deploy controls:
+    - Added `Ad Manager` panel (admin-only) in Settings for create/toggle/delete operations.
+  - API endpoints added (Worker + Node parity):
+    - `GET /ads`
+    - `POST /admin/ads`
+    - `POST /admin/ads/:id/toggle`
+    - `DELETE /admin/ads/:id`
+  - Persistence:
+    - Added D1 `ads` table schema.
+    - Worker has `ensureAdsTable()` migration fallback.
+  - Docs updated in `docs/api-contract.md`.
+  - Validation: `npm run check` passed.
+- 2026-05-12: Bug-fix batch after ad rollout.
+  - Fixed accepted-chat state regression on chat delete (no longer mutates `acceptedRequests` to false).
+  - Added ad popup cooldown safety (`adLastPopupAt`) to prevent rapid repeated popup display.
+  - Improved ad rendering behavior: top banner no longer shows placeholder when no active banner ad.
+  - Added strict ad slot validation (`top_banner`, `feed_inline`, `students_inline`, `popup`) in Worker and Node admin ad create endpoints.
+  - Added state migration guard for `adLastPopupAt`.
+  - Validation: `npm run check` passed.

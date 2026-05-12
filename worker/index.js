@@ -14,6 +14,7 @@ const UPLOAD_TTL_SECONDS = 10 * 60;
 const VERIFICATION_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 const VERIFICATION_CHUNK_SIZE = 8 * 1024 * 1024;
 const MULTIPART_CHUNK_SIZE = 8 * 1024 * 1024;
+const AD_SLOTS = new Set(["top_banner", "feed_inline", "students_inline", "popup"]);
 const ALLOWED_UPLOAD_TYPES = [
   "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
   "video/mp4", "video/webm", "video/quicktime",
@@ -1043,6 +1044,7 @@ async function handleApi(request, env, url, route) {
     const text = String(body.body || "").trim().slice(0, 320);
     const url = String(body.url || "").trim().slice(0, 500);
     if (!slot || !title) return json({ error: "Slot and title are required" }, 400);
+    if (!AD_SLOTS.has(slot)) return json({ error: "Invalid ad slot" }, 400);
     const ad = { id: id("ad"), slot, title, body: text, url, active: body.active === false ? 0 : 1, created_at: now() };
     await env.DB.prepare("insert into ads (id, slot, title, body, url, active, created_at) values (?, ?, ?, ?, ?, ?, ?)")
       .bind(ad.id, ad.slot, ad.title, ad.body, ad.url, ad.active, ad.created_at)
