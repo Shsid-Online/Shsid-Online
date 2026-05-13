@@ -309,6 +309,7 @@ function classifyConversations() {
   const requestsReceived = [];
   const requestsSent = [];
   for (const conv of all) {
+    if (state.deletedChats?.[conv.id]) continue;
     if (state.rejectedRequests?.[conv.id]) continue;
     const firstMessage = (conv.messages || [])[0];
     if (!firstMessage) {
@@ -622,8 +623,8 @@ function mergeApiUsers(apiUsers = []) {
       status: apiUser.status,
       bio: apiUser.bio || "",
       profilePhoto: apiUser.profilePhoto || "",
-      followers: apiUser.followers !== undefined ? apiUser.followers : (existing?.followers || []),
-      following: apiUser.following !== undefined ? apiUser.following : (existing?.following || []),
+      followers: Array.isArray(apiUser.followers) ? apiUser.followers : (existing?.followers || []),
+      following: Array.isArray(apiUser.following) ? apiUser.following : (existing?.following || []),
       online: true
     };
     const index = state.users.findIndex((user) => user.id === localUser.id);
@@ -951,8 +952,12 @@ function showSharePopup(url, text = "", postId = "") {
   popup.querySelector("[data-copy-share]")?.addEventListener("click", async () => {
     const input = popup.querySelector("#share-link-input");
     const value = input?.value || url;
-    await navigator.clipboard.writeText(value);
-    toast("Post link copied");
+    try {
+      await navigator.clipboard.writeText(value);
+      toast("Post link copied");
+    } catch {
+      toast("Copy failed. Please copy manually.");
+    }
   });
   popup.querySelector("[data-native-share]")?.addEventListener("click", async () => {
     try {
@@ -1939,6 +1944,7 @@ function renderComposer() {
 
 function renderStudents() {
   const students = state.users.filter((u) => u.role !== "admin" && u.status === "verified");
+  const myFollowing = Array.isArray(currentUser()?.following) ? currentUser().following : [];
   return page("Students", "Meet verified classmates and start conversations.", `
     <section class="grid two">${students.map((user, idx) => `
       ${idx > 0 && idx % 20 === 0 ? renderAdCard("students_inline", "Student section sponsor") : ""}
@@ -1948,7 +1954,7 @@ function renderStudents() {
         </div>
         <p>${escapeHtml(user.bio)}</p>
         <div class="row">
-          <button class="btn small" data-action="follow" data-id="${user.id}">${currentUser().following.includes(user.id) ? "Following" : "Follow"}</button>
+          <button class="btn small" data-action="follow" data-id="${user.id}">${myFollowing.includes(user.id) ? "Following" : "Follow"}</button>
           <button class="btn small" data-action="start-chat" data-id="${user.id}">Message</button>
           <button class="btn small" data-action="ask-qna" data-id="${user.id}">Ask</button>
         </div>
@@ -2411,7 +2417,9 @@ function renderAdmin() {
 function renderRightbar() {
   const user = currentUser();
   const unread = state.notifications.filter((item) => item.userId === user.id && !item.read);
-  const leaders = [...state.posts].sort((a, b) => b.likes.length - a.likes.length).slice(0, 3);
+  const leaders = [...state.posts]
+    .sort((a, b) => (Array.isArray(b.likes) ? b.likes.length : 0) - (Array.isArray(a.likes) ? a.likes.length : 0))
+    .slice(0, 3);
   const isAdmin = user?.role === "admin";
   return `
     <div class="grid">

@@ -591,3 +591,4 @@
 - Local anonymity hardening: updated repo-local git identity to `shanghai-admin <no-reply@shsid.online>` for future commits; updated local `.env` personal email fields to non-personal addresses.
 - Validation: `npm run check` passed.
 - 2026-05-13: Aligned Node server OTP length to 6 digits to match Worker and frontend auth flow.
+- 2026-05-13: Bugfix batch: hide deleted chats in conversation classifier, guard followers/following arrays from API shape drift, protect students follow-button render against missing following list, harden rightbar post-of-day sorting when likes array is missing, and add clipboard-copy failure fallback in share popup.
