@@ -1011,8 +1011,10 @@ async function handleApi(request, env, url, route) {
     }
 
     const question = String(body.question || "").trim().slice(0, MAX_TEXT_LEN);
+    const visibility = String(body.visibility || "public").trim().toLowerCase();
     if (!question) return json({ error: "Question is required" }, 400);
     if (profile.id === authUser.id) return json({ error: "You cannot ask yourself a question" }, 400);
+    if (!["public", "private"].includes(visibility)) return json({ error: "Invalid visibility" }, 400);
     const entry = {
       id: id("qna"),
       profile_id: profile.id,
@@ -1020,7 +1022,7 @@ async function handleApi(request, env, url, route) {
       question,
       answer: "",
       anonymous: body.anonymous ? 1 : 0,
-      visibility: body.visibility === "private" ? "private" : "public",
+      visibility,
       created_at: now()
     };
     await env.DB.prepare("insert into qna (id, profile_id, asker_id, question, answer, anonymous, visibility, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
@@ -1109,6 +1111,7 @@ async function handleApi(request, env, url, route) {
 
   if (method === "POST" && route === "/suggestions") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
+    if (authUser.role === "admin") return json({ error: "Admins cannot submit suggestions" }, 403);
     const text = String(body.text || "").trim().slice(0, 1000);
     if (!text) return json({ error: "Suggestion text is required" }, 400);
     const suggestion = { id: id("sgg"), user_id: authUser.id, text, status: "pending", created_at: now() };

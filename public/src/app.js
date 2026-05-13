@@ -3402,6 +3402,9 @@ async function handleAction(action, id) {
   if (action === "verify-user") {
     if (currentUser()?.role !== "admin") return toast("Admin access required");
     if (!id) return toast("Invalid user");
+    const target = state.users.find((u) => u.id === id);
+    if (!target) return toast("User not found");
+    if (target.status !== "pending_verification") return toast("User is not pending verification");
     if (verifyUserInFlight) return;
     verifyUserInFlight = true;
     try {
@@ -3418,6 +3421,9 @@ async function handleAction(action, id) {
   if (action === "reject-user") {
     if (currentUser()?.role !== "admin") return toast("Admin access required");
     if (!id) return toast("Invalid user");
+    const target = state.users.find((u) => u.id === id);
+    if (!target) return toast("User not found");
+    if (target.status !== "pending_verification") return toast("User is not pending verification");
     const ok = await askConfirmPopup("Reject Verification", "Reject this student's verification submission?", "Reject");
     if (!ok) return;
     if (rejectUserInFlight) return;
@@ -3438,6 +3444,7 @@ async function handleAction(action, id) {
     if (!id) return toast("Invalid user");
     const user = state.users.find((u) => u.id === id);
     if (!user) return toast("User not found");
+    if (user.role === "admin") return toast("Cannot ban admin account");
     if (banUserInFlight) return;
     const result = await showFormPopup("Ban / Warn User", `
       <form id="ban-user-form" class="grid">
@@ -3498,6 +3505,7 @@ async function handleAction(action, id) {
     if (handleReportInFlight) return;
     const report = state.reports.find((r) => r.id === id);
     if (!report) return;
+    if (report.status && report.status !== "pending") return toast("Report already handled");
     const targetPost = report.type === "post" ? state.posts.find((p) => p.id === report.targetId) : null;
     const targetUser = targetPost ? state.users.find((u) => u.id === targetPost.authorId) : null;
     const targetId = targetUser?.id || report.targetId;
@@ -3668,6 +3676,9 @@ async function handleAction(action, id) {
     const url = String(document.querySelector("#ad-url")?.value || "").trim();
     const allowedSlots = new Set(["top_banner", "feed_inline", "students_inline", "popup"]);
     if (!slot || !title) return toast("Slot and title are required");
+    if (title.length > 120) return toast("Title is too long");
+    if (body.length > 320) return toast("Body is too long");
+    if (url.length > 500) return toast("URL is too long");
     if (!allowedSlots.has(slot)) return toast("Invalid ad slot");
     createAdInFlight = true;
     try {

@@ -1126,14 +1126,16 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { questions: items, pagination });
     }
     const question = String(body.question || "").trim().slice(0, MAX_TEXT_LEN);
+    const visibility = String(body.visibility || "public").trim().toLowerCase();
     if (!question) return sendJson(res, 400, { error: "Question is required" });
     if (profileId === user.id) return sendJson(res, 400, { error: "You cannot ask yourself a question" });
+    if (!["public", "private"].includes(visibility)) return sendJson(res, 400, { error: "Invalid visibility" });
     const entry = {
       id: id("qna"),
       profileId,
       askerId: user.id,
       anonymous: Boolean(body.anonymous),
-      visibility: body.visibility === "private" ? "private" : "public",
+      visibility,
       question,
       answer: "",
       createdAt: now()
@@ -1228,6 +1230,7 @@ async function handleApi(req, res, url) {
   if (method === "POST" && url.pathname === "/api/suggestions") {
     const user = requireAuth(req, res);
     if (!user) return;
+    if (user.role === "admin") return sendJson(res, 403, { error: "Admins cannot submit suggestions" });
     const text = String(body.text || "").trim().slice(0, 1000);
     if (!text) return sendJson(res, 400, { error: "Suggestion text is required" });
     const suggestion = {

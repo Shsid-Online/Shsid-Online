@@ -700,3 +700,13 @@
   - Added in-flight dedupe lock for ad create action.
   - Added in-flight dedupe locks for ad toggle/delete actions.
   - Validation: `npm run check` passed.
+- 2026-05-13: Suggestion/Q&A policy parity + admin stale-target guard batch.
+  - Backend parity hardening (Worker + Node):
+    - `POST /suggestions` now rejects admin submissions (`403`) to match product policy.
+    - Q&A question creation now strictly validates `visibility` to only `public|private`.
+  - Frontend admin-action hardening (`public/src/app.js`):
+    - Verify/reject verification actions now require target user existence and `pending_verification` status.
+    - Ban action now blocks admin targets early on frontend.
+    - Report-handle action now blocks already-handled reports (`status !== pending`).
+    - Ad create action now enforces length bounds for title/body/url before API call.
+  - Validation: `npm run check` passed.
