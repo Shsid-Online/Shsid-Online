@@ -1156,7 +1156,7 @@ async function handleApi(req, res, url) {
     const answer = String(body.answer || "").trim().slice(0, MAX_TEXT_LEN);
     if (!answer) return sendJson(res, 400, { error: "Answer is required" });
     entry.answer = answer;
-    if (entry.askerId) {
+    if (entry.askerId && entry.askerId !== user.id) {
       store.data.notifications.push({
         id: id("ntf"),
         userId: entry.askerId,

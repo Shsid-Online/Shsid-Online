@@ -1042,7 +1042,7 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("update qna set answer=? where id=?").bind(answer, entry.id).run();
     const updated = await env.DB.prepare("select * from qna where id=?").bind(entry.id).first();
     await audit(env, authUser.id, "qna_answered", { qnaId: entry.id, profileId: entry.profile_id }, request);
-    if (entry.asker_id) {
+    if (entry.asker_id && entry.asker_id !== authUser.id) {
       await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
         .bind(id("ntf"), entry.asker_id, "qna", "Your Q&A question got a reply.", null, now())
         .run();

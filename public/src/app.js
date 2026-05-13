@@ -2906,6 +2906,19 @@ async function handleAction(action, id) {
     state.deletedChats = {};
     state.acceptedRequests = {};
     state.rejectedRequests = {};
+    state.selectedProfileId = null;
+    profileBackView = "students";
+    deepLinkedPostId = "";
+    openCommentPostId = null;
+    openReplyCommentKey = null;
+    adminTab = "overview";
+    adminChatMonitorFilter = "all";
+    adminActiveConversationId = "";
+    activeConversationId = "";
+    conversationTab = "inbox";
+    inputFileStore["message-media-file"] = [];
+    inputFileStore["message-doc-file"] = [];
+    inputFileStore["post-media"] = [];
     stopLiveChatLoop();
   }
   if (action === "create-post") {
@@ -3118,6 +3131,10 @@ async function handleAction(action, id) {
   }
   if (action === "follow") {
     if (!id) return toast("Invalid user");
+    const target = state.users.find((item) => item.id === id);
+    if (!target) return toast("User not found");
+    if (target.role === "admin" || target.status !== "verified") return toast("Only verified students can be followed");
+    if (target.id === user.id) return toast("You cannot follow yourself");
     const result = await apiRequest(`/users/${id}/follow`, { method: "POST", body: JSON.stringify({}) });
     mergeApiUsers([result.user]);
   }
@@ -3164,6 +3181,7 @@ async function handleAction(action, id) {
   if (action === "send-message") {
     const conversation = state.conversations.find((item) => item.id === id);
     if (!conversation || !id) return toast("Select a conversation first");
+    if (state.deletedChats?.[id]) return toast("Conversation not found");
     const firstAuthorId = conversation?.messages?.[0]?.authorId || "";
     const acceptedByLocal = Boolean(state.acceptedRequests?.[id]);
     const acceptedByReply = Boolean(firstAuthorId && (conversation?.messages || []).some((message) => message.authorId && message.authorId !== firstAuthorId));
@@ -3193,6 +3211,8 @@ async function handleAction(action, id) {
     await refreshConversations();
   }
   if (action === "edit-remark") {
+    if (!id) return toast("Invalid user");
+    if (!state.users.some((item) => item.id === id)) return toast("User not found");
     const existing = getRemarkForUser(id);
     const next = await askTextPopup("Set Remark", "Remark name", existing || "Enter remark");
     if (next == null) return;
@@ -3201,7 +3221,7 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "open-conv") {
-    if (!id || !state.conversations.some((item) => item.id === id)) return toast("Conversation not found");
+    if (!id || !state.conversations.some((item) => item.id === id) || state.deletedChats?.[id]) return toast("Conversation not found");
     activeConversationId = id;
   }
   if (action === "rename-conv") {
@@ -3591,6 +3611,9 @@ async function handleAction(action, id) {
   }
   if (action === "ask-qna") {
     if (!id || id === currentUser()?.id) return toast("You cannot ask yourself a question");
+    const target = state.users.find((item) => item.id === id);
+    if (!target) return toast("User not found");
+    if (target.role === "admin" || target.status !== "verified") return toast("Only verified students can receive questions");
     const payload = await askQnaPopup();
     if (!payload) return;
     await apiRequest(`/users/${id}/qna`, { method: "POST", body: JSON.stringify(payload) });

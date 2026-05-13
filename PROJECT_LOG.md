@@ -710,3 +710,14 @@
     - Report-handle action now blocks already-handled reports (`status !== pending`).
     - Ad create action now enforces length bounds for title/body/url before API call.
   - Validation: `npm run check` passed.
+- 2026-05-13: Session-reset + stale-target + Q&A self-notification hardening batch.
+  - Frontend (`public/src/app.js`):
+    - Expanded logout reset: clears selected profile, profile back target, deep-link post id, comment/reply open state, admin tab/filter state, active conversation state, chat tab, and message/post file stores.
+    - Follow action now validates target existence, role/status policy, and self-follow block before API call.
+    - Send-message now blocks attempts against locally deleted conversations.
+    - Edit-remark now validates target id/user existence before write.
+    - Open-conversation now blocks deleted/stale conversation targets.
+    - Ask-Q&A now validates target existence and verified-student policy.
+  - Backend parity:
+    - Worker + Node Q&A answer handlers now avoid sending notification when responder answers their own question entry (no self-notify).
+  - Validation: `npm run check` passed.
