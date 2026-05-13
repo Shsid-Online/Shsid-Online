@@ -590,3 +590,4 @@
 - Sanitized project log references that exposed local filesystem username/path and replaced deployment token mention with `[redacted]` text.
 - Local anonymity hardening: updated repo-local git identity to `shanghai-admin <no-reply@shsid.online>` for future commits; updated local `.env` personal email fields to non-personal addresses.
 - Validation: `npm run check` passed.
+- 2026-05-13: Aligned Node server OTP length to 6 digits to match Worker and frontend auth flow.
