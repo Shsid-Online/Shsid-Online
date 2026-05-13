@@ -2999,6 +2999,9 @@ async function handleAction(action, id) {
     openReplyCommentKey = null;
   }
   if (action === "submit-comment") {
+    if (!id) return toast("Invalid post");
+    const post = state.posts.find((item) => item.id === id);
+    if (!post) return toast("Post not found");
     const text = String(document.querySelector(`#comment-text-${id}`)?.value || "").trim();
     const anonymous = document.querySelector(`#comment-anon-${id}`)?.value === "true";
     if (!text) return toast("Enter a comment");
@@ -3008,7 +3011,10 @@ async function handleAction(action, id) {
   }
   if (action === "submit-reply") {
     const [postId, commentId] = String(id || "").split(":");
-    if (!postId || !commentId) return;
+    if (!postId || !commentId) return toast("Invalid reply target");
+    const post = state.posts.find((item) => item.id === postId);
+    if (!post) return toast("Post not found");
+    if (!(post.comments || []).some((comment) => comment.id === commentId)) return toast("Comment not found");
     const text = String(document.querySelector(`#reply-text-${postId}-${commentId}`)?.value || "").trim();
     const anonymous = document.querySelector(`#reply-anon-${postId}-${commentId}`)?.value === "true";
     if (!text) return toast("Enter a reply");
@@ -3182,18 +3188,22 @@ async function handleAction(action, id) {
     activeConversationId = next?.id || activeConversationId;
   }
   if (action === "accept-request") {
-    if (!id) return;
+    if (!id) return toast("Conversation not found");
+    if (!state.conversations.some((conversation) => conversation.id === id)) return toast("Conversation not found");
     if (!state.acceptedRequests || typeof state.acceptedRequests !== "object") state.acceptedRequests = {};
     state.acceptedRequests[id] = true;
+    if (state.rejectedRequests && typeof state.rejectedRequests === "object") delete state.rejectedRequests[id];
     saveState();
     conversationTab = "inbox";
     activeConversationId = id;
     toast("Request accepted");
   }
   if (action === "reject-request") {
-    if (!id) return;
+    if (!id) return toast("Conversation not found");
+    if (!state.conversations.some((conversation) => conversation.id === id)) return toast("Conversation not found");
     if (!state.rejectedRequests || typeof state.rejectedRequests !== "object") state.rejectedRequests = {};
     state.rejectedRequests[id] = true;
+    if (state.acceptedRequests && typeof state.acceptedRequests === "object") delete state.acceptedRequests[id];
     saveState();
     const next = classifyConversations().requests[0] || classifyConversations().inbox[0];
     activeConversationId = next?.id || "";
@@ -3289,10 +3299,11 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "admin-chat-filter") {
-    adminChatMonitorFilter = id || "all";
+    adminChatMonitorFilter = id === "direct" || id === "group" ? id : "all";
     adminActiveConversationId = "";
   }
   if (action === "admin-tab") {
+    if (user.role !== "admin") return toast("Admin access required");
     adminTab = id === "chat" ? "chat" : "overview";
     if (adminTab === "chat" && !state.conversations.length) await refreshConversations();
   }
@@ -3301,7 +3312,7 @@ async function handleAction(action, id) {
     adminActiveConversationId = id;
   }
   if (action === "new-group") {
-    const memberIds = [...new Set(state.users.filter((item) => item.id !== user.id && item.role !== "admin").map((item) => item.id))];
+    const memberIds = [...new Set(state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified").map((item) => item.id))];
     const peers = memberIds.length ? memberIds : state.users.filter((item) => item.id !== user.id).map((item) => item.id);
     if (!peers.length) return toast("No classmates to add yet");
     await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: peers, group: true, title: "New group chat" }) });
@@ -3312,6 +3323,8 @@ async function handleAction(action, id) {
   }
   if (action === "report-message") {
     if (!id) return toast("Select a conversation first");
+    const conversation = state.conversations.find((item) => item.id === id);
+    if (!conversation || state.deletedChats?.[id]) return toast("Conversation not found");
     const reason = await askTextPopup("Report Conversation", "Reason", "Describe the issue");
     if (!reason) return;
     await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "conversation", targetId: id, reason }) });

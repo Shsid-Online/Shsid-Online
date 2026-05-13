@@ -983,6 +983,7 @@ async function handleApi(request, env, url, route) {
     if (targetId === authUser.id) return json({ error: "Cannot follow yourself" }, 400);
     const target = await getUserById(env, targetId);
     if (!target || target.role !== "student") return json({ error: "Student not found" }, 404);
+    if (target.status !== "verified") return json({ error: "Only verified students can be followed" }, 400);
 
     const exists = await env.DB.prepare("select 1 from follows where follower_id=? and following_id=?").bind(authUser.id, targetId).first();
     if (exists) await env.DB.prepare("delete from follows where follower_id=? and following_id=?").bind(authUser.id, targetId).run();

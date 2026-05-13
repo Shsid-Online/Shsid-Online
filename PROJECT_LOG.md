@@ -642,3 +642,16 @@
   - Backend parity:
     - Worker + Node now cap Q&A question text to `MAX_TEXT_LEN` before storage.
   - Validation: `npm run check` passed.
+- 2026-05-13: Conversation/request-state and follow-validation hardening batch.
+  - Frontend (`public/src/app.js`):
+    - Added post/id existence guards for comment submit and reply submit flows.
+    - Added reply target validation so missing/invalid `postId:commentId` shows a clear toast.
+    - Added request accept/reject conversation existence guards.
+    - Fixed request-state consistency: accept now clears rejected-state; reject now clears accepted-state.
+    - Constrained admin chat monitor filter to supported values (`all|direct|group`).
+    - Added admin-role guard for admin tab switch action.
+    - Limited quick `new-group` member source to verified non-admin users.
+    - Hardened conversation report action to block reporting deleted/stale conversations.
+  - Backend parity:
+    - Worker + Node follow endpoints now require target student to be `verified`.
+  - Validation: `npm run check` passed.
