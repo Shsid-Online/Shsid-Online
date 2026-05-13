@@ -1,5 +1,6 @@
 const STORAGE_KEY = "shsid-social-state-v2";
 const LOGIN_MEDIA_CACHE_KEY = "shsid-login-media-cache-v1";
+const LOGIN_MEDIA_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const API_BASE = window.SHSID_API_BASE || (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost" ? "http://127.0.0.1:4174/api" : "https://www.shsid.online/api");
 const CONTENT_CATEGORIES = ["school", "lifestyle", "gaming", "academic", "shitpost"];
 
@@ -155,14 +156,37 @@ function loadLoginMediaCache() {
     const raw = localStorage.getItem(LOGIN_MEDIA_CACHE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const nowMs = Date.now();
+    const cleaned = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const userId = String(key || "").trim();
+      if (!userId) continue;
+      const updatedAt = Number(value?.updatedAt || 0);
+      if (!Number.isFinite(updatedAt) || nowMs - updatedAt > LOGIN_MEDIA_CACHE_MAX_AGE_MS) continue;
+      const itemsRaw = Array.isArray(value?.items) ? value.items : [];
+      const items = itemsRaw
+        .map((item) => ({
+          url: String(item?.url || "").trim(),
+          type: String(item?.type || "").trim().toLowerCase()
+        }))
+        .filter((item) => item.url && (item.type.startsWith("video/") || item.type.startsWith("image/")))
+        .slice(0, 14);
+      if (!items.length) continue;
+      cleaned[userId] = { updatedAt, items };
+    }
+    return cleaned;
   } catch {
     return {};
   }
 }
 
 function saveLoginMediaCache(cache) {
-  localStorage.setItem(LOGIN_MEDIA_CACHE_KEY, JSON.stringify(cache || {}));
+  try {
+    localStorage.setItem(LOGIN_MEDIA_CACHE_KEY, JSON.stringify(cache || {}));
+  } catch {
+    // Ignore storage quota or serialization failures.
+  }
 }
 
 function warmCachedLoginMedia(userId) {
@@ -177,6 +201,7 @@ function warmCachedLoginMedia(userId) {
 function rememberLoginMediaForUser(userId) {
   const key = String(userId || "").trim();
   if (!key) return;
+  const seen = new Set();
   const items = [];
   for (const post of state.posts || []) {
     for (const media of post?.media || []) {
@@ -185,6 +210,8 @@ function rememberLoginMediaForUser(userId) {
       const type = String(media.type || "").trim();
       if (!url) continue;
       if (!type.startsWith("video/") && !type.startsWith("image/")) continue;
+      if (seen.has(url)) continue;
+      seen.add(url);
       items.push({ url, type });
       if (items.length >= 14) break;
     }
@@ -192,6 +219,13 @@ function rememberLoginMediaForUser(userId) {
   }
   if (!items.length) return;
   const cache = loadLoginMediaCache();
+  const nextSignature = JSON.stringify(items);
+  const previousSignature = JSON.stringify(Array.isArray(cache[key]?.items) ? cache[key].items : []);
+  if (nextSignature === previousSignature) {
+    cache[key] = { ...(cache[key] || {}), updatedAt: Date.now(), items };
+    saveLoginMediaCache(cache);
+    return;
+  }
   cache[key] = { updatedAt: Date.now(), items };
   const keys = Object.keys(cache);
   if (keys.length > 6) {
@@ -2814,6 +2848,8 @@ function bindAuth() {
           render();
         }
         if (action === "logout") {
+          const logoutUserId = state.currentUserId;
+          if (logoutUserId) rememberLoginMediaForUser(logoutUserId);
           try {
             if (state.apiToken) await apiRequest("/auth/logout", { method: "POST", body: JSON.stringify({}) });
           } catch {
@@ -2821,6 +2857,7 @@ function bindAuth() {
           }
           state.apiToken = null;
           state.currentUserId = null;
+          clearApiCache();
           clearAuthDraftState();
           state.adminVerifications = [];
           state.authMode = "login";

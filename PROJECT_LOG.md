@@ -822,3 +822,12 @@
   - Effect:
     - Returning users see faster perceived feed load after login, especially first videos.
   - Validation: `npm run check` passed.
+- 2026-05-13: Bugfix pass for login media cache feature.
+  - Frontend (`public/src/app.js`):
+    - Hardened login-media cache parsing: rejects invalid payload shapes, strips bad items, and bounds entry size.
+    - Added max-age expiry (7 days) for cached login media entries to prevent stale forever preload attempts.
+    - Added localStorage write guards in login-media cache save path to avoid app-breaking quota exceptions.
+    - Deduplicated remembered media URLs before storing to reduce wasted preloads.
+    - Reduced write amplification by skipping full cache rewrites when media list signature is unchanged.
+    - Applied the same media snapshot + API cache clear behavior to auth-screen logout path (parity with main logout).
+  - Validation: `npm run check` passed.
