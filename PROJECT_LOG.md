@@ -862,3 +862,46 @@
   - Cause: duplicate `function stopUploadProgressTicker()` declaration in `public/src/app.js` after upload-overlay/progress refactors.
   - Fix: removed the later duplicate declaration and kept a single shared implementation.
   - Validation: `node --check public/src/app.js` passed.
+- 2026-05-13: Restored feed video autoplay behavior.
+  - Symptom: feed autoplay appeared broken even though autoplay scheduler was active.
+  - Cause: feed videos were explicitly set to `muted = false`, which can cause browser autoplay blocking.
+  - Fix (`public/src/app.js`): in `setupFeedVideoAutoplay()`, set `video.muted = true` so programmatic `video.play()` can autoplay reliably.
+  - Validation: `node --check public/src/app.js` passed.
+- 2026-05-13: Fixed admin report queue showing already-handled reports.
+  - Cause: `renderAdmin()` report table iterated over all `state.reports` instead of pending-only items.
+  - Fix (`public/src/app.js`): added `pendingReports` derived list (`status === "pending"`) and used it for queue count and table rows.
+  - UX: queue now shows `No pending reports.` when empty instead of keeping handled rows visible.
+  - Validation: `node --check public/src/app.js` passed.
+- 2026-05-13: Reduced feed video refresh on engagement actions (like/heart/comment/reply).
+  - Cause: `handleAction()` fell through to a global `render()` after these actions, rebuilding the full feed and resetting playing videos.
+  - Fix (`public/src/app.js`):
+    - Added `rerenderPostCard(postId, { preserveVideoPlayback })` to update only the affected post card.
+    - Helper snapshots per-video playback state (`src/currentTime/paused/muted/volume/rate`) and restores it after card rerender.
+    - Updated `like-post`, `heart-post`, `comment-post`, `close-comment`, `reply-comment`, `close-reply`, `submit-comment`, and `submit-reply` to use targeted rerender + early `return` instead of full-page rerender.
+  - Effect: interacting with one post no longer restarts unrelated feed videos.
+  - Validation: `node --check public/src/app.js` passed.
+- 2026-05-13: Follow-up fix for video reset during feed interactions.
+  - Additional cause: targeted post rerender still called `setupFeedVideoAutoplay()`, which can reshuffle/pause active autoplay state globally.
+  - Fix (`public/src/app.js`): made autoplay rebinding optional in `rerenderPostCard()` and defaulted it to `false` for engagement/comment UI updates.
+  - Effect: like/heart/comment interactions no longer trigger a global autoplay reset cycle.
+  - Validation: `node --check public/src/app.js` passed.
+- 2026-05-13: Fixed handled reports still appearing actionable in admin queue.
+  - Cause: report-handle submit flow refreshed `state.reports` but did not re-render Admin UI, leaving stale table rows/buttons visible in DOM.
+  - Fix (`public/src/app.js`): after `await refreshReports()` in `handle-report` submit path, call `render()`.
+  - Effect: handled reports disappear from pending queue immediately and are no longer available for handle in the current view.
+  - Validation: `node --check public/src/app.js` passed.
+- 2026-05-13: Upgraded notifications to be more informative with click-to-expand details.
+  - Frontend (`public/src/app.js`):
+    - Added notification helpers: `notificationTypeLabel`, `notificationSummary`, and `notificationDetails`.
+    - Replaced plain text notification lines with interactive notification cards showing type + relative time + summary.
+    - Added per-item expand/collapse behavior via `data-action="toggle-notification"` and `expandedNotificationId` state.
+    - Mark-all-read flow now clears expanded notification selection.
+  - Styling (`public/src/styles.css`):
+    - Added `.notification-card` styles, expanded state, header row, summary/details typography, and expand hint styles.
+  - Effect:
+    - Users see more context immediately and can press a notification to expand for full details.
+  - Validation: `node --check public/src/app.js` passed.
+- 2026-05-13: Compacted post action buttons using symbols/emojis to save space.
+  - Updated feed post action row (`public/src/app.js`) to use icon-first labels for heart/like/save/comment/share/report/pin/delete.
+  - Added `title` tooltips on these buttons to preserve clarity while reducing text footprint.
+  - Validation: `node --check public/src/app.js` passed.

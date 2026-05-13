@@ -1321,3 +1321,50 @@ body.modal-open {
 .auth-footer a:hover {
   text-decoration: underline;
 }
+
+.notification-card {
+  margin-top: 10px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  text-align: left;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.notification-card:hover {
+  background: #f8fafc;
+}
+
+.notification-card.expanded {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.notification-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.notification-summary {
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.notification-details {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.notification-expand-hint {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}

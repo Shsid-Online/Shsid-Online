@@ -57,6 +57,7 @@ let adminChatMonitorFilter = "all";
 let adminActiveConversationId = "";
 let adminTab = "overview";
 let profileBackView = "students";
+let expandedNotificationId = "";
 let isBootstrappingSession = false;
 let liveChatTimer = null;
 let liveChatPollInFlight = false;
@@ -984,6 +985,30 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function notificationTypeLabel(type) {
+  const key = String(type || "").trim().toLowerCase();
+  if (key === "post_like_private") return "Private Like";
+  if (key === "post_heart_public") return "Heart";
+  if (key === "post_comment") return "Comment";
+  if (key === "message_new") return "Message";
+  if (key === "verification") return "Verification";
+  if (key === "moderation") return "Moderation";
+  if (key === "qna") return "Q&A";
+  return "Notification";
+}
+
+function notificationSummary(item) {
+  const text = String(item?.text || "").trim();
+  if (!text) return "You have a new update.";
+  return text.length > 80 ? `${text.slice(0, 80)}...` : text;
+}
+
+function notificationDetails(item) {
+  const text = String(item?.text || "").trim();
+  if (!text) return "No additional details available.";
+  return text;
+}
+
 function parseJsonObject(value) {
   if (!value) return {};
   if (typeof value === "object") return value;
@@ -1618,7 +1643,8 @@ function setupFeedVideoAutoplay() {
     scheduleFeedVideoPlaybackSync();
   }, { threshold: [0, 0.2, 0.45, 0.65, 0.85, 1] });
   videos.forEach((video) => {
-    video.muted = false;
+    // Keep feed autoplay compliant with browser policies.
+    video.muted = true;
     video.playsInline = true;
     video.preload = "auto";
     feedVideoObserver.observe(video);
@@ -2168,14 +2194,14 @@ function renderPost(post) {
         </div>
       ` : ""}
       <div class="post-actions">
-        <button class="btn small" data-action="heart-post" data-id="${post.id}">${hearted ? "Hearted" : "Heart"} · ${hearts.length}</button>
-        <button class="btn small" data-action="like-post" data-id="${post.id}">${liked ? "Private liked" : "Thumb like"} · ${likes.length}</button>
-        <button class="btn small" data-action="save-post" data-id="${post.id}">${saved ? "Saved" : "Save"} · ${saves.length}</button>
-        <button class="btn small" data-action="comment-post" data-id="${post.id}">Comment</button>
-        <button class="btn small" data-action="share-post" data-id="${post.id}">Share</button>
-        <button class="btn small" data-action="report-post" data-id="${post.id}">Report</button>
-        ${isAdmin ? `<button class="btn small" data-action="toggle-sticky" data-id="${post.id}">${post.sticky ? "Unpin" : "Pin"}</button>` : ""}
-        ${isAdmin || isOwner ? `<button class="btn small danger" data-action="delete-post" data-id="${post.id}">Delete</button>` : ""}
+        <button class="btn small" data-action="heart-post" data-id="${post.id}" title="Heart">${hearted ? "❤️" : "🤍"} ${hearts.length}</button>
+        <button class="btn small" data-action="like-post" data-id="${post.id}" title="Private like">${liked ? "👍" : "👍🏻"} ${likes.length}</button>
+        <button class="btn small" data-action="save-post" data-id="${post.id}" title="Save">${saved ? "🔖" : "📑"} ${saves.length}</button>
+        <button class="btn small" data-action="comment-post" data-id="${post.id}" title="Comment">💬</button>
+        <button class="btn small" data-action="share-post" data-id="${post.id}" title="Share">↗️</button>
+        <button class="btn small" data-action="report-post" data-id="${post.id}" title="Report">⚠️</button>
+        ${isAdmin ? `<button class="btn small" data-action="toggle-sticky" data-id="${post.id}" title="${post.sticky ? "Unpin" : "Pin"}">${post.sticky ? "📌" : "📍"}</button>` : ""}
+        ${isAdmin || isOwner ? `<button class="btn small danger" data-action="delete-post" data-id="${post.id}" title="Delete">🗑️</button>` : ""}
       </div>
     </article>
   `;
@@ -2582,6 +2608,7 @@ function renderSettings() {
 function renderAdmin() {
   if (currentUser().role !== "admin") return page("Unavailable", "Admin access required.", "");
   const pending = state.adminVerifications || [];
+  const pendingReports = (state.reports || []).filter((report) => (report.status || "pending") === "pending");
   const conversations = (state.conversations || []).slice().sort((a, b) => at(b.createdAt) - at(a.createdAt));
   const filteredConversations = conversations.filter((conversation) => {
     if (adminChatMonitorFilter === "direct") return !conversation.group;
@@ -2636,7 +2663,7 @@ function renderAdmin() {
       ` : `
       <div class="grid three">
         <div class="panel"><span class="muted">Pending verification</span><h2>${pending.length}</h2></div>
-        <div class="panel"><span class="muted">Open reports</span><h2>${state.reports.filter((r) => r.status === "pending").length}</h2></div>
+        <div class="panel"><span class="muted">Open reports</span><h2>${pendingReports.length}</h2></div>
         <div class="panel"><span class="muted">Audit events</span><h2>${state.audit.length}</h2></div>
       </div>
       <div class="panel admin-panel">
@@ -2651,7 +2678,7 @@ function renderAdmin() {
         <h2>Report Queue</h2>
         <div class="table-wrap">
           <table class="table"><thead><tr><th>Reporter</th><th>Reported User</th><th>Reason</th><th>Time</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-            ${state.reports.map((report) => {
+            ${pendingReports.map((report) => {
               const post = report.type === "post" ? state.posts.find((p) => p.id === report.targetId) : null;
               const reportedUser = post ? state.users.find((u) => u.id === post.authorId) : null;
               const preview = post ? (post.text?.slice(0, 60) || "Media post") : "View in system";
@@ -2663,7 +2690,7 @@ function renderAdmin() {
                 <td><span class="status ${report.status === "resolved" ? "green" : "gold"}">${escapeHtml(report.status)}</span></td>
                 <td><div class="admin-actions"><button class="btn small primary" data-action="handle-report" data-id="${report.id}">Handle</button></div></td>
               </tr>`;
-            }).join("")}
+            }).join("") || `<tr><td colspan="6" class="muted">No pending reports.</td></tr>`}
           </tbody></table>
         </div>
       </div>
@@ -2691,7 +2718,20 @@ function renderRightbar() {
     <div class="grid">
       <section class="panel">
         <div class="between"><strong>Notifications</strong><button class="btn small" data-action="mark-read">Read</button></div>
-        ${unread.length ? unread.map((n) => `<p class="comment" style="margin:10px 0 0">${escapeHtml(n.text)}</p>`).join("") : `<p class="muted">No unread notifications.</p>`}
+        ${unread.length ? unread.map((n) => {
+          const expanded = expandedNotificationId === n.id;
+          return `
+            <button class="notification-card ${expanded ? "expanded" : ""}" data-action="toggle-notification" data-id="${n.id}" type="button">
+              <div class="notification-head">
+                <strong>${escapeHtml(notificationTypeLabel(n.type))}</strong>
+                <span class="muted">${escapeHtml(timeAgo(n.createdAt))}</span>
+              </div>
+              <p class="notification-summary">${escapeHtml(notificationSummary(n))}</p>
+              ${expanded ? `<p class="notification-details">${escapeHtml(notificationDetails(n))}</p>` : ""}
+              <span class="notification-expand-hint">${expanded ? "Collapse" : "Tap for details"}</span>
+            </button>
+          `;
+        }).join("") : `<p class="muted">No unread notifications.</p>`}
       </section>
       <section class="panel">
         <strong>Post of the Day</strong>
@@ -2736,6 +2776,16 @@ function renderNotificationsPanelOnly() {
       const id = button.dataset.id || "";
       if (!id) return;
       await handleAction("open-post-day", id);
+    };
+  });
+  rightbar.querySelectorAll('[data-action="toggle-notification"]').forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const id = button.dataset.id || "";
+      if (!id) return;
+      expandedNotificationId = expandedNotificationId === id ? "" : id;
+      renderNotificationsPanelOnly();
     };
   });
 }
@@ -3228,6 +3278,9 @@ async function handleAction(action, id) {
       const result = await apiRequest(`/posts/${id}/like`, { method: "POST", body: JSON.stringify({}) });
       const idx = state.posts.findIndex((item) => item.id === id);
       if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+      saveState();
+      rerenderPostCard(id, { preserveVideoPlayback: true });
+      return;
     } catch (err) { console.error("like-post failed", err); }
   }
   if (action === "heart-post") {
@@ -3236,6 +3289,9 @@ async function handleAction(action, id) {
       const result = await apiRequest(`/posts/${id}/heart`, { method: "POST", body: JSON.stringify({}) });
       const idx = state.posts.findIndex((item) => item.id === id);
       if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+      saveState();
+      rerenderPostCard(id, { preserveVideoPlayback: true });
+      return;
     } catch (err) { console.error("heart-post failed", err); }
   }
   if (action === "save-post") {
@@ -3272,9 +3328,18 @@ async function handleAction(action, id) {
     if (!id) return toast("Invalid post");
     if (!state.posts.some((item) => item.id === id)) return toast("Post not found");
     openCommentPostId = openCommentPostId === id ? null : id;
+    saveState();
+    rerenderPostCard(id, { preserveVideoPlayback: true });
+    return;
   }
   if (action === "close-comment") {
+    const targetPostId = openCommentPostId;
     openCommentPostId = null;
+    if (targetPostId && state.posts.some((item) => item.id === targetPostId)) {
+      saveState();
+      rerenderPostCard(targetPostId, { preserveVideoPlayback: true });
+      return;
+    }
   }
   if (action === "reply-comment") {
     const [postId, commentId] = String(id || "").split(":");
@@ -3282,9 +3347,19 @@ async function handleAction(action, id) {
     const post = state.posts.find((item) => item.id === postId);
     if (!post || !(post.comments || []).some((comment) => comment.id === commentId)) return toast("Comment not found");
     openReplyCommentKey = openReplyCommentKey === id ? null : id;
+    saveState();
+    rerenderPostCard(postId, { preserveVideoPlayback: true });
+    return;
   }
   if (action === "close-reply") {
+    const priorKey = openReplyCommentKey;
     openReplyCommentKey = null;
+    const priorPostId = String(priorKey || "").split(":")[0];
+    if (priorPostId && state.posts.some((item) => item.id === priorPostId)) {
+      saveState();
+      rerenderPostCard(priorPostId, { preserveVideoPlayback: true });
+      return;
+    }
   }
   if (action === "submit-comment") {
     if (!id) return toast("Invalid post");
@@ -3296,6 +3371,9 @@ async function handleAction(action, id) {
     await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous }) });
     openCommentPostId = null;
     await refreshPosts();
+    saveState();
+    rerenderPostCard(id, { preserveVideoPlayback: true });
+    return;
   }
   if (action === "submit-reply") {
     const [postId, commentId] = String(id || "").split(":");
@@ -3309,6 +3387,9 @@ async function handleAction(action, id) {
     await apiRequest(`/posts/${postId}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous, replyTo: commentId }) });
     openReplyCommentKey = null;
     await refreshPosts();
+    saveState();
+    rerenderPostCard(postId, { preserveVideoPlayback: true });
+    return;
   }
   if (action === "report-post") {
     if (!id) return toast("Invalid post");
@@ -3864,6 +3945,7 @@ async function handleAction(action, id) {
         toast(reportAction === "dismiss" ? "Report dismissed" : "Action taken");
         await refreshReports();
         if (targetId) await refreshStudents();
+        render();
       } finally {
         handleReportInFlight = false;
       }
@@ -3877,6 +3959,7 @@ async function handleAction(action, id) {
     try {
       await apiRequest("/notifications/read-all", { method: "POST", body: JSON.stringify({}) });
       await refreshNotifications();
+      expandedNotificationId = "";
       saveState();
       renderNotificationsPanelOnly();
     } finally {
@@ -4141,6 +4224,45 @@ function updatePostMediaCarousel(postId) {
   setupMediaLoadingIndicators(card);
   setupFeedVideoAutoplay();
   preloadPostMediaAround(postId);
+}
+
+function rerenderPostCard(postId, { preserveVideoPlayback = true, rebindAutoplay = false } = {}) {
+  const post = state.posts.find((item) => item.id === postId);
+  const oldCard = document.querySelector(`article.card[data-post-id="${postId}"]`);
+  if (!post || !oldCard) return false;
+  const oldVideoStates = preserveVideoPlayback
+    ? [...oldCard.querySelectorAll("video.media-video")].map((video) => ({
+      src: video.currentSrc || video.src || "",
+      currentTime: Number(video.currentTime || 0),
+      paused: Boolean(video.paused),
+      muted: Boolean(video.muted),
+      volume: Number(video.volume ?? 1),
+      playbackRate: Number(video.playbackRate || 1)
+    }))
+    : [];
+  oldCard.outerHTML = renderPost(post);
+  const nextCard = document.querySelector(`article.card[data-post-id="${postId}"]`);
+  if (!nextCard) return false;
+  setupMediaLoadingIndicators(nextCard);
+  if (rebindAutoplay) setupFeedVideoAutoplay();
+  preloadPostMediaAround(postId);
+  if (!preserveVideoPlayback || !oldVideoStates.length) return true;
+  const nextVideos = [...nextCard.querySelectorAll("video.media-video")];
+  for (const state of oldVideoStates) {
+    if (!state.src) continue;
+    const nextVideo = nextVideos.find((video) => (video.currentSrc || video.src || "") === state.src);
+    if (!nextVideo) continue;
+    try {
+      if (Number.isFinite(state.currentTime) && state.currentTime > 0) nextVideo.currentTime = state.currentTime;
+      nextVideo.muted = state.muted;
+      nextVideo.volume = Number.isFinite(state.volume) ? state.volume : nextVideo.volume;
+      nextVideo.playbackRate = Number.isFinite(state.playbackRate) ? state.playbackRate : nextVideo.playbackRate;
+      if (!state.paused) nextVideo.play().catch(() => {});
+    } catch {
+      // Ignore media restore failures.
+    }
+  }
+  return true;
 }
 
 function preloadVisiblePostMedia() {
