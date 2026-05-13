@@ -71,6 +71,13 @@ let startChatInFlight = false;
 let suggestionSubmitInFlight = false;
 let suggestionReplyInFlight = false;
 let markReadInFlight = false;
+let createAdInFlight = false;
+let toggleAdInFlight = false;
+let deleteAdInFlight = false;
+let verifyUserInFlight = false;
+let rejectUserInFlight = false;
+let banUserInFlight = false;
+let handleReportInFlight = false;
 let modalLockedScrollY = 0;
 const postMediaIndexByPostId = {};
 let feedVideoObserver = null;
@@ -3274,15 +3281,12 @@ async function handleAction(action, id) {
       button.addEventListener("click", async () => {
         if (button.dataset.busy === "1") return;
         button.dataset.busy = "1";
-        const targetId = button.getAttribute("data-direct-target");
-        if (!targetId) return toast("Invalid target");
-        const target = choices.find((item) => item.id === targetId);
-        const mode = await askIdentityModePopup(target?.englishName || "student");
-        if (!mode) {
-          button.dataset.busy = "0";
-          return;
-        }
         try {
+          const targetId = button.getAttribute("data-direct-target");
+          if (!targetId) return toast("Invalid target");
+          const target = choices.find((item) => item.id === targetId);
+          const mode = await askIdentityModePopup(target?.englishName || "student");
+          if (!mode) return;
           const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: [targetId], group: false }) });
           setConversationIdentityMode(result.conversation.id, mode);
           conversationTab = "sent";
@@ -3334,10 +3338,6 @@ async function handleAction(action, id) {
       event.preventDefault();
       const submitBtn = popup.querySelector('button[type="submit"]');
       if (submitBtn?.dataset.busy === "1") return;
-      if (submitBtn) {
-        submitBtn.dataset.busy = "1";
-        submitBtn.disabled = true;
-      }
       const memberIds = [...popup.querySelectorAll("[data-convo-member]:checked")].map((input) => input.value).filter(Boolean);
       if (!memberIds.length) return toast("Select at least one member");
       const allowedIds = new Set(choices.map((item) => item.id));
@@ -3345,6 +3345,10 @@ async function handleAction(action, id) {
       if (invalidMember) return toast("Invalid member selected");
       const title = String(popup.querySelector("#create-convo-title")?.value || "").trim();
       const payload = { memberIds, group: memberIds.length > 1, title: title || undefined };
+      if (submitBtn) {
+        submitBtn.dataset.busy = "1";
+        submitBtn.disabled = true;
+      }
       try {
         const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
         popup.remove();
@@ -3396,28 +3400,45 @@ async function handleAction(action, id) {
     if (user.role === "admin") await refreshReports();
   }
   if (action === "verify-user") {
+    if (currentUser()?.role !== "admin") return toast("Admin access required");
     if (!id) return toast("Invalid user");
-    await apiRequest(`/admin/verifications/${id}`, {
-      method: "POST",
-      body: JSON.stringify({ decision: "approve" })
-    });
-    await refreshAdminVerifications();
-    await refreshStudents();
+    if (verifyUserInFlight) return;
+    verifyUserInFlight = true;
+    try {
+      await apiRequest(`/admin/verifications/${id}`, {
+        method: "POST",
+        body: JSON.stringify({ decision: "approve" })
+      });
+      await refreshAdminVerifications();
+      await refreshStudents();
+    } finally {
+      verifyUserInFlight = false;
+    }
   }
   if (action === "reject-user") {
+    if (currentUser()?.role !== "admin") return toast("Admin access required");
     if (!id) return toast("Invalid user");
     const ok = await askConfirmPopup("Reject Verification", "Reject this student's verification submission?", "Reject");
     if (!ok) return;
-    await apiRequest(`/admin/verifications/${id}`, {
-      method: "POST",
-      body: JSON.stringify({ decision: "reject" })
-    });
-    await refreshAdminVerifications();
-    await refreshStudents();
+    if (rejectUserInFlight) return;
+    rejectUserInFlight = true;
+    try {
+      await apiRequest(`/admin/verifications/${id}`, {
+        method: "POST",
+        body: JSON.stringify({ decision: "reject" })
+      });
+      await refreshAdminVerifications();
+      await refreshStudents();
+    } finally {
+      rejectUserInFlight = false;
+    }
   }
   if (action === "ban-user") {
+    if (currentUser()?.role !== "admin") return toast("Admin access required");
     if (!id) return toast("Invalid user");
     const user = state.users.find((u) => u.id === id);
+    if (!user) return toast("User not found");
+    if (banUserInFlight) return;
     const result = await showFormPopup("Ban / Warn User", `
       <form id="ban-user-form" class="grid">
         <p><strong>${escapeHtml(user?.englishName || "Unknown")}</strong> (${escapeHtml(user?.chineseName || "")})</p>
@@ -3455,18 +3476,26 @@ async function handleAction(action, id) {
       if (!reason) return toast("Please enter a reason");
       const days = banAction === "ban_temp" ? parseInt(result.querySelector("#ban-days")?.value || "7", 10) : 0;
       if (banAction === "ban_temp" && (!Number.isInteger(days) || days < 1 || days > 365)) return toast("Days must be between 1 and 365");
-      await apiRequest(`/admin/bans/${id}/user`, {
-        method: "POST",
-        body: JSON.stringify({ action: banAction, reason, days })
-      });
-      result.remove();
-      toast(banAction === "warn" ? "Warning sent" : "User banned");
-      await refreshAdminVerifications();
-      await refreshStudents();
+      if (banUserInFlight) return;
+      banUserInFlight = true;
+      try {
+        await apiRequest(`/admin/bans/${id}/user`, {
+          method: "POST",
+          body: JSON.stringify({ action: banAction, reason, days })
+        });
+        result.remove();
+        toast(banAction === "warn" ? "Warning sent" : "User banned");
+        await refreshAdminVerifications();
+        await refreshStudents();
+      } finally {
+        banUserInFlight = false;
+      }
     });
     return;
   }
   if (action === "handle-report") {
+    if (currentUser()?.role !== "admin") return toast("Admin access required");
+    if (handleReportInFlight) return;
     const report = state.reports.find((r) => r.id === id);
     if (!report) return;
     const targetPost = report.type === "post" ? state.posts.find((p) => p.id === report.targetId) : null;
@@ -3517,19 +3546,24 @@ async function handleAction(action, id) {
       if (reportAction !== "dismiss" && !reason) return toast("Please enter a reason for non-dismiss actions");
       const days = reportAction === "ban_temp" ? parseInt(result.querySelector("#report-days")?.value || "7", 10) : 0;
       if (reportAction === "ban_temp" && (!Number.isInteger(days) || days < 1 || days > 365)) return toast("Days must be between 1 and 365");
-      if (reportAction === "dismiss") {
-        await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "dismissed" }) });
-      } else if (targetId && targetId !== report.reporterId) {
-        await apiRequest(`/admin/bans/${targetId}/user`, {
-          method: "POST",
-          body: JSON.stringify({ action: reportAction, reason, days })
-        });
-        await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "actioned" }) });
+      handleReportInFlight = true;
+      try {
+        if (reportAction === "dismiss") {
+          await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "dismissed" }) });
+        } else if (targetId && targetId !== report.reporterId) {
+          await apiRequest(`/admin/bans/${targetId}/user`, {
+            method: "POST",
+            body: JSON.stringify({ action: reportAction, reason, days })
+          });
+          await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "actioned" }) });
+        }
+        result.remove();
+        toast(reportAction === "dismiss" ? "Report dismissed" : "Action taken");
+        await refreshReports();
+        if (targetId) await refreshStudents();
+      } finally {
+        handleReportInFlight = false;
       }
-      result.remove();
-      toast(reportAction === "dismiss" ? "Report dismissed" : "Action taken");
-      await refreshReports();
-      if (targetId) await refreshStudents();
     });
     return;
   }
@@ -3626,6 +3660,8 @@ async function handleAction(action, id) {
     }
   }
   if (action === "create-ad") {
+    if (currentUser()?.role !== "admin") return toast("Admin access required");
+    if (createAdInFlight) return;
     const slot = String(document.querySelector("#ad-slot")?.value || "").trim();
     const title = String(document.querySelector("#ad-title")?.value || "").trim();
     const body = String(document.querySelector("#ad-body")?.value || "").trim();
@@ -3633,31 +3669,48 @@ async function handleAction(action, id) {
     const allowedSlots = new Set(["top_banner", "feed_inline", "students_inline", "popup"]);
     if (!slot || !title) return toast("Slot and title are required");
     if (!allowedSlots.has(slot)) return toast("Invalid ad slot");
-    await apiRequest("/admin/ads", { method: "POST", body: JSON.stringify({ slot, title, body, url, active: true }) });
-    const titleInput = document.querySelector("#ad-title");
-    const bodyInput = document.querySelector("#ad-body");
-    const urlInput = document.querySelector("#ad-url");
-    if (titleInput) titleInput.value = "";
-    if (bodyInput) bodyInput.value = "";
-    if (urlInput) urlInput.value = "";
-    await refreshAds();
-    toast("Ad created");
+    createAdInFlight = true;
+    try {
+      await apiRequest("/admin/ads", { method: "POST", body: JSON.stringify({ slot, title, body, url, active: true }) });
+      const titleInput = document.querySelector("#ad-title");
+      const bodyInput = document.querySelector("#ad-body");
+      const urlInput = document.querySelector("#ad-url");
+      if (titleInput) titleInput.value = "";
+      if (bodyInput) bodyInput.value = "";
+      if (urlInput) urlInput.value = "";
+      await refreshAds();
+      toast("Ad created");
+    } finally {
+      createAdInFlight = false;
+    }
   }
   if (action === "toggle-ad") {
     if (currentUser()?.role !== "admin") return toast("Admin access required");
     if (!id) return toast("Invalid ad");
     if (!(state.ads || []).some((ad) => ad.id === id)) return toast("Ad not found");
-    await apiRequest(`/admin/ads/${id}/toggle`, { method: "POST", body: JSON.stringify({}) });
-    await refreshAds();
-    toast("Ad updated");
+    if (toggleAdInFlight) return;
+    toggleAdInFlight = true;
+    try {
+      await apiRequest(`/admin/ads/${id}/toggle`, { method: "POST", body: JSON.stringify({}) });
+      await refreshAds();
+      toast("Ad updated");
+    } finally {
+      toggleAdInFlight = false;
+    }
   }
   if (action === "delete-ad") {
     if (currentUser()?.role !== "admin") return toast("Admin access required");
     if (!id) return toast("Invalid ad");
     if (!(state.ads || []).some((ad) => ad.id === id)) return toast("Ad not found");
-    await apiRequest(`/admin/ads/${id}`, { method: "DELETE", body: JSON.stringify({}) });
-    await refreshAds();
-    toast("Ad deleted");
+    if (deleteAdInFlight) return;
+    deleteAdInFlight = true;
+    try {
+      await apiRequest(`/admin/ads/${id}`, { method: "DELETE", body: JSON.stringify({}) });
+      await refreshAds();
+      toast("Ad deleted");
+    } finally {
+      deleteAdInFlight = false;
+    }
   }
   saveState();
   render();

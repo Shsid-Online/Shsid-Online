@@ -688,3 +688,15 @@
   - Backend parity (`server/server.js`):
     - Added missing Node endpoint `POST /api/qna/:id/answer` with auth/ownership checks, answer length cap, notification fanout to asker, audit log write, and persistence.
   - Validation: `npm run check` passed.
+- 2026-05-13: Admin/moderation guard + busy-state deadlock hardening batch.
+  - Fixed direct-message picker busy deadlock by ensuring busy state is reset via `finally` on all paths.
+  - Fixed create-conversation submit deadlock: busy/disabled state now starts only after validation passes.
+  - Added admin-role enforcement to `verify-user`, `reject-user`, `ban-user`, and `handle-report` actions.
+  - Added explicit target-user existence check in `ban-user` flow.
+  - Added in-flight dedupe locks for verification approval/rejection actions.
+  - Added in-flight dedupe lock for ban submit action.
+  - Added in-flight dedupe lock for report-handle submit action.
+  - Added admin-role enforcement to `create-ad` action.
+  - Added in-flight dedupe lock for ad create action.
+  - Added in-flight dedupe locks for ad toggle/delete actions.
+  - Validation: `npm run check` passed.
