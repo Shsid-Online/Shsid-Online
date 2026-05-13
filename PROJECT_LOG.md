@@ -665,3 +665,14 @@
     - Fixed chat tab switching to clear stale active conversation ids when target tab has no conversations.
     - Added auth guard to notification mark-read action.
   - Validation: `npm run check` passed.
+- 2026-05-13: UX/state hardening batch: load-more, reporting, and chat creation guards.
+  - Added `loadMorePostsInFlight` lock to prevent duplicate concurrent feed page loads.
+  - Added existence guard for `comment-post` opener to avoid opening composer for stale/deleted posts.
+  - Hardened report flows (`report-post`, `report-message`) to trim reason and reject whitespace-only submissions.
+  - Constrained `profile-back` target view to a whitelist to avoid accidental invalid route state.
+  - Blocked admin role from student direct/group-chat creation shortcuts (`open-start-direct`, `open-create-convo`).
+  - Added missing admin-role guard to `admin-chat-filter` action.
+  - Tightened `new-group` behavior: only verified classmates are eligible; removed fallback that could include non-verified users.
+  - Suggestion UX: clear student suggestion textarea after successful submit.
+  - Suggestion admin reply now caps response length locally to 280 chars before API call.
+  - Validation: `npm run check` passed.

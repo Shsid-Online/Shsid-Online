@@ -66,6 +66,7 @@ let uploadTargetPercent = 0;
 let uploadProgressTimer = null;
 let uploadCompleting = false;
 let postPublishInFlight = false;
+let loadMorePostsInFlight = false;
 let modalLockedScrollY = 0;
 const postMediaIndexByPostId = {};
 let feedVideoObserver = null;
@@ -2940,13 +2941,19 @@ async function handleAction(action, id) {
   }
   if (action === "load-more-posts") {
     if (postsNextOffset == null) return;
+    if (loadMorePostsInFlight) return;
+    loadMorePostsInFlight = true;
     const container = document.querySelector("#load-more-container");
     if (container) container.innerHTML = `<span class="muted">Loading...</span>`;
-    await refreshPosts(false);
-    if (container) {
-      container.innerHTML = postsNextOffset != null
-        ? `<button class="btn" data-action="load-more-posts">Load more posts</button>`
-        : "";
+    try {
+      await refreshPosts(false);
+      if (container) {
+        container.innerHTML = postsNextOffset != null
+          ? `<button class="btn" data-action="load-more-posts">Load more posts</button>`
+          : "";
+      }
+    } finally {
+      loadMorePostsInFlight = false;
     }
   }
   if (action === "like-post") {
@@ -2991,6 +2998,7 @@ async function handleAction(action, id) {
   }
   if (action === "comment-post") {
     if (!id) return toast("Invalid post");
+    if (!state.posts.some((item) => item.id === id)) return toast("Post not found");
     openCommentPostId = openCommentPostId === id ? null : id;
   }
   if (action === "close-comment") {
@@ -3033,8 +3041,9 @@ async function handleAction(action, id) {
   if (action === "report-post") {
     if (!id) return toast("Invalid post");
     const reason = await askTextPopup("Report Post", "Reason", "Describe the issue");
-    if (!reason) return;
-    await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "post", targetId: id, reason }) });
+    const cleanReason = String(reason || "").trim();
+    if (!cleanReason) return;
+    await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "post", targetId: id, reason: cleanReason }) });
     if (user.role === "admin") await refreshReports();
   }
   if (action === "share-post") {
@@ -3110,7 +3119,7 @@ async function handleAction(action, id) {
   }
   if (action === "profile-back") {
     state.selectedProfileId = null;
-    const nextView = profileBackView || "students";
+    const nextView = ["students", "messages", "admin", "feed"].includes(profileBackView) ? profileBackView : "students";
     view = nextView === "profile" ? "students" : nextView;
     if (view === "admin" && user.role !== "admin") view = "students";
     if (view === "students") await refreshStudents();
@@ -3227,6 +3236,7 @@ async function handleAction(action, id) {
     toast("Request rejected");
   }
   if (action === "open-start-direct") {
+    if (user.role === "admin") return toast("Admin cannot start direct student chats here");
     const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified");
     if (!choices.length) return toast("No verified students available");
     const popup = showFormPopup("Start Direct Message", `
@@ -3265,6 +3275,7 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "open-create-convo") {
+    if (user.role === "admin") return toast("Admin cannot create student chats here");
     const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified");
     const popup = showFormPopup("Create Conversation", `
       <form id="create-convo-form" class="grid">
@@ -3316,6 +3327,7 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "admin-chat-filter") {
+    if (user.role !== "admin") return toast("Admin access required");
     adminChatMonitorFilter = id === "direct" || id === "group" ? id : "all";
     adminActiveConversationId = "";
   }
@@ -3330,9 +3342,8 @@ async function handleAction(action, id) {
   }
   if (action === "new-group") {
     const memberIds = [...new Set(state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified").map((item) => item.id))];
-    const peers = memberIds.length ? memberIds : state.users.filter((item) => item.id !== user.id).map((item) => item.id);
-    if (!peers.length) return toast("No classmates to add yet");
-    await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: peers, group: true, title: "New group chat" }) });
+    if (!memberIds.length) return toast("No verified classmates to add yet");
+    await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds, group: true, title: "New group chat" }) });
     await refreshConversations();
     const visible = state.conversations.find((item) => !state.deletedChats?.[item.id]);
     activeConversationId = visible?.id || state.conversations[0]?.id;
@@ -3343,8 +3354,9 @@ async function handleAction(action, id) {
     const conversation = state.conversations.find((item) => item.id === id);
     if (!conversation || state.deletedChats?.[id]) return toast("Conversation not found");
     const reason = await askTextPopup("Report Conversation", "Reason", "Describe the issue");
-    if (!reason) return;
-    await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "conversation", targetId: id, reason }) });
+    const cleanReason = String(reason || "").trim();
+    if (!cleanReason) return;
+    await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "conversation", targetId: id, reason: cleanReason }) });
     if (user.role === "admin") await refreshReports();
   }
   if (action === "verify-user") {
@@ -3541,6 +3553,8 @@ async function handleAction(action, id) {
     const text = String(document.querySelector("#suggestion-text")?.value || "").trim();
     if (!text) return toast("Write a suggestion first");
     await apiRequest("/suggestions", { method: "POST", body: JSON.stringify({ text }) });
+    const input = document.querySelector("#suggestion-text");
+    if (input) input.value = "";
     await refreshSuggestions();
     toast("Suggestion submitted");
   }
@@ -3551,7 +3565,7 @@ async function handleAction(action, id) {
     if (!target) return toast("Suggestion not found");
     const response = await askTextPopup("Respond to Suggestion", "Response", "Write your response");
     if (response == null) return;
-    const clean = String(response).trim();
+    const clean = String(response).trim().slice(0, 280);
     if (!clean) return toast("Response is required");
     await apiRequest(`/admin/suggestions/${id}`, { method: "POST", body: JSON.stringify({ response: clean }) });
     await refreshSuggestions();
