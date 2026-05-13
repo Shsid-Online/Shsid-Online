@@ -731,3 +731,13 @@
   - Backend parity (Worker + Node):
     - Q&A routes now enforce target profile policy: only verified student profiles support Q&A.
   - Validation: `npm run check` passed.
+- 2026-05-13: Messaging eligibility + backend transition-state hardening batch.
+  - Frontend (`public/src/app.js`):
+    - Direct/group chat creation actions now require current user to be verified (`open-start-direct`, `open-create-convo`, `new-group`).
+    - Added admin-target block to verify/reject actions.
+    - Asking Q&A now requires sender to be verified unless admin.
+  - Backend parity (Worker + Node):
+    - Conversation creation now enforces direct-chat shape (`group=false` must include exactly one other member).
+    - Admin verification review now rejects non-pending targets (`status` must be `pending_verification`).
+    - Admin report handling now rejects already-handled reports (`status !== pending`).
+  - Validation: `npm run check` passed.

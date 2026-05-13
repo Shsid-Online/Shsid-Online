@@ -912,6 +912,7 @@ async function handleApi(req, res, url) {
       }
     }
     const group = Boolean(body.group);
+    if (!group && uniqueMembers.length !== 2) return sendJson(res, 400, { error: "Direct conversations must include exactly one other user" });
     let title = String(body.title || "").trim();
     if (!title) {
       if (group) title = "Group chat";
@@ -1283,6 +1284,7 @@ async function handleApi(req, res, url) {
     if (!admin) return;
     const user = store.findUserById(verifyMatch[1]);
     if (!user) return notFound(res);
+    if (user.status !== "pending_verification") return sendJson(res, 400, { error: "User is not pending verification" });
     const requestedDecision = String(body.decision || "").trim().toLowerCase();
     if (!VERIFICATION_DECISIONS.has(requestedDecision)) return sendJson(res, 400, { error: "Invalid verification decision" });
     const decision = requestedDecision === "approve" ? "verified" : "rejected";
@@ -1307,6 +1309,7 @@ async function handleApi(req, res, url) {
     if (!admin) return;
     const report = store.data.reports.find((item) => item.id === reportMatch[1]);
     if (!report) return notFound(res);
+    if (report.status && report.status !== "pending") return sendJson(res, 400, { error: "Report already handled" });
     const nextStatus = String(body.status || "resolved").trim().toLowerCase();
     if (!REPORT_STATUSES.has(nextStatus)) return sendJson(res, 400, { error: "Invalid report status" });
     report.status = nextStatus;

@@ -907,6 +907,7 @@ async function handleApi(request, env, url, route) {
       }
     }
     const group = Boolean(body.group);
+    if (!group && members.length !== 2) return json({ error: "Direct conversations must include exactly one other user" }, 400);
 
     let title = String(body.title || "").trim();
     if (!title) title = group ? "Group chat" : "Direct message";
@@ -1169,6 +1170,7 @@ async function handleApi(request, env, url, route) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const user = await getUserById(env, adminVerifyMatch[1]);
     if (!user) return json({ error: "Not found" }, 404);
+    if (user.status !== "pending_verification") return json({ error: "User is not pending verification" }, 400);
     const requestedDecision = String(body.decision || "").trim().toLowerCase();
     if (!VERIFICATION_DECISIONS.has(requestedDecision)) return json({ error: "Invalid verification decision" }, 400);
     const decision = requestedDecision === "approve" ? "verified" : "rejected";
@@ -1207,6 +1209,7 @@ async function handleApi(request, env, url, route) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const report = await env.DB.prepare("select * from reports where id=?").bind(adminReportMatch[1]).first();
     if (!report) return json({ error: "Not found" }, 404);
+    if (report.status && report.status !== "pending") return json({ error: "Report already handled" }, 400);
     const status = String(body.status || "resolved").trim().toLowerCase();
     if (!REPORT_STATUSES.has(status)) return json({ error: "Invalid report status" }, 400);
     const adminNotes = String(body.adminNotes || report.admin_notes || "");

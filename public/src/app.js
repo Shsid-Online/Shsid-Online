@@ -3296,6 +3296,7 @@ async function handleAction(action, id) {
   }
   if (action === "open-start-direct") {
     if (user.role === "admin") return toast("Admin cannot start direct student chats here");
+    if (user.status !== "verified") return toast("Verification required before messaging");
     const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified");
     if (!choices.length) return toast("No verified students available");
     const popup = showFormPopup("Start Direct Message", `
@@ -3341,6 +3342,7 @@ async function handleAction(action, id) {
   }
   if (action === "open-create-convo") {
     if (user.role === "admin") return toast("Admin cannot create student chats here");
+    if (user.status !== "verified") return toast("Verification required before messaging");
     const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified");
     const popup = showFormPopup("Create Conversation", `
       <form id="create-convo-form" class="grid">
@@ -3419,6 +3421,7 @@ async function handleAction(action, id) {
     adminActiveConversationId = id;
   }
   if (action === "new-group") {
+    if (user.status !== "verified") return toast("Verification required before messaging");
     const memberIds = [...new Set(state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified").map((item) => item.id))];
     if (!memberIds.length) return toast("No verified classmates to add yet");
     await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds, group: true, title: "New group chat" }) });
@@ -3442,6 +3445,7 @@ async function handleAction(action, id) {
     if (!id) return toast("Invalid user");
     const target = state.users.find((u) => u.id === id);
     if (!target) return toast("User not found");
+    if (target.role === "admin") return toast("Cannot verify admin account");
     if (target.status !== "pending_verification") return toast("User is not pending verification");
     if (verifyUserInFlight) return;
     verifyUserInFlight = true;
@@ -3461,6 +3465,7 @@ async function handleAction(action, id) {
     if (!id) return toast("Invalid user");
     const target = state.users.find((u) => u.id === id);
     if (!target) return toast("User not found");
+    if (target.role === "admin") return toast("Cannot reject admin account");
     if (target.status !== "pending_verification") return toast("User is not pending verification");
     const ok = await askConfirmPopup("Reject Verification", "Reject this student's verification submission?", "Reject");
     if (!ok) return;
@@ -3629,6 +3634,7 @@ async function handleAction(action, id) {
   }
   if (action === "ask-qna") {
     if (!id || id === currentUser()?.id) return toast("You cannot ask yourself a question");
+    if (user.role !== "admin" && user.status !== "verified") return toast("Verification required to ask questions");
     const target = state.users.find((item) => item.id === id);
     if (!target) return toast("User not found");
     if (target.role === "admin" || target.status !== "verified") return toast("Only verified students can receive questions");
