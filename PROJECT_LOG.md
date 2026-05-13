@@ -721,3 +721,13 @@
   - Backend parity:
     - Worker + Node Q&A answer handlers now avoid sending notification when responder answers their own question entry (no self-notify).
   - Validation: `npm run check` passed.
+- 2026-05-13: Membership/privacy reset and Q&A target-policy hardening batch.
+  - Frontend (`public/src/app.js`):
+    - Expanded logout cleanup to clear cached user/content/admin data arrays (users, posts, conversations, notifications, suggestions, reports, audit logs, verifications, qna, ads).
+    - Send-message action now validates current-user membership for non-admins (blocks stale/non-member sends).
+    - Open-conversation action now validates current-user membership for non-admins.
+    - Edit-remark now blocks self-remark writes.
+    - Ask-Q&A now validates non-empty question payload before request.
+  - Backend parity (Worker + Node):
+    - Q&A routes now enforce target profile policy: only verified student profiles support Q&A.
+  - Validation: `npm run check` passed.

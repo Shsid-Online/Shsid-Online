@@ -2906,6 +2906,16 @@ async function handleAction(action, id) {
     state.deletedChats = {};
     state.acceptedRequests = {};
     state.rejectedRequests = {};
+    state.users = [];
+    state.posts = [];
+    state.conversations = [];
+    state.notifications = [];
+    state.suggestions = [];
+    state.reports = [];
+    state.auditLogs = [];
+    state.adminVerifications = [];
+    state.qna = [];
+    state.ads = [];
     state.selectedProfileId = null;
     profileBackView = "students";
     deepLinkedPostId = "";
@@ -3182,6 +3192,9 @@ async function handleAction(action, id) {
     const conversation = state.conversations.find((item) => item.id === id);
     if (!conversation || !id) return toast("Select a conversation first");
     if (state.deletedChats?.[id]) return toast("Conversation not found");
+    const meId = currentUser()?.id;
+    if (!meId) return toast("Please log in first");
+    if (currentUser()?.role !== "admin" && !(conversation.members || []).includes(meId)) return toast("Conversation not found");
     const firstAuthorId = conversation?.messages?.[0]?.authorId || "";
     const acceptedByLocal = Boolean(state.acceptedRequests?.[id]);
     const acceptedByReply = Boolean(firstAuthorId && (conversation?.messages || []).some((message) => message.authorId && message.authorId !== firstAuthorId));
@@ -3213,6 +3226,7 @@ async function handleAction(action, id) {
   if (action === "edit-remark") {
     if (!id) return toast("Invalid user");
     if (!state.users.some((item) => item.id === id)) return toast("User not found");
+    if (id === currentUser()?.id) return toast("You cannot set a remark for yourself");
     const existing = getRemarkForUser(id);
     const next = await askTextPopup("Set Remark", "Remark name", existing || "Enter remark");
     if (next == null) return;
@@ -3222,6 +3236,10 @@ async function handleAction(action, id) {
   }
   if (action === "open-conv") {
     if (!id || !state.conversations.some((item) => item.id === id) || state.deletedChats?.[id]) return toast("Conversation not found");
+    const convo = state.conversations.find((item) => item.id === id);
+    const meId = currentUser()?.id;
+    if (!meId) return toast("Please log in first");
+    if (currentUser()?.role !== "admin" && !(convo?.members || []).includes(meId)) return toast("Conversation not found");
     activeConversationId = id;
   }
   if (action === "rename-conv") {
@@ -3616,6 +3634,7 @@ async function handleAction(action, id) {
     if (target.role === "admin" || target.status !== "verified") return toast("Only verified students can receive questions");
     const payload = await askQnaPopup();
     if (!payload) return;
+    if (!String(payload.question || "").trim()) return toast("Question is required");
     await apiRequest(`/users/${id}/qna`, { method: "POST", body: JSON.stringify(payload) });
     await refreshQnaForProfile(id);
   }

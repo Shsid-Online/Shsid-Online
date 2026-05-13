@@ -1000,6 +1000,7 @@ async function handleApi(request, env, url, route) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     const profile = await getUserById(env, qnaMatch[1]);
     if (!profile) return json({ error: "Not found" }, 404);
+    if (profile.role !== "student" || profile.status !== "verified") return json({ error: "Q&A is only available for verified students" }, 400);
 
     if (method === "GET") {
       const visibilityFilter = authUser.role === "admin" || authUser.id === profile.id ? null : "public";

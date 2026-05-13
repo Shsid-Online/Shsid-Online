@@ -1118,6 +1118,7 @@ async function handleApi(req, res, url) {
     const profileId = userQnaMatch[1];
     const profile = store.findUserById(profileId);
     if (!profile) return notFound(res);
+    if (profile.role !== "student" || profile.status !== "verified") return sendJson(res, 400, { error: "Q&A is only available for verified students" });
     if (method === "GET") {
       const visibility = user.role === "admin" || user.id === profileId ? null : "public";
       let rows = store.data.qna.filter((row) => row.profileId === profileId);
