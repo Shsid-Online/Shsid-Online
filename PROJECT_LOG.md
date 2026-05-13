@@ -905,3 +905,10 @@
   - Updated feed post action row (`public/src/app.js`) to use icon-first labels for heart/like/save/comment/share/report/pin/delete.
   - Added `title` tooltips on these buttons to preserve clarity while reducing text footprint.
   - Validation: `node --check public/src/app.js` passed.
+- 2026-05-13: Fixed pin/unpin reliability and updated post action symbols to Instagram-like compact icons.
+  - Pin fix (`public/src/app.js`):
+    - `toggle-sticky` now handles API result directly, updates target post in local state, rerenders only that card, and shows explicit success/failure toast.
+    - Added error handling so failures no longer silently look like no-op.
+  - Icon update (`public/src/app.js`):
+    - Switched action labels to cleaner social-style symbols (`♡/♥︎`, `💬`, `✈︎`, `🔖/⌑`, `⚑`, `🗑`, etc.) with tooltips retained.
+  - Validation: `node --check public/src/app.js` passed.

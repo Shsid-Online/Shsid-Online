@@ -2194,14 +2194,14 @@ function renderPost(post) {
         </div>
       ` : ""}
       <div class="post-actions">
-        <button class="btn small" data-action="heart-post" data-id="${post.id}" title="Heart">${hearted ? "❤️" : "🤍"} ${hearts.length}</button>
+        <button class="btn small" data-action="heart-post" data-id="${post.id}" title="Heart">${hearted ? "♥︎" : "♡"} ${hearts.length}</button>
         <button class="btn small" data-action="like-post" data-id="${post.id}" title="Private like">${liked ? "👍" : "👍🏻"} ${likes.length}</button>
-        <button class="btn small" data-action="save-post" data-id="${post.id}" title="Save">${saved ? "🔖" : "📑"} ${saves.length}</button>
+        <button class="btn small" data-action="save-post" data-id="${post.id}" title="Save">${saved ? "🔖" : "⌑"} ${saves.length}</button>
         <button class="btn small" data-action="comment-post" data-id="${post.id}" title="Comment">💬</button>
-        <button class="btn small" data-action="share-post" data-id="${post.id}" title="Share">↗️</button>
-        <button class="btn small" data-action="report-post" data-id="${post.id}" title="Report">⚠️</button>
+        <button class="btn small" data-action="share-post" data-id="${post.id}" title="Share">✈︎</button>
+        <button class="btn small" data-action="report-post" data-id="${post.id}" title="Report">⚑</button>
         ${isAdmin ? `<button class="btn small" data-action="toggle-sticky" data-id="${post.id}" title="${post.sticky ? "Unpin" : "Pin"}">${post.sticky ? "📌" : "📍"}</button>` : ""}
-        ${isAdmin || isOwner ? `<button class="btn small danger" data-action="delete-post" data-id="${post.id}" title="Delete">🗑️</button>` : ""}
+        ${isAdmin || isOwner ? `<button class="btn small danger" data-action="delete-post" data-id="${post.id}" title="Delete">🗑</button>` : ""}
       </div>
     </article>
   `;
@@ -3437,8 +3437,19 @@ async function handleAction(action, id) {
     if (!id) return toast("Invalid post");
     const post = state.posts.find((item) => item.id === id);
     if (!post) return;
-    await apiRequest(`/posts/${id}`, { method: "PATCH", body: JSON.stringify({ sticky: !post.sticky }) });
-    await refreshPosts();
+    try {
+      const result = await apiRequest(`/posts/${id}`, { method: "PATCH", body: JSON.stringify({ sticky: !post.sticky }) });
+      const idx = state.posts.findIndex((item) => item.id === id);
+      if (idx >= 0 && result?.post) state.posts[idx] = normalizePost(result.post);
+      saveState();
+      if (view === "feed" || view === "single-post") rerenderPostCard(id, { preserveVideoPlayback: true });
+      toast(result?.post?.sticky ? "Pinned" : "Unpinned");
+      return;
+    } catch (error) {
+      console.error("toggle-sticky failed", error);
+      toast("Pin update failed");
+      return;
+    }
   }
   if (action === "delete-post") {
     if (!id) return toast("Invalid post");
