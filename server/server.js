@@ -872,6 +872,21 @@ async function handleApi(req, res, url) {
     if (!reason) return sendJson(res, 400, { error: "Report reason is required" }, req);
     if (!REPORT_TARGET_TYPES.has(targetType)) return sendJson(res, 400, { error: "Invalid report target type" }, req);
     if (!targetId) return sendJson(res, 400, { error: "Report target is required" }, req);
+    if (targetType === "post") {
+      const targetPost = store.data.posts.find((item) => item.id === targetId && !item.deletedAt);
+      if (!targetPost) return sendJson(res, 404, { error: "Report target not found" }, req);
+    }
+    if (targetType === "conversation") {
+      const targetConversation = store.data.conversations.find((item) => item.id === targetId);
+      if (!targetConversation) return sendJson(res, 404, { error: "Report target not found" }, req);
+    }
+    const duplicatePending = store.data.reports.find((item) =>
+      item.reporterId === user.id
+      && item.targetType === targetType
+      && item.targetId === targetId
+      && item.status === "pending"
+    );
+    if (duplicatePending) return sendJson(res, 409, { error: "Report already pending for this target" }, req);
     const report = {
       id: id("rpt"),
       reporterId: user.id,
@@ -914,6 +929,16 @@ async function handleApi(req, res, url) {
     }
     const group = Boolean(body.group);
     if (!group && uniqueMembers.length !== 2) return sendJson(res, 400, { error: "Direct conversations must include exactly one other user" });
+    if (!group) {
+      const existingDirect = store.data.conversations.find((item) =>
+        !item.group
+        && Array.isArray(item.members)
+        && item.members.length === 2
+        && item.members.includes(uniqueMembers[0])
+        && item.members.includes(uniqueMembers[1])
+      );
+      if (existingDirect) return sendJson(res, 200, { conversation: existingDirect });
+    }
     let title = String(body.title || "").trim();
     if (!title) {
       if (group) title = "Group chat";

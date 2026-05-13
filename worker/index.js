@@ -699,6 +699,18 @@ async function handleApi(request, env, url, route) {
     if (!reason) return json({ error: "Report reason is required" }, 400);
     if (!REPORT_TARGET_TYPES.has(targetType)) return json({ error: "Invalid report target type" }, 400);
     if (!targetId) return json({ error: "Report target is required" }, 400);
+    if (targetType === "post") {
+      const targetPost = await env.DB.prepare("select id from posts where id=? and deleted_at is null").bind(targetId).first();
+      if (!targetPost) return json({ error: "Report target not found" }, 404);
+    }
+    if (targetType === "conversation") {
+      const targetConversation = await env.DB.prepare("select id from conversations where id=?").bind(targetId).first();
+      if (!targetConversation) return json({ error: "Report target not found" }, 404);
+    }
+    const duplicatePending = await env.DB.prepare("select id from reports where reporter_id=? and target_type=? and target_id=? and status='pending' limit 1")
+      .bind(authUser.id, targetType, targetId)
+      .first();
+    if (duplicatePending) return json({ error: "Report already pending for this target" }, 409);
     const report = {
       id: id("rpt"),
       reporter_id: authUser.id,
@@ -909,6 +921,27 @@ async function handleApi(request, env, url, route) {
     }
     const group = Boolean(body.group);
     if (!group && members.length !== 2) return json({ error: "Direct conversations must include exactly one other user" }, 400);
+    if (!group) {
+      const existingRows = await env.DB.prepare("select * from conversations where is_group=0").all();
+      const existingDirect = (existingRows.results || []).find((row) => {
+        const rowMembers = jsonArray(row.members);
+        return rowMembers.length === 2 && rowMembers.includes(members[0]) && rowMembers.includes(members[1]);
+      });
+      if (existingDirect) {
+        const existingMeta = unpackConversationTitle(existingDirect.title);
+        return json({
+          conversation: {
+            id: existingDirect.id,
+            title: existingMeta.title,
+            settings: sanitizeConversationSettings(existingMeta.settings || {}, members),
+            members,
+            group: false,
+            messages: [],
+            createdAt: existingDirect.created_at
+          }
+        }, 200);
+      }
+    }
 
     let title = String(body.title || "").trim();
     if (!title) title = group ? "Group chat" : "Direct message";

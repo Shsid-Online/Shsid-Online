@@ -757,3 +757,16 @@
     - Report handling now surfaces an explicit error for non-actionable report targets instead of silently no-oping.
     - Single-member conversation create flow now prompts identity mode and persists it, matching direct-start behavior.
   - Validation: `npm run check` passed.
+- 2026-05-13: Report-integrity + direct-conversation dedupe hardening batch.
+  - Frontend (`public/src/app.js`):
+    - Added verified-user gate before follow action (prevents avoidable 403 roundtrip).
+    - Added verified-user gate before start-chat action.
+    - Added verified-user gate before suggestion submit action.
+  - Backend Node (`server/server.js`):
+    - Report creation now validates target existence for `post` and `conversation` targets.
+    - Report creation now blocks duplicate pending reports by same reporter for same target/type (`409`).
+    - Direct conversation create now deduplicates existing 1:1 threads and returns existing conversation instead of creating duplicates.
+  - Backend Worker (`worker/index.js`) parity:
+    - Same report target validation and duplicate-pending-report guard.
+    - Same direct-conversation dedupe behavior for non-group chats.
+  - Validation: `npm run check` passed.

@@ -3141,6 +3141,7 @@ async function handleAction(action, id) {
   }
   if (action === "follow") {
     if (!id) return toast("Invalid user");
+    if (user.role !== "admin" && user.status !== "verified") return toast("Verification required before following");
     const target = state.users.find((item) => item.id === id);
     if (!target) return toast("User not found");
     if (target.role === "admin" || target.status !== "verified") return toast("Only verified students can be followed");
@@ -3171,6 +3172,7 @@ async function handleAction(action, id) {
   }
   if (action === "start-chat") {
     if (!id) return toast("Invalid user");
+    if (user.role !== "admin" && user.status !== "verified") return toast("Verification required before messaging");
     if (startChatInFlight) return;
     const target = state.users.find((item) => item.id === id);
     if (!target || target.role === "admin" || target.status !== "verified") return toast("Only verified students can be messaged");
@@ -3688,6 +3690,7 @@ async function handleAction(action, id) {
   }
   if (action === "submit-suggestion") {
     if (currentUser()?.role === "admin") return toast("Admins cannot submit suggestions");
+    if (currentUser()?.status !== "verified") return toast("Verification required before submitting suggestions");
     if (suggestionSubmitInFlight) return;
     const text = String(document.querySelector("#suggestion-text")?.value || "").trim();
     if (!text) return toast("Write a suggestion first");
