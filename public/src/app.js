@@ -68,6 +68,26 @@ let uploadTargetPercent = 0;
 let uploadProgressTimer = null;
 let uploadCompleting = false;
 let postPublishInFlight = false;
+
+function stopLiveChatLoop() {
+  if (liveChatTimer) {
+    clearInterval(liveChatTimer);
+    liveChatTimer = null;
+  }
+}
+
+function stopVerificationQueueLoop() {
+  if (verificationQueueTimer) {
+    clearInterval(verificationQueueTimer);
+    verificationQueueTimer = null;
+  }
+}
+
+function stopUploadProgressTicker() {
+  if (!uploadProgressTimer) return;
+  clearInterval(uploadProgressTimer);
+  uploadProgressTimer = null;
+}
 let loadMorePostsInFlight = false;
 let startChatInFlight = false;
 let suggestionSubmitInFlight = false;
@@ -93,17 +113,19 @@ let feedVideoLastSwitchAt = 0;
 let feedVideoSeekingVideo = null;
 let feedVideoSeekingUntil = 0;
 let feedVideoVisibilityListenerBound = false;
-const feedVideoUserPaused = new WeakSet();
-const feedVideoProgrammaticPause = new WeakSet();
-const feedVideoControlsBound = new WeakSet();
+const feedVideoUserPaused = new Set();
+const feedVideoProgrammaticPause = new Set();
+const feedVideoControlsBound = new Set();
 const preloadedMediaUrls = new Set();
 const loadedMediaUrls = new Set();
+const MEDIA_URL_MAX = 200;
 const inputFileStore = {};
 const inputFileSyncLock = new Set();
 let feedAheadPrefetchInFlight = false;
 let categoryPrefetchInFlight = false;
 let feedCategoryWarmDone = false;
 const prefetchedCategoryPosts = Object.fromEntries(CONTENT_CATEGORIES.map((category) => [category, []]));
+const CATEGORY_POSTS_MAX = 50;
 const API_CACHE_TTL = {
   posts: 20_000,
   students: 60_000,
@@ -116,9 +138,18 @@ const API_CACHE_TTL = {
   verificationQueue: 5_000
 };
 const apiResponseCache = new Map();
+const API_CACHE_MAX_SIZE = 100;
 
 function clearApiCache() {
   apiResponseCache.clear();
+}
+
+function evictApiCache() {
+  if (apiResponseCache.size <= API_CACHE_MAX_SIZE) return;
+  const entries = [...apiResponseCache.entries()];
+  entries.sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+  const toRemove = entries.slice(0, Math.floor(API_CACHE_MAX_SIZE * 0.3));
+  toRemove.forEach(([key]) => apiResponseCache.delete(key));
 }
 
 hydrateAuthFromUrl();
@@ -170,7 +201,7 @@ function loadLoginMediaCache() {
           url: String(item?.url || "").trim(),
           type: String(item?.type || "").trim().toLowerCase()
         }))
-        .filter((item) => item.url && (item.type.startsWith("video/") || item.type.startsWith("image/")))
+        .filter((item) => item.url && item.type && (item.type.startsWith("video/") || item.type.startsWith("image/")))
         .slice(0, 14);
       if (!items.length) continue;
       cleaned[userId] = { updatedAt, items };
@@ -666,10 +697,22 @@ async function ensurePostsAhead() {
 
 async function refreshPosts(reset = true) {
   if (!state.apiToken) return;
+  if (view === "feed" && reset) {
+    resetFeedVideoState();
+    pauseAllFeedVideos();
+  }
   try {
     const offset = reset ? 0 : (postsNextOffset ?? 0);
     const { posts: next, pagination } = await fetchPostsPage({ offset, limit: 10 });
-    state.posts = reset ? next : [...state.posts, ...next];
+    if (reset) {
+      state.posts = next;
+    } else {
+      const MAX_POSTS = 200;
+      const existingIds = new Set(state.posts.map((p) => p.id));
+      const newPosts = next.filter((p) => !existingIds.has(p.id));
+      const combined = [...state.posts, ...newPosts];
+      state.posts = combined.length > MAX_POSTS ? combined.slice(-MAX_POSTS) : combined;
+    }
     postsNextOffset = pagination?.nextOffset ?? null;
     if (state.currentUserId) rememberLoginMediaForUser(state.currentUserId);
     warmUserAssetCache();
@@ -1047,13 +1090,19 @@ function renderFatalUi(message) {
 
 window.addEventListener("error", (event) => {
   const message = event?.error?.stack || event?.message || "Unknown client error";
-  renderFatalUi(message);
+  console.error("Uncaught error:", message);
+  if (!event?.error?.message?.includes("ResizeObserver")) {
+    renderFatalUi(message);
+  }
 });
 
 window.addEventListener("unhandledrejection", (event) => {
   const reason = event?.reason;
   const message = reason?.stack || reason?.message || String(reason || "Unhandled promise rejection");
-  renderFatalUi(message);
+  console.error("Unhandled rejection:", message);
+  if (!message.includes("ensurePostsAhead") && !message.includes("warmCategoryPools")) {
+    renderFatalUi(message);
+  }
 });
 
 function showPopup(title, message) {
@@ -1484,14 +1533,20 @@ function syncMostVisibleFeedVideo() {
   }
   for (const video of videos) {
     if (seekLocked && video === feedVideoSeekingVideo) continue;
-    if (video !== winner || winnerRatio < 0.45 || feedVideoUserPaused.has(video)) {
+    if (video !== winner || winnerRatio < 0.45) {
       if (!video.paused) {
         feedVideoProgrammaticPause.add(video);
         video.pause();
       }
       continue;
     }
-    if (feedVideoUserPaused.has(video)) continue;
+    if (feedVideoUserPaused.has(video)) {
+      if (!video.paused) {
+        feedVideoProgrammaticPause.add(video);
+        video.pause();
+      }
+      continue;
+    }
     if (video.paused) {
       const tryPlay = () => video.play().catch(() => {
         // Ignore autoplay blocks; user can still tap play.
@@ -1510,13 +1565,37 @@ function pauseAllFeedVideos() {
   feedVideoCurrentAutoplay = null;
 }
 
+function pauseAllVideos() {
+  document.querySelectorAll("video").forEach((video) => {
+    if (!video.paused) {
+      video.pause();
+    }
+  });
+  feedVideoCurrentAutoplay = null;
+  feedVideoUserPaused.clear();
+  feedVideoProgrammaticPause.clear();
+}
+
+function resetFeedVideoState() {
+  feedVideoCurrentAutoplay = null;
+  feedVideoLastSwitchAt = 0;
+  feedVideoSeekingVideo = null;
+  feedVideoSeekingUntil = 0;
+  feedVideoManualControlVideo = null;
+  feedVideoManualControlUntil = 0;
+  feedVideoUserPaused.clear();
+  feedVideoProgrammaticPause.clear();
+  feedVideoControlsBound.clear();
+  feedVideoVisibility.clear();
+  if (feedVideoObserver) {
+    feedVideoObserver.disconnect();
+    feedVideoObserver = null;
+  }
+}
+
 function setupFeedVideoAutoplay() {
   if (view !== "feed") {
-    if (feedVideoObserver) {
-      feedVideoObserver.disconnect();
-      feedVideoObserver = null;
-    }
-    feedVideoVisibility.clear();
+    resetFeedVideoState();
     pauseAllFeedVideos();
     return;
   }
@@ -1679,20 +1758,6 @@ function conversationsSnapshot() {
     l: conv.messages?.[conv.messages.length - 1]?.id || "",
     t: conv.messages?.[conv.messages.length - 1]?.createdAt || ""
   })));
-}
-
-function stopLiveChatLoop() {
-  if (liveChatTimer) {
-    clearInterval(liveChatTimer);
-    liveChatTimer = null;
-  }
-}
-
-function stopVerificationQueueLoop() {
-  if (verificationQueueTimer) {
-    clearInterval(verificationQueueTimer);
-    verificationQueueTimer = null;
-  }
 }
 
 async function refreshVerificationQueue() {
@@ -2752,9 +2817,24 @@ function bindEvents() {
       if (!nextView) return;
       const isSwap = nextView !== view;
       if (!isSwap) return;
+      const wasFeed = view === "feed";
+      const wasMessages = view === "messages";
+      const wasAdmin = view === "admin";
+      const wasSinglePost = view === "single-post";
       view = nextView;
       if (view === "profile") {
         state.selectedProfileId = null;
+      }
+      if (wasFeed) pauseAllVideos();
+      if (wasMessages) stopLiveChatLoop();
+      if (wasAdmin) stopVerificationQueueLoop();
+      if (wasSinglePost && view !== "single-post") {
+        deepLinkedPostId = "";
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("post");
+          window.history.replaceState({}, "", url.toString());
+        } catch {}
       }
       render();
       state.adSwapCount = Number(state.adSwapCount || 0) + 1;
@@ -2797,12 +2877,16 @@ function bindEvents() {
     const query = String(event.target.value || "").trim();
     state.feedSearchQuery = query;
     saveState();
+    resetFeedVideoState();
+    pauseAllFeedVideos();
     render();
   };
   const feedFilter = document.querySelector("#feed-engagement-filter");
   if (feedFilter) feedFilter.onchange = (event) => {
     state.feedEngagementFilter = String(event.target.value || "all");
     saveState();
+    resetFeedVideoState();
+    pauseAllFeedVideos();
     render();
   };
 
@@ -2999,7 +3083,8 @@ function bindAuth() {
     event.preventDefault();
     try {
       setAuthInFlight(true);
-      const videoFile = document.querySelector("#reg-video").files[0];
+      const videoInput = document.querySelector("#reg-video");
+      const videoFile = videoInput?.files?.[0];
       if (!videoFile) return toast("Upload a verification video");
       if (!(videoFile.type || "").startsWith("video/")) return toast("Please upload a valid video file.");
       state.pendingVideoName = videoFile.name;
@@ -3131,6 +3216,7 @@ async function handleAction(action, id) {
     if (container) container.innerHTML = `<span class="muted">Loading...</span>`;
     try {
       await refreshPosts(false);
+      resetFeedVideoState();
       if (container) {
         container.innerHTML = postsNextOffset != null
           ? `<button class="btn" data-action="load-more-posts">Load more posts</button>`
@@ -3139,24 +3225,32 @@ async function handleAction(action, id) {
     } finally {
       loadMorePostsInFlight = false;
     }
+    render();
+    return;
   }
   if (action === "like-post") {
     if (!id) return toast("Invalid post");
-    const result = await apiRequest(`/posts/${id}/like`, { method: "POST", body: JSON.stringify({}) });
-    const idx = state.posts.findIndex((item) => item.id === id);
-    if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+    try {
+      const result = await apiRequest(`/posts/${id}/like`, { method: "POST", body: JSON.stringify({}) });
+      const idx = state.posts.findIndex((item) => item.id === id);
+      if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+    } catch (err) { console.error("like-post failed", err); }
   }
   if (action === "heart-post") {
     if (!id) return toast("Invalid post");
-    const result = await apiRequest(`/posts/${id}/heart`, { method: "POST", body: JSON.stringify({}) });
-    const idx = state.posts.findIndex((item) => item.id === id);
-    if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+    try {
+      const result = await apiRequest(`/posts/${id}/heart`, { method: "POST", body: JSON.stringify({}) });
+      const idx = state.posts.findIndex((item) => item.id === id);
+      if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+    } catch (err) { console.error("heart-post failed", err); }
   }
   if (action === "save-post") {
     if (!id) return toast("Invalid post");
-    const result = await apiRequest(`/posts/${id}/save`, { method: "POST", body: JSON.stringify({}) });
-    const idx = state.posts.findIndex((item) => item.id === id);
-    if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+    try {
+      const result = await apiRequest(`/posts/${id}/save`, { method: "POST", body: JSON.stringify({}) });
+      const idx = state.posts.findIndex((item) => item.id === id);
+      if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+    } catch (err) { console.error("save-post failed", err); }
   }
   if (action === "media-prev") {
     if (!id) return toast("Invalid post");
@@ -3240,6 +3334,7 @@ async function handleAction(action, id) {
   }
   if (action === "open-post-day") {
     if (!id) return toast("Invalid post");
+    const wasFeed = view === "feed";
     deepLinkedPostId = id;
     view = "single-post";
     await ensureDeepLinkedPostLoaded();
@@ -3248,6 +3343,7 @@ async function handleAction(action, id) {
       deepLinkedPostId = "";
       return toast("Post not found");
     }
+    if (wasFeed) pauseAllVideos();
     render();
     return;
   }
