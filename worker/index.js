@@ -1009,7 +1009,7 @@ async function handleApi(request, env, url, route) {
       return json({ questions, pagination: { limit: 100, offset: 0, total: questions.length, nextOffset: null } }, 200);
     }
 
-    const question = String(body.question || "").trim();
+    const question = String(body.question || "").trim().slice(0, MAX_TEXT_LEN);
     if (!question) return json({ error: "Question is required" }, 400);
     if (profile.id === authUser.id) return json({ error: "You cannot ask yourself a question" }, 400);
     const entry = {

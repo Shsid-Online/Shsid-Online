@@ -3024,6 +3024,7 @@ async function handleAction(action, id) {
     if (user.role === "admin") await refreshReports();
   }
   if (action === "share-post") {
+    if (!id) return toast("Invalid post");
     const shareUrl = `${window.location.origin}/?post=${encodeURIComponent(id)}`;
     const post = state.posts.find((item) => item.id === id);
     const text = post?.text ? post.text.slice(0, 120) : "Check this post";
@@ -3099,6 +3100,7 @@ async function handleAction(action, id) {
     if (view === "feed") await refreshPosts();
   }
   if (action === "start-chat") {
+    if (!id) return toast("Invalid user");
     const target = state.users.find((item) => item.id === id);
     if (!target || target.role === "admin" || target.status !== "verified") return toast("Only verified students can be messaged");
     const mode = await askIdentityModePopup(target.englishName || "student");
@@ -3154,9 +3156,11 @@ async function handleAction(action, id) {
     activeConversationId = id;
   }
   if (action === "rename-conv") {
+    if (!id) return toast("Conversation not found");
     await renameConversation(id);
   }
   if (action === "chat-info") {
+    if (!id) return toast("Conversation not found");
     const conv = state.conversations.find((item) => item.id === id);
     if (!conv) return;
     showConversationDetailsPopup(conv);
@@ -3293,7 +3297,8 @@ async function handleAction(action, id) {
     if (adminTab === "chat" && !state.conversations.length) await refreshConversations();
   }
   if (action === "admin-open-chat") {
-    adminActiveConversationId = id || "";
+    if (!id || !state.conversations.some((conversation) => conversation.id === id)) return toast("Conversation not found");
+    adminActiveConversationId = id;
   }
   if (action === "new-group") {
     const memberIds = [...new Set(state.users.filter((item) => item.id !== user.id && item.role !== "admin").map((item) => item.id))];
@@ -3465,6 +3470,7 @@ async function handleAction(action, id) {
     await refreshQnaForProfile(id);
   }
   if (action === "open-qna") {
+    if (!id) return toast("Question not found");
     const entry = state.qna.find((item) => item.id === id);
     if (!entry) return;
     const me = currentUser();
@@ -3500,6 +3506,7 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "submit-suggestion") {
+    if (currentUser()?.role === "admin") return toast("Admins cannot submit suggestions");
     const text = String(document.querySelector("#suggestion-text")?.value || "").trim();
     if (!text) return toast("Write a suggestion first");
     await apiRequest("/suggestions", { method: "POST", body: JSON.stringify({ text }) });
@@ -3507,6 +3514,10 @@ async function handleAction(action, id) {
     toast("Suggestion submitted");
   }
   if (action === "reply-suggestion") {
+    if (currentUser()?.role !== "admin") return toast("Admin access required");
+    if (!id) return toast("Invalid suggestion");
+    const target = (state.suggestions || []).find((item) => item.id === id);
+    if (!target) return toast("Suggestion not found");
     const response = await askTextPopup("Respond to Suggestion", "Response", "Write your response");
     if (response == null) return;
     const clean = String(response).trim();
@@ -3534,11 +3545,17 @@ async function handleAction(action, id) {
     toast("Ad created");
   }
   if (action === "toggle-ad") {
+    if (currentUser()?.role !== "admin") return toast("Admin access required");
+    if (!id) return toast("Invalid ad");
+    if (!(state.ads || []).some((ad) => ad.id === id)) return toast("Ad not found");
     await apiRequest(`/admin/ads/${id}/toggle`, { method: "POST", body: JSON.stringify({}) });
     await refreshAds();
     toast("Ad updated");
   }
   if (action === "delete-ad") {
+    if (currentUser()?.role !== "admin") return toast("Admin access required");
+    if (!id) return toast("Invalid ad");
+    if (!(state.ads || []).some((ad) => ad.id === id)) return toast("Ad not found");
     await apiRequest(`/admin/ads/${id}`, { method: "DELETE", body: JSON.stringify({}) });
     await refreshAds();
     toast("Ad deleted");

@@ -632,3 +632,13 @@
   - Sanitized Worker story `mediaUrl` and reel `videoUrl` to allow only safe `http/https` URLs.
   - Sanitized Node reel `videoUrl` to allow only safe `http/https` URLs.
   - Validation: `npm run check` passed.
+- 2026-05-13: Action-guard and Q&A bounds hardening batch.
+  - Frontend action guards (`public/src/app.js`):
+    - Added missing id validation for `share-post`, `start-chat`, `rename-conv`, `chat-info`, and `open-qna`.
+    - Hardened admin chat monitor open action to reject missing/stale conversation ids.
+    - Added role + id validation for suggestion-reply flow (admin-only, valid suggestion required).
+    - Added role + id validation for ad toggle/delete actions (admin-only, valid ad required).
+    - Blocked admin from student suggestion-submit action to prevent invalid role flow.
+  - Backend parity:
+    - Worker + Node now cap Q&A question text to `MAX_TEXT_LEN` before storage.
+  - Validation: `npm run check` passed.

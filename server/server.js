@@ -1124,7 +1124,7 @@ async function handleApi(req, res, url) {
       const { items, pagination } = paginate(rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), url, { limit: 50, maxLimit: 100 });
       return sendJson(res, 200, { questions: items, pagination });
     }
-    const question = String(body.question || "").trim();
+    const question = String(body.question || "").trim().slice(0, MAX_TEXT_LEN);
     if (!question) return sendJson(res, 400, { error: "Question is required" });
     if (profileId === user.id) return sendJson(res, 400, { error: "You cannot ask yourself a question" });
     const entry = {
