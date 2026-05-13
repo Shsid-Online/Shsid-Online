@@ -622,3 +622,13 @@
     - `POST /conversations/:id/messages` now supports media-only messages with normalized `media` items.
     - Matched moderation action whitelist and validated day count handling in admin ban flow.
   - Validation: `npm run check` passed.
+- 2026-05-13: Validation hardening batch: reports/moderation/media URL safety.
+  - Added strict report target validation (type + target id required) in Worker and Node `/reports` create endpoints.
+  - Added strict admin report-status whitelist validation in Worker and Node `/admin/reports/:id` handlers.
+  - Added strict admin verification decision whitelist validation in Worker and Node `/admin/verifications/:id` handlers.
+  - Added category normalization helper (`sanitizeCategory`) and applied it to posts/reels create flows (Worker + Node parity).
+  - Added media sanitization helper (`sanitizeMediaItems`) and applied it to post-media/message-media payload processing (Worker + Node parity).
+  - Hardened Worker chat payload packing to sanitize media URLs before storing.
+  - Sanitized Worker story `mediaUrl` and reel `videoUrl` to allow only safe `http/https` URLs.
+  - Sanitized Node reel `videoUrl` to allow only safe `http/https` URLs.
+  - Validation: `npm run check` passed.

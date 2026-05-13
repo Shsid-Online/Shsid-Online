@@ -15,6 +15,9 @@ const VERIFICATION_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 const VERIFICATION_CHUNK_SIZE = 8 * 1024 * 1024;
 const MULTIPART_CHUNK_SIZE = 8 * 1024 * 1024;
 const AD_SLOTS = new Set(["top_banner", "feed_inline", "students_inline", "popup"]);
+const REPORT_TARGET_TYPES = new Set(["post", "conversation", "comment", "user"]);
+const REPORT_STATUSES = new Set(["pending", "dismissed", "actioned", "resolved"]);
+const VERIFICATION_DECISIONS = new Set(["approve", "reject"]);
 const ALLOWED_UPLOAD_TYPES = [
   "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
   "video/mp4", "video/webm", "video/quicktime",
@@ -536,14 +539,14 @@ async function handleApi(request, env, url, route) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     if (authUser.status !== "verified" && authUser.role !== "admin") return json({ error: "Verification required before posting" }, 403);
     const text = String(body.text || "").trim();
-    const media = Array.isArray(body.media) ? body.media.slice(0, 20) : [];
+    const media = sanitizeMediaItems(body.media, 20);
     if (!text && media.length === 0) return json({ error: "Text or media is required" }, 400);
 
     const post = {
       id: id("pst"),
       author_id: authUser.id,
       title: String(body.title || "").trim().slice(0, MAX_TITLE_LEN),
-      category: String(body.category || "school").slice(0, MAX_CATEGORY_LEN),
+      category: sanitizeCategory(body.category),
       text: text.slice(0, MAX_TEXT_LEN),
       media: JSON.stringify(media),
       likes: "[]",
@@ -691,12 +694,16 @@ async function handleApi(request, env, url, route) {
   if (method === "POST" && route === "/reports") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     const reason = String(body.reason || "").trim().slice(0, MAX_REASON_LEN);
+    const targetType = String(body.targetType || "").trim().toLowerCase();
+    const targetId = String(body.targetId || "").trim().slice(0, 100);
     if (!reason) return json({ error: "Report reason is required" }, 400);
+    if (!REPORT_TARGET_TYPES.has(targetType)) return json({ error: "Invalid report target type" }, 400);
+    if (!targetId) return json({ error: "Report target is required" }, 400);
     const report = {
       id: id("rpt"),
       reporter_id: authUser.id,
-      target_type: String(body.targetType || "").slice(0, 50),
-      target_id: String(body.targetId || "").slice(0, 100),
+      target_type: targetType,
+      target_id: targetId,
       reason,
       status: "pending",
       admin_notes: "",
@@ -720,7 +727,7 @@ async function handleApi(request, env, url, route) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     if (authUser.status !== "verified" && authUser.role !== "admin") return json({ error: "Verification required" }, 403);
     const caption = String(body.caption || body.text || "").trim().slice(0, MAX_TEXT_LEN);
-    const mediaUrl = String(body.mediaUrl || "").trim().slice(0, 1000);
+    const mediaUrl = normalizeExternalUrl(String(body.mediaUrl || "").trim().slice(0, 1000));
     const mediaType = String(body.mediaType || "").trim().slice(0, 120);
     if (!caption && !mediaUrl) return json({ error: "Story needs a caption, a photo/video, or both" }, 400);
     const packed = `__STORY__:${JSON.stringify({ caption, mediaUrl, mediaType })}`;
@@ -796,8 +803,8 @@ async function handleApi(request, env, url, route) {
       id: id("rel"),
       author_id: authUser.id,
       title,
-      category: String(body.category || "school").slice(0, MAX_CATEGORY_LEN),
-      video_url: String(body.videoUrl || "").trim().slice(0, 2000) || "pending-upload",
+      category: sanitizeCategory(body.category),
+      video_url: normalizeExternalUrl(String(body.videoUrl || "").trim().slice(0, 2000)) || "pending-upload",
       likes: "[]",
       created_at: now()
     };
@@ -1157,7 +1164,9 @@ async function handleApi(request, env, url, route) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const user = await getUserById(env, adminVerifyMatch[1]);
     if (!user) return json({ error: "Not found" }, 404);
-    const decision = body.decision === "approve" ? "verified" : "rejected";
+    const requestedDecision = String(body.decision || "").trim().toLowerCase();
+    if (!VERIFICATION_DECISIONS.has(requestedDecision)) return json({ error: "Invalid verification decision" }, 400);
+    const decision = requestedDecision === "approve" ? "verified" : "rejected";
     await env.DB.prepare("update users set status=?, updated_at=? where id=?").bind(decision, now(), user.id).run();
     await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
       .bind(id("ntf"), user.id, "verification", `Your verification was ${decision}.`, null, now())
@@ -1193,7 +1202,8 @@ async function handleApi(request, env, url, route) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const report = await env.DB.prepare("select * from reports where id=?").bind(adminReportMatch[1]).first();
     if (!report) return json({ error: "Not found" }, 404);
-    const status = String(body.status || "resolved");
+    const status = String(body.status || "resolved").trim().toLowerCase();
+    if (!REPORT_STATUSES.has(status)) return json({ error: "Invalid report status" }, 400);
     const adminNotes = String(body.adminNotes || report.admin_notes || "");
     const resolvedAt = now();
     await env.DB.prepare("update reports set status=?, admin_notes=?, resolved_at=? where id=?").bind(status, adminNotes, resolvedAt, report.id).run();
@@ -1305,12 +1315,26 @@ function storyViewModel(row) {
 function packMessagePayload(text, media) {
   const cleanText = String(text || "").trim().slice(0, MAX_TEXT_LEN);
   const normalizedMedia = (media || []).map((item) => ({
-    url: String(item?.url || "").trim().slice(0, 1000),
+    url: normalizeExternalUrl(String(item?.url || "").trim().slice(0, 1000)),
     type: String(item?.type || "application/octet-stream").trim().slice(0, 120),
     name: String(item?.name || "").trim().slice(0, 260)
   })).filter((item) => item.url);
   if (!normalizedMedia.length) return cleanText;
   return `__MSG__:${JSON.stringify({ text: cleanText, media: normalizedMedia })}`;
+}
+
+function sanitizeCategory(value) {
+  const category = String(value || "school").trim().toLowerCase().slice(0, MAX_CATEGORY_LEN);
+  return category || "school";
+}
+
+function sanitizeMediaItems(value, limit = 20) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, limit).map((item) => ({
+    url: normalizeExternalUrl(String(item?.url || "").trim().slice(0, 1000)),
+    type: String(item?.type || "application/octet-stream").trim().slice(0, 120),
+    name: String(item?.name || "").trim().slice(0, 260)
+  })).filter((item) => item.url);
 }
 
 function unpackMessagePayload(rawText) {

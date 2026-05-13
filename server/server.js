@@ -42,6 +42,9 @@ const MAX_TITLE_LEN = 200;
 const MAX_REASON_LEN = 1000;
 const MAX_CATEGORY_LEN = 50;
 const AD_SLOTS = new Set(["top_banner", "feed_inline", "students_inline", "popup"]);
+const REPORT_TARGET_TYPES = new Set(["post", "conversation", "comment", "user"]);
+const REPORT_STATUSES = new Set(["pending", "dismissed", "actioned", "resolved"]);
+const VERIFICATION_DECISIONS = new Set(["approve", "reject"]);
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -166,6 +169,20 @@ function normalizeExternalUrl(value) {
   } catch {
     return "";
   }
+}
+
+function sanitizeCategory(value) {
+  const category = String(value || "school").trim().toLowerCase().slice(0, MAX_CATEGORY_LEN);
+  return category || "school";
+}
+
+function sanitizeMediaItems(value, limit = 20) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, limit).map((item) => ({
+    url: normalizeExternalUrl(String(item?.url || "").trim().slice(0, 1000)),
+    type: String(item?.type || "application/octet-stream").trim().slice(0, 120),
+    name: String(item?.name || "").trim().slice(0, 260)
+  })).filter((item) => item.url);
 }
 
 function createVerificationCode() {
@@ -733,14 +750,14 @@ async function handleApi(req, res, url) {
     const text = String(body.text || "").trim();
     if (!text && !(body.media || []).length) return sendJson(res, 400, { error: "Text or media is required" }, req);
     const sanitizedText = text.slice(0, MAX_TEXT_LEN);
-    const category = String(body.category || "school").slice(0, MAX_CATEGORY_LEN);
+    const category = sanitizeCategory(body.category);
     const post = {
       id: id("pst"),
       authorId: user.id,
       anonymous: Boolean(body.anonymous),
       category,
       text: sanitizedText,
-      media: Array.isArray(body.media) ? body.media.slice(0, 9) : [],
+      media: sanitizeMediaItems(body.media, 9),
       likes: [],
       hearts: [],
       savedBy: [],
@@ -849,13 +866,17 @@ async function handleApi(req, res, url) {
   if (method === "POST" && url.pathname === "/api/reports") {
     const user = requireAuth(req, res);
     if (!user) return;
+    const targetType = String(body.targetType || "").trim().toLowerCase();
+    const targetId = String(body.targetId || "").trim().slice(0, 100);
     const reason = String(body.reason || "").trim().slice(0, MAX_REASON_LEN);
     if (!reason) return sendJson(res, 400, { error: "Report reason is required" }, req);
+    if (!REPORT_TARGET_TYPES.has(targetType)) return sendJson(res, 400, { error: "Invalid report target type" }, req);
+    if (!targetId) return sendJson(res, 400, { error: "Report target is required" }, req);
     const report = {
       id: id("rpt"),
       reporterId: user.id,
-      targetType: String(body.targetType || "").slice(0, 50),
-      targetId: String(body.targetId || "").slice(0, 100),
+      targetType,
+      targetId,
       reason,
       status: "pending",
       adminNotes: "",
@@ -926,13 +947,7 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { messages: items, pagination });
     }
     const text = String(body.text || "").trim();
-    const media = Array.isArray(body.media)
-      ? body.media.slice(0, 5).map((item) => ({
-        url: String(item?.url || "").trim().slice(0, 1000),
-        type: String(item?.type || "application/octet-stream").trim().slice(0, 120),
-        name: String(item?.name || "").trim().slice(0, 260)
-      })).filter((item) => item.url)
-      : [];
+    const media = sanitizeMediaItems(body.media, 5);
     if (!text && !media.length) return sendJson(res, 400, { error: "Message text or media is required" }, req);
     const message = {
       id: id("msg"),
@@ -1045,8 +1060,8 @@ async function handleApi(req, res, url) {
     if (!user) return;
     if (user.status !== "verified" && user.role !== "admin") return sendJson(res, 403, { error: "Verification required" });
     const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN);
-    const category = String(body.category || "school").trim().slice(0, MAX_CATEGORY_LEN);
-    const videoUrl = String(body.videoUrl || "").trim().slice(0, 2000) || "pending-upload";
+    const category = sanitizeCategory(body.category);
+    const videoUrl = normalizeExternalUrl(String(body.videoUrl || "").trim().slice(0, 2000)) || "pending-upload";
     if (!title) return sendJson(res, 400, { error: "Title is required" }, req);
     const reel = {
       id: id("rel"),
@@ -1238,7 +1253,9 @@ async function handleApi(req, res, url) {
     if (!admin) return;
     const user = store.findUserById(verifyMatch[1]);
     if (!user) return notFound(res);
-    const decision = body.decision === "approve" ? "verified" : "rejected";
+    const requestedDecision = String(body.decision || "").trim().toLowerCase();
+    if (!VERIFICATION_DECISIONS.has(requestedDecision)) return sendJson(res, 400, { error: "Invalid verification decision" });
+    const decision = requestedDecision === "approve" ? "verified" : "rejected";
     user.status = decision;
     user.updatedAt = now();
     store.data.notifications.push({ id: id("ntf"), userId: user.id, type: "verification", body: `Your verification was ${decision}.`, readAt: null, createdAt: now() });
@@ -1260,7 +1277,9 @@ async function handleApi(req, res, url) {
     if (!admin) return;
     const report = store.data.reports.find((item) => item.id === reportMatch[1]);
     if (!report) return notFound(res);
-    report.status = body.status || "resolved";
+    const nextStatus = String(body.status || "resolved").trim().toLowerCase();
+    if (!REPORT_STATUSES.has(nextStatus)) return sendJson(res, 400, { error: "Invalid report status" });
+    report.status = nextStatus;
     report.adminNotes = body.adminNotes || report.adminNotes;
     report.resolvedAt = now();
     store.audit(admin.id, "report_reviewed", { reportId: report.id, status: report.status });
