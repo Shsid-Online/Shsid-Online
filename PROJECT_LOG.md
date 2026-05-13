@@ -849,3 +849,16 @@
   - New session now shows an empty thread state until user explicitly clicks a conversation.
   - Kept user-initiated opens (e.g., clicking a chat or creating/starting one) working as before.
   - Validation: `node --check public/src/app.js` passed.
+- 2026-05-13: Local website startup fix for `npm run dev`.
+  - Root cause 1: Request handler used undefined `method` variable in `http.createServer`, causing all requests (including `/api/health`) to fail with 500.
+  - Fix 1 (`server/server.js`): changed OPTIONS check from `method === "OPTIONS"` to `(req.method || "GET") === "OPTIONS"`.
+  - Root cause 2: Static assets were resolved from repo root instead of `public/`, causing `/` to return 404 while API routes worked.
+  - Fix 2 (`server/server.js`): introduced `STATIC_ROOT = <repo>/public`, resolved static paths against it, and tightened traversal guard to `filePath.startsWith(STATIC_ROOT)`.
+  - Validation:
+    - `npm run dev` starts: `SHSID Social running at http://127.0.0.1:4174`
+    - `GET /` returns `HTTP/1.1 200 OK` with `content-type: text/html`
+    - `GET /api/health` returns `HTTP/1.1 200 OK` with `{ "ok": true, "service": "shsid-social-api" }`
+- 2026-05-13: Fixed frontend boot crash `Identifier 'stopUploadProgressTicker' has already been declared`.
+  - Cause: duplicate `function stopUploadProgressTicker()` declaration in `public/src/app.js` after upload-overlay/progress refactors.
+  - Fix: removed the later duplicate declaration and kept a single shared implementation.
+  - Validation: `node --check public/src/app.js` passed.

@@ -1690,12 +1690,6 @@ function renderUploadOverlay() {
   `;
 }
 
-function stopUploadProgressTicker() {
-  if (!uploadProgressTimer) return;
-  clearInterval(uploadProgressTimer);
-  uploadProgressTimer = null;
-}
-
 function startUploadProgressTicker() {
   if (uploadProgressTimer) return;
   uploadProgressTimer = setInterval(() => {

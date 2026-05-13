@@ -30,6 +30,7 @@ const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || "no-reply@example.com";
 const SMTP_FROM_NAME = process.env.SMTP_FROM_NAME || "SHSID Social";
 const MAX_JSON_BODY_BYTES = 1_000_000;
 const ROOT = path.resolve(__dirname, "..");
+const STATIC_ROOT = path.resolve(ROOT, "public");
 const store = new Store(DATA_FILE);
 store.load();
 
@@ -1472,14 +1473,14 @@ async function handleApi(req, res, url) {
 
 function serveStatic(req, res, url) {
   const requested = url.pathname === "/" ? "/index.html" : url.pathname;
-  const filePath = path.resolve(ROOT, `.${requested}`);
+  const filePath = path.resolve(STATIC_ROOT, `.${requested}`);
   const ext = path.extname(filePath).toLowerCase();
   const contentType = mimeTypes[ext] || "application/octet-stream";
   const isHtml = ext === ".html" || contentType.startsWith("text/html");
   const cacheControl = isHtml
     ? "no-store"
     : "public, max-age=3600, stale-while-revalidate=300";
-  if (!filePath.startsWith(ROOT) || filePath.includes(`${path.sep}server${path.sep}`) || filePath.includes(`${path.sep}data${path.sep}`)) {
+  if (!filePath.startsWith(STATIC_ROOT)) {
     return notFound(res);
   }
   fs.readFile(filePath, (error, data) => {
@@ -1496,7 +1497,7 @@ function serveStatic(req, res, url) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
-    if (method === "OPTIONS") {
+    if ((req.method || "GET") === "OPTIONS") {
       send(res, 204, "", {}, req);
       return;
     }
