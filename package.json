@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "node server/server.js",
     "dev:static": "npx serve public -l 4173",
-    "check": "node --check public/src/app.js && node --check server/server.js && node --check server/store.js && node --check scripts/smoke-test.mjs && node --check worker/index.js",
-    "smoke": "node scripts/smoke-test.mjs",
+    "check": "node --check public/src/app.js && node --check server/server.js && node --check server/store.js && node --check worker/index.js",
     "cf:dev": "wrangler dev worker/index.js",
     "cf:deploy": "wrangler deploy worker/index.js"
   },

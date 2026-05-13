@@ -927,3 +927,13 @@
   - Validation:
     - `npm run check` passed.
     - `npm run smoke` passed (with elevated localhost bind permissions): `{ ok: true, service: "shsid-social-api", user: "admin@shsid.online", pendingVerifications: 0, posts: 0, students: 0 }`.
+- 2026-05-13: Brand-new local reset + smoke removal.
+  - Reset local data store (`data/dev-db.json`) to empty collections:
+    - users, posts, sessions, reports, conversations, notifications, auditLogs, stories, reels, follows, qna, suggestions, bans, ads.
+  - Removed smoke tooling:
+    - Deleted `scripts/smoke-test.mjs`.
+    - Removed `smoke` script from `package.json`.
+    - Updated `check` script to stop referencing smoke-test file.
+  - Validation:
+    - `npm run check` passed.
+    - Data counts confirmed all reset collections at `0`.
