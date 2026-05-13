@@ -1295,6 +1295,7 @@ async function handleApi(req, res, url) {
     if (!admin) return;
     const suggestion = store.data.suggestions.find((item) => item.id === adminSuggestionMatch[1]);
     if (!suggestion) return notFound(res);
+    if (String(suggestion.status || "").startsWith("responded::")) return sendJson(res, 400, { error: "Suggestion already responded" });
     const response = String(body.response || "").trim().slice(0, 280);
     if (!response) return sendJson(res, 400, { error: "Response is required" });
     suggestion.status = `responded::${response}`;
@@ -1317,6 +1318,7 @@ async function handleApi(req, res, url) {
     if (!admin) return;
     const user = store.findUserById(verifyMatch[1]);
     if (!user) return notFound(res);
+    if (user.role !== "student") return sendJson(res, 400, { error: "Only student accounts can be verified" });
     if (user.role === "admin") return sendJson(res, 400, { error: "Cannot verify admin account" });
     if (user.status !== "pending_verification") return sendJson(res, 400, { error: "User is not pending verification" });
     const requestedDecision = String(body.decision || "").trim().toLowerCase();
@@ -1403,6 +1405,7 @@ async function handleApi(req, res, url) {
     const targetUser = store.findUserById(banUserMatch[1]);
     if (!targetUser) return notFound(res);
     if (targetUser.role === "admin") return sendJson(res, 400, { error: "Cannot ban admin account" });
+    if (targetUser.status === "banned") return sendJson(res, 400, { error: "User is already banned" });
     const action = String(body.action || "warn");
     if (!["warn", "ban_temp", "ban_perm"].includes(action)) {
       return sendJson(res, 400, { error: "Invalid moderation action" });
@@ -1448,6 +1451,7 @@ async function handleApi(req, res, url) {
     if (!admin) return;
     const ban = store.data.bans.find((item) => item.id === revokeBanMatch[1]);
     if (!ban) return notFound(res);
+    if (ban.action === "warn") return sendJson(res, 400, { error: "Warnings cannot be revoked" });
     if (ban.revokedAt) return sendJson(res, 400, { error: "Ban already revoked" });
     ban.revokedAt = now();
     const targetUser = store.findUserById(ban.userId);

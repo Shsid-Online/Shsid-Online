@@ -784,3 +784,20 @@
     - Follow endpoint now blocks admin users from following students.
     - Conversation report creation now requires non-admin reporter membership in target conversation.
   - Validation: `npm run check` passed.
+- 2026-05-13: Admin moderation-state hardening batch.
+  - Frontend (`public/src/app.js`):
+    - Verify action now blocks non-student targets.
+    - Reject action now blocks non-student targets.
+    - Ban action now blocks already-banned targets.
+    - Suggestion reply action now blocks already-responded suggestions.
+  - Backend Node (`server/server.js`):
+    - Admin suggestion reply endpoint now rejects already-responded suggestions.
+    - Admin verification endpoint now only allows student targets.
+    - Ban revoke endpoint now rejects warn-record revocation (`warnings` are not revocable bans).
+    - Ban endpoint now rejects already-banned users.
+  - Backend Worker (`worker/index.js`) parity:
+    - Admin suggestion reply endpoint now rejects already-responded suggestions.
+    - Admin verification endpoint now only allows student targets.
+    - Ban revoke endpoint now rejects warn-record revocation.
+    - Ban endpoint now rejects already-banned users.
+  - Validation: `npm run check` passed.

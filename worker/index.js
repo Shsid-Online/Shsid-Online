@@ -1177,6 +1177,7 @@ async function handleApi(request, env, url, route) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const suggestion = await env.DB.prepare("select * from suggestions where id=?").bind(adminSuggestionMatch[1]).first();
     if (!suggestion) return json({ error: "Not found" }, 404);
+    if (String(suggestion.status || "").startsWith("responded::")) return json({ error: "Suggestion already responded" }, 400);
     const responseText = String(body.response || "").trim().slice(0, 280);
     if (!responseText) return json({ error: "Response is required" }, 400);
     const status = `responded::${responseText}`;
@@ -1213,6 +1214,7 @@ async function handleApi(request, env, url, route) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const user = await getUserById(env, adminVerifyMatch[1]);
     if (!user) return json({ error: "Not found" }, 404);
+    if (user.role !== "student") return json({ error: "Only student accounts can be verified" }, 400);
     if (user.role === "admin") return json({ error: "Cannot verify admin account" }, 400);
     if (user.status !== "pending_verification") return json({ error: "User is not pending verification" }, 400);
     const requestedDecision = String(body.decision || "").trim().toLowerCase();
@@ -1289,6 +1291,7 @@ async function handleApi(request, env, url, route) {
     const targetRow = await env.DB.prepare("select * from users where id=?").bind(banUserMatch[1]).first();
     if (!targetRow) return json({ error: "Not found" }, 404);
     if (targetRow.role === "admin") return json({ error: "Cannot ban admin account" }, 400);
+    if (targetRow.status === "banned") return json({ error: "User is already banned" }, 400);
     const action = String(body.action || "warn");
     if (!["warn", "ban_temp", "ban_perm"].includes(action)) return json({ error: "Invalid moderation action" }, 400);
     const reason = String(body.reason || "Violation of community guidelines").slice(0, 500);
@@ -1324,6 +1327,7 @@ async function handleApi(request, env, url, route) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const ban = await env.DB.prepare("select * from bans where id=?").bind(revokeBanMatch[1]).first();
     if (!ban) return json({ error: "Not found" }, 404);
+    if (ban.action === "warn") return json({ error: "Warnings cannot be revoked" }, 400);
     if (ban.revoked_at) return json({ error: "Ban already revoked" }, 400);
     await env.DB.prepare("update bans set revoked_at=? where id=?").bind(now(), ban.id).run();
     await env.DB.prepare("update users set status='verified', updated_at=? where id=? and status='banned'").bind(now(), ban.user_id).run();

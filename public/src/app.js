@@ -3458,6 +3458,7 @@ async function handleAction(action, id) {
     if (!id) return toast("Invalid user");
     const target = state.users.find((u) => u.id === id);
     if (!target) return toast("User not found");
+    if (target.role !== "student") return toast("Only student accounts can be verified");
     if (target.role === "admin") return toast("Cannot verify admin account");
     if (target.status !== "pending_verification") return toast("User is not pending verification");
     if (verifyUserInFlight) return;
@@ -3478,6 +3479,7 @@ async function handleAction(action, id) {
     if (!id) return toast("Invalid user");
     const target = state.users.find((u) => u.id === id);
     if (!target) return toast("User not found");
+    if (target.role !== "student") return toast("Only student accounts can be rejected");
     if (target.role === "admin") return toast("Cannot reject admin account");
     if (target.status !== "pending_verification") return toast("User is not pending verification");
     const ok = await askConfirmPopup("Reject Verification", "Reject this student's verification submission?", "Reject");
@@ -3501,6 +3503,7 @@ async function handleAction(action, id) {
     const user = state.users.find((u) => u.id === id);
     if (!user) return toast("User not found");
     if (user.role === "admin") return toast("Cannot ban admin account");
+    if (user.status === "banned") return toast("User is already banned");
     if (banUserInFlight) return;
     const result = await showFormPopup("Ban / Warn User", `
       <form id="ban-user-form" class="grid">
@@ -3717,6 +3720,7 @@ async function handleAction(action, id) {
     if (!id) return toast("Invalid suggestion");
     const target = (state.suggestions || []).find((item) => item.id === id);
     if (!target) return toast("Suggestion not found");
+    if (String(target.status || "").startsWith("responded::")) return toast("Suggestion already responded");
     if (suggestionReplyInFlight) return;
     const response = await askTextPopup("Respond to Suggestion", "Response", "Write your response");
     if (response == null) return;
