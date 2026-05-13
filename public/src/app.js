@@ -44,7 +44,7 @@ const initialState = {
 
 let state = loadState();
 let view = "feed";
-let activeConversationId = state.conversations[0]?.id;
+let activeConversationId = "";
 let authEmailSubmitIntent = "login";
 let authRequestInFlight = false;
 let resendCooldownUntil = 0;
@@ -686,10 +686,7 @@ async function refreshConversations() {
   try {
     const result = await apiRequest("/conversations", { cacheTtlMs: API_CACHE_TTL.conversations });
     state.conversations = (result.conversations || []).map(normalizeConversation);
-    if (!state.conversations.some((item) => item.id === activeConversationId)) {
-      const visible = state.conversations.find((item) => !state.deletedChats?.[item.id]);
-      activeConversationId = visible?.id || state.conversations[0]?.id;
-    }
+    if (!state.conversations.some((item) => item.id === activeConversationId)) activeConversationId = "";
     warmUserAssetCache();
     saveState();
   } catch (error) {
@@ -2170,7 +2167,7 @@ function renderStudents() {
 function renderMessages() {
   const { inbox, requests, requestsSent } = classifyConversations();
   const list = conversationTab === "requests" ? requests : (conversationTab === "sent" ? requestsSent : inbox);
-  const active = list.find((item) => item.id === activeConversationId) || list[0] || inbox[0] || requests[0] || requestsSent[0];
+  const active = list.find((item) => item.id === activeConversationId) || null;
   const requestView = conversationTab === "requests";
   const sentView = conversationTab === "sent";
   const firstAuthorId = active?.messages?.[0]?.authorId || "";
@@ -2197,6 +2194,11 @@ function renderMessages() {
           : `<p class="muted">No conversations in this tab yet.</p>`}</div>
       </div>
       <div class="panel chat-panel chat-panel-thread">
+        ${!active ? `
+          <div style="display:grid;place-items:center;min-height:300px">
+            <p class="muted" style="margin:0">No chat selected yet. Click a conversation to open it.</p>
+          </div>
+        ` : `
         <div class="between">
           <strong>${escapeHtml(active ? conversationDisplayTitle(active) : "No conversation")}</strong>
           <div class="row chat-toolbar">
@@ -2226,6 +2228,7 @@ function renderMessages() {
         <div class="row">
           <button class="btn primary" data-action="send-message" data-id="${active?.id || ""}" ${canSendInCurrentThread && !sentView ? "" : "disabled"}>Send</button>
         </div>
+        `}
       </div>
     </section>
   `);
@@ -3406,18 +3409,15 @@ async function handleAction(action, id) {
   }
   if (action === "chat-tab-inbox") {
     conversationTab = "inbox";
-    const next = classifyConversations().inbox[0];
-    activeConversationId = next?.id || "";
+    activeConversationId = "";
   }
   if (action === "chat-tab-requests") {
     conversationTab = "requests";
-    const next = classifyConversations().requests[0];
-    activeConversationId = next?.id || "";
+    activeConversationId = "";
   }
   if (action === "chat-tab-sent") {
     conversationTab = "sent";
-    const next = classifyConversations().requestsSent[0];
-    activeConversationId = next?.id || "";
+    activeConversationId = "";
   }
   if (action === "accept-request") {
     if (!id) return toast("Conversation not found");
@@ -3441,8 +3441,7 @@ async function handleAction(action, id) {
     state.rejectedRequests[id] = true;
     if (state.acceptedRequests && typeof state.acceptedRequests === "object") delete state.acceptedRequests[id];
     saveState();
-    const next = classifyConversations().requests[0] || classifyConversations().inbox[0];
-    activeConversationId = next?.id || "";
+    activeConversationId = "";
     toast("Request rejected");
   }
   if (action === "open-start-direct") {
@@ -3585,8 +3584,7 @@ async function handleAction(action, id) {
     if (!memberIds.length) return toast("No verified classmates to add yet");
     await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds, group: true, title: "New group chat" }) });
     await refreshConversations();
-    const visible = state.conversations.find((item) => !state.deletedChats?.[item.id]);
-    activeConversationId = visible?.id || state.conversations[0]?.id;
+    activeConversationId = "";
     view = "messages";
   }
   if (action === "report-message") {

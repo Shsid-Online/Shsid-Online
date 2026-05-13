@@ -844,3 +844,8 @@
     - Improved static caching policy: HTML remains `no-store`, but non-HTML static assets now use `public, max-age=3600, stale-while-revalidate=300`.
     - Static cache logic now computes by extension/content-type to avoid stale shell caching while speeding CSS/JS/media reloads.
   - Validation: `npm run check` passed.
+- 2026-05-13: Updated chat startup behavior so Messages opens with no active thread selected by default.
+  - Removed auto-selection of first conversation on load/refresh/tab switch.
+  - New session now shows an empty thread state until user explicitly clicks a conversation.
+  - Kept user-initiated opens (e.g., clicking a chat or creating/starting one) working as before.
+  - Validation: `node --check public/src/app.js` passed.
