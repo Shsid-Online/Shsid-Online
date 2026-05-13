@@ -223,7 +223,13 @@ async function apiRequest(path, options = {}) {
       ...(options.headers || {})
     }
   });
-  const body = await response.json();
+  const raw = await response.text();
+  let body = {};
+  try {
+    body = raw ? JSON.parse(raw) : {};
+  } catch {
+    body = { detail: raw || "" };
+  }
   if (!response.ok) {
     const message = [body.error, body.detail].filter(Boolean).join(": ");
     const error = new Error(message || "Request failed");

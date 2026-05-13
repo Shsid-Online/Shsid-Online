@@ -37,6 +37,7 @@ const SECURITY_HEADERS = {
 const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_RATE_MAX = 25;
 const authRateMap = new Map();
+let authRateLastSweepAt = 0;
 
 export default {
   async fetch(request, env) {
@@ -275,6 +276,7 @@ async function handleApi(request, env, url, route) {
   if (method === "POST" && route === "/auth/start") {
     if (isAuthRateLimited(request, "auth_start")) return json({ error: "Too many requests. Please try again later." }, 429);
     const email = String(body.email || "").trim().toLowerCase();
+    if (email.length > 254) return json({ error: "Email address too long" }, 400);
     if (!isEmailAddress(email)) return json({ error: "Enter a valid email address" }, 400);
 
     let user = await getUserByEmail(env, email);
@@ -331,6 +333,8 @@ async function handleApi(request, env, url, route) {
   if (method === "POST" && route === "/auth/verify-code") {
     if (isAuthRateLimited(request, "auth_verify")) return json({ error: "Too many requests. Please try again later." }, 429);
     const email = String(body.email || "").trim().toLowerCase();
+    if (email.length > 254) return json({ error: "Email address too long" }, 400);
+    if (!isEmailAddress(email)) return json({ error: "Enter a valid email address" }, 400);
     const code = normalizeVerificationCode(body.code);
     const key = `email:${email}`;
     const raw = await env.SESSIONS.get(key);
@@ -355,7 +359,10 @@ async function handleApi(request, env, url, route) {
     if (isAuthRateLimited(request, "auth_register")) return json({ error: "Too many requests. Please try again later." }, 429);
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
+    if (email.length > 254) return json({ error: "Email address too long" }, 400);
+    if (!isEmailAddress(email)) return json({ error: "Enter a valid email address" }, 400);
     if (password.length < 8) return json({ error: "Password must be at least 8 characters" }, 400);
+    if (password.length > 128) return json({ error: "Password too long" }, 400);
 
     const user = await getUserByEmail(env, email);
     if (!user) return json({ error: "No account setup was started for this email" }, 400);
@@ -385,6 +392,9 @@ async function handleApi(request, env, url, route) {
     if (isAuthRateLimited(request, "auth_login")) return json({ error: "Too many requests. Please try again later." }, 429);
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
+    if (email.length > 254) return json({ error: "Email address too long" }, 400);
+    if (!isEmailAddress(email)) return json({ error: "Enter a valid email address" }, 400);
+    if (password.length > 256) return json({ error: "Password too long" }, 400);
     const user = await getUserByEmail(env, email);
     if (!user || !user.password_hash) return json({ error: "Invalid email or password" }, 401);
     const ok = await verifyPassword(password, user.password_hash);
@@ -1550,6 +1560,12 @@ function getClientIp(request) {
 
 function isAuthRateLimited(request, scope = "auth") {
   const nowMs = Date.now();
+  if (nowMs - authRateLastSweepAt > AUTH_RATE_WINDOW_MS) {
+    for (const [k, row] of authRateMap.entries()) {
+      if (nowMs - Number(row?.start || 0) > AUTH_RATE_WINDOW_MS) authRateMap.delete(k);
+    }
+    authRateLastSweepAt = nowMs;
+  }
   const key = `${scope}:${getClientIp(request)}`;
   const row = authRateMap.get(key) || { count: 0, start: nowMs };
   if (nowMs - row.start > AUTH_RATE_WINDOW_MS) {

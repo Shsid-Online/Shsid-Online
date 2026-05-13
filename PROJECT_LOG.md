@@ -592,3 +592,4 @@
 - Validation: `npm run check` passed.
 - 2026-05-13: Aligned Node server OTP length to 6 digits to match Worker and frontend auth flow.
 - 2026-05-13: Bugfix batch: hide deleted chats in conversation classifier, guard followers/following arrays from API shape drift, protect students follow-button render against missing following list, harden rightbar post-of-day sorting when likes array is missing, and add clipboard-copy failure fallback in share popup.
+- 2026-05-13: Security/robustness batch: made frontend `apiRequest` tolerant to non-JSON/empty responses; added auth email length and format validation for Worker start/verify/register/login; added Worker password max length validation; and added periodic cleanup for in-memory auth rate-limit map to reduce memory growth risk.
