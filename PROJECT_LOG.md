@@ -812,3 +812,13 @@
     - Faster view switching and lower API chatter under repeated navigation.
     - Preserved freshness after writes via global cache invalidation.
   - Validation: `npm run check` passed.
+- 2026-05-13: Per-user login media warm-cache.
+  - Frontend (`public/src/app.js`):
+    - Added persistent per-user media cache store (`shsid-login-media-cache-v1`) in localStorage.
+    - On successful session bootstrap, app now preloads cached first media (videos/images) for that user before fresh fetch completes.
+    - Feed refresh now snapshots first media URLs/types from current posts into per-user cache (bounded list).
+    - Logout now saves latest per-user media snapshot before clearing in-memory feed state.
+    - Cache retention bounded to most recent users to avoid unbounded localStorage growth.
+  - Effect:
+    - Returning users see faster perceived feed load after login, especially first videos.
+  - Validation: `npm run check` passed.

@@ -1,4 +1,5 @@
 const STORAGE_KEY = "shsid-social-state-v2";
+const LOGIN_MEDIA_CACHE_KEY = "shsid-login-media-cache-v1";
 const API_BASE = window.SHSID_API_BASE || (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost" ? "http://127.0.0.1:4174/api" : "https://www.shsid.online/api");
 const CONTENT_CATEGORIES = ["school", "lifestyle", "gaming", "academic", "shitpost"];
 
@@ -147,6 +148,59 @@ function loadState() {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function loadLoginMediaCache() {
+  try {
+    const raw = localStorage.getItem(LOGIN_MEDIA_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLoginMediaCache(cache) {
+  localStorage.setItem(LOGIN_MEDIA_CACHE_KEY, JSON.stringify(cache || {}));
+}
+
+function warmCachedLoginMedia(userId) {
+  const key = String(userId || "").trim();
+  if (!key) return;
+  const cache = loadLoginMediaCache();
+  const entry = cache[key];
+  const items = Array.isArray(entry?.items) ? entry.items : [];
+  items.forEach((item) => preloadMediaByType(item?.url, item?.type || ""));
+}
+
+function rememberLoginMediaForUser(userId) {
+  const key = String(userId || "").trim();
+  if (!key) return;
+  const items = [];
+  for (const post of state.posts || []) {
+    for (const media of post?.media || []) {
+      if (!media || typeof media === "string") continue;
+      const url = String(media.url || "").trim();
+      const type = String(media.type || "").trim();
+      if (!url) continue;
+      if (!type.startsWith("video/") && !type.startsWith("image/")) continue;
+      items.push({ url, type });
+      if (items.length >= 14) break;
+    }
+    if (items.length >= 14) break;
+  }
+  if (!items.length) return;
+  const cache = loadLoginMediaCache();
+  cache[key] = { updatedAt: Date.now(), items };
+  const keys = Object.keys(cache);
+  if (keys.length > 6) {
+    keys
+      .sort((a, b) => Number(cache[b]?.updatedAt || 0) - Number(cache[a]?.updatedAt || 0))
+      .slice(6)
+      .forEach((staleKey) => delete cache[staleKey]);
+  }
+  saveLoginMediaCache(cache);
 }
 
 function hydrateAuthFromUrl() {
@@ -545,6 +599,7 @@ async function refreshPosts(reset = true) {
     const { posts: next, pagination } = await fetchPostsPage({ offset, limit: 10 });
     state.posts = reset ? next : [...state.posts, ...next];
     postsNextOffset = pagination?.nextOffset ?? null;
+    if (state.currentUserId) rememberLoginMediaForUser(state.currentUserId);
     warmUserAssetCache();
     saveState();
     void ensurePostsAhead();
@@ -718,6 +773,7 @@ async function bootstrapSession() {
   try {
     const result = await apiRequest("/me");
     mergeApiUser(result.user);
+    warmCachedLoginMedia(result.user?.id);
     await refreshStudents();
     await refreshPosts();
     await ensureDeepLinkedPostLoaded();
@@ -2945,6 +3001,8 @@ async function handleAction(action, id) {
   if (action === "open-media") return;
   if (action === "open-settings") view = "settings";
   if (action === "logout") {
+    const logoutUserId = state.currentUserId;
+    if (logoutUserId) rememberLoginMediaForUser(logoutUserId);
     try {
       if (state.apiToken) await apiRequest("/auth/logout", { method: "POST", body: JSON.stringify({}) });
     } catch {
