@@ -1231,10 +1231,20 @@ async function handleApi(req, res, url) {
     const title = String(body.title || "").trim().slice(0, 120);
     const adBody = String(body.body || "").trim().slice(0, 320);
     const adUrl = normalizeExternalUrl(String(body.url || "").trim().slice(0, 500));
+    const adImageUrl = normalizeExternalUrl(String(body.imageUrl || "").trim().slice(0, 2000));
     if (!slot || !title) return sendJson(res, 400, { error: "Slot and title are required" });
     if (!AD_SLOTS.has(slot)) return sendJson(res, 400, { error: "Invalid ad slot" });
     store.data.ads ||= [];
-    const ad = { id: id("ad"), slot, title, body: adBody, url: adUrl, active: body.active === false ? false : true, createdAt: now() };
+    const ad = {
+      id: id("ad"),
+      slot,
+      title,
+      body: adBody,
+      url: adUrl,
+      imageUrl: adImageUrl,
+      active: body.active === false ? false : true,
+      createdAt: now()
+    };
     store.data.ads.push(ad);
     store.save();
     return sendJson(res, 201, { ad });

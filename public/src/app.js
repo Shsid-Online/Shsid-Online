@@ -497,7 +497,9 @@ function renderAdCard(slot, fallback = "Ad placeholder", { showPlaceholder = tru
   const title = String(ad.title || "Sponsored");
   const body = String(ad.body || "");
   const url = safeExternalUrl(ad.url || "");
-  const inner = `<strong>${escapeHtml(title)}</strong><p class="muted">${escapeHtml(body)}</p>`;
+  const imageUrl = safeExternalUrl(ad.imageUrl || "");
+  const media = imageUrl ? `<div class="ad-media-wrap"><img class="ad-media" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(title)}" loading="lazy" /></div>` : "";
+  const inner = `${media}<strong>${escapeHtml(title)}</strong><p class="muted">${escapeHtml(body)}</p>`;
   return url
     ? `<a class="panel ad-card" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${inner}</a>`
     : `<article class="panel ad-card">${inner}</article>`;
@@ -2050,7 +2052,14 @@ function renderFeed() {
   const searchQuery = state.feedSearchQuery?.trim().toLowerCase();
   const engagementFilter = String(state.feedEngagementFilter || "all");
   const meId = state.currentUserId;
-  const posts = [...state.posts].sort((a, b) => Number(b.sticky) - Number(a.sticky) || b.createdAt - a.createdAt);
+  const followingSet = new Set(Array.isArray(currentUser()?.following) ? currentUser().following : []);
+  const posts = [...state.posts].sort((a, b) => {
+    const stickyDelta = Number(b.sticky) - Number(a.sticky);
+    if (stickyDelta) return stickyDelta;
+    const followedDelta = Number(followingSet.has(b.authorId)) - Number(followingSet.has(a.authorId));
+    if (followedDelta) return followedDelta;
+    return b.createdAt - a.createdAt;
+  });
   const searched = searchQuery ? posts.filter((p) => p.text?.toLowerCase().includes(searchQuery) || p.title?.toLowerCase().includes(searchQuery) || p.category?.toLowerCase().includes(searchQuery)) : posts;
   const filtered = searched.filter((post) => {
     if (engagementFilter === "hearted") return (post.hearts || []).includes(meId);
@@ -2584,6 +2593,7 @@ function renderSettings() {
           <div class="field"><label>Title</label><input id="ad-title" placeholder="Ad title"></div>
           <div class="field"><label>Body</label><input id="ad-body" placeholder="Short ad text"></div>
           <div class="field"><label>URL (optional)</label><input id="ad-url" placeholder="https://..."></div>
+          <div class="field"><label>Image URL (optional: PNG/JPG/WebP/GIF)</label><input id="ad-image-url" placeholder="https://.../ad-image.png"></div>
         </div>
         <div class="row"><button class="btn primary" data-action="create-ad">Create Ad</button></div>
         <div class="grid" style="margin-top:12px">
@@ -2592,6 +2602,7 @@ function renderSettings() {
               <strong>${escapeHtml(ad.slot || "slot")}</strong> · ${ad.active ? "active" : "inactive"}<br>
               ${escapeHtml(ad.title || "Untitled")}<br>
               <span class="muted">${escapeHtml(ad.body || "")}</span>
+              ${ad.imageUrl ? `<div style="margin-top:8px"><img src="${escapeHtml(ad.imageUrl)}" alt="${escapeHtml(ad.title || "Ad image")}" style="max-width:220px;border-radius:8px;border:1px solid var(--line)" loading="lazy" /></div>` : ""}
               <div class="row" style="margin-top:8px">
                 <button class="btn small" data-action="toggle-ad" data-id="${ad.id}">${ad.active ? "Disable" : "Enable"}</button>
                 <button class="btn small danger" data-action="delete-ad" data-id="${ad.id}">Delete</button>
@@ -4070,21 +4081,25 @@ async function handleAction(action, id) {
     const title = String(document.querySelector("#ad-title")?.value || "").trim();
     const body = String(document.querySelector("#ad-body")?.value || "").trim();
     const url = String(document.querySelector("#ad-url")?.value || "").trim();
+    const imageUrl = String(document.querySelector("#ad-image-url")?.value || "").trim();
     const allowedSlots = new Set(["top_banner", "feed_inline", "students_inline", "popup"]);
     if (!slot || !title) return toast("Slot and title are required");
     if (title.length > 120) return toast("Title is too long");
     if (body.length > 320) return toast("Body is too long");
     if (url.length > 500) return toast("URL is too long");
+    if (imageUrl.length > 2000) return toast("Image URL is too long");
     if (!allowedSlots.has(slot)) return toast("Invalid ad slot");
     createAdInFlight = true;
     try {
-      await apiRequest("/admin/ads", { method: "POST", body: JSON.stringify({ slot, title, body, url, active: true }) });
+      await apiRequest("/admin/ads", { method: "POST", body: JSON.stringify({ slot, title, body, url, imageUrl, active: true }) });
       const titleInput = document.querySelector("#ad-title");
       const bodyInput = document.querySelector("#ad-body");
       const urlInput = document.querySelector("#ad-url");
+      const imageUrlInput = document.querySelector("#ad-image-url");
       if (titleInput) titleInput.value = "";
       if (bodyInput) bodyInput.value = "";
       if (urlInput) urlInput.value = "";
+      if (imageUrlInput) imageUrlInput.value = "";
       await refreshAds();
       toast("Ad created");
     } finally {

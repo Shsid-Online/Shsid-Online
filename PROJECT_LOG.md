@@ -912,3 +912,18 @@
   - Icon update (`public/src/app.js`):
     - Switched action labels to cleaner social-style symbols (`♡/♥︎`, `💬`, `✈︎`, `🔖/⌑`, `⚑`, `🗑`, etc.) with tooltips retained.
   - Validation: `node --check public/src/app.js` passed.
+- 2026-05-13: Added image support for ads + boosted followed users in feed ranking.
+  - Ads image support:
+    - Backend (`server/server.js`): `/api/admin/ads` now accepts optional `imageUrl` (http/https) and stores it on ad records.
+    - Frontend (`public/src/app.js`):
+      - `renderAdCard()` now renders ad image media when `imageUrl` is present.
+      - Admin Ad Manager now includes `Image URL` input (PNG/JPG/WebP/GIF links) and passes `imageUrl` on create.
+      - Ad preview list in settings now shows image thumbnails when present.
+  - Feed ranking:
+    - Frontend (`public/src/app.js`): feed sort now applies priority in this order:
+      1) sticky posts
+      2) posts by users you follow
+      3) newest posts
+  - Validation:
+    - `npm run check` passed.
+    - `npm run smoke` passed (with elevated localhost bind permissions): `{ ok: true, service: "shsid-social-api", user: "admin@shsid.online", pendingVerifications: 0, posts: 0, students: 0 }`.
