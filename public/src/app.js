@@ -140,6 +140,7 @@ const API_CACHE_TTL = {
 };
 const apiResponseCache = new Map();
 const API_CACHE_MAX_SIZE = 100;
+let saveStateTimer = null;
 
 function clearApiCache() {
   apiResponseCache.clear();
@@ -179,9 +180,33 @@ function loadState() {
   }
 }
 
-function saveState() {
+function flushStateToStorage() {
+  if (saveStateTimer) {
+    clearTimeout(saveStateTimer);
+    saveStateTimer = null;
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
+
+function saveState({ immediate = false } = {}) {
+  if (immediate) {
+    flushStateToStorage();
+    return;
+  }
+  if (saveStateTimer) return;
+  saveStateTimer = setTimeout(() => {
+    saveStateTimer = null;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }, 120);
+}
+
+window.addEventListener("beforeunload", () => {
+  try {
+    flushStateToStorage();
+  } catch {
+    // Ignore teardown storage errors.
+  }
+});
 
 function loadLoginMediaCache() {
   try {
@@ -730,9 +755,12 @@ async function refreshPosts(reset = true) {
 async function refreshConversations() {
   if (!state.apiToken) return;
   try {
+    const before = conversationsSnapshot();
     const result = await apiRequest("/conversations", { cacheTtlMs: API_CACHE_TTL.conversations });
     state.conversations = (result.conversations || []).map(normalizeConversation);
     if (!state.conversations.some((item) => item.id === activeConversationId)) activeConversationId = "";
+    const after = conversationsSnapshot();
+    if (after === before) return;
     warmUserAssetCache();
     saveState();
   } catch (error) {
@@ -1787,16 +1815,25 @@ async function refreshVerificationQueue() {
   const user = currentUser();
   if (!user || user.role === "admin" || user.status === "verified") return;
   try {
+    const previous = state.verificationQueue || { pendingTotal: 0, ahead: 0, position: 0 };
     const result = await apiRequest("/me/verification-queue", { cacheTtlMs: API_CACHE_TTL.verificationQueue });
-    state.verificationQueue = {
+    const next = {
       pendingTotal: Number(result.pendingTotal || 0),
       ahead: Number(result.ahead || 0),
       position: Number(result.position || 0)
     };
+    if (
+      Number(previous.pendingTotal || 0) === next.pendingTotal
+      && Number(previous.ahead || 0) === next.ahead
+      && Number(previous.position || 0) === next.position
+    ) return false;
+    state.verificationQueue = next;
     saveState();
+    return true;
   } catch (error) {
     console.error("refreshVerificationQueue failed", error);
   }
+  return false;
 }
 
 function syncVerificationQueueLoop() {
@@ -1811,8 +1848,8 @@ function syncVerificationQueueLoop() {
     if (verificationQueuePollInFlight) return;
     verificationQueuePollInFlight = true;
     try {
-      await refreshVerificationQueue();
-      render();
+      const changed = await refreshVerificationQueue();
+      if (changed) render();
     } finally {
       verificationQueuePollInFlight = false;
     }

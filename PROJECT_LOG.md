@@ -937,3 +937,16 @@
   - Validation:
     - `npm run check` passed.
     - Data counts confirmed all reset collections at `0`.
+- 2026-05-13: Performance optimization pass for perceived slowness.
+  - Frontend (`public/src/app.js`):
+    - Batched persistent state writes:
+      - Replaced immediate `localStorage` writes with a short debounced scheduler (`saveState` now batches writes every ~120ms).
+      - Added `flushStateToStorage()` and `beforeunload` flush to preserve correctness on page exit.
+    - Reduced high-frequency poll overhead:
+      - `refreshConversations()` now computes before/after conversation snapshots and skips `saveState()` + warm-cache work when nothing changed.
+      - `refreshVerificationQueue()` now returns a `changed` flag and only writes state/renders when queue values actually changed.
+      - Verification queue interval now calls `render()` only on real data changes.
+  - Why this speeds up:
+    - Eliminates repeated full-state JSON serialization + localStorage writes during chat polling cycles.
+    - Avoids unnecessary rerenders on unchanged periodic data.
+  - Validation: `npm run check` passed.
