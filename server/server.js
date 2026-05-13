@@ -155,6 +155,19 @@ function isEmailAddress(email) {
   return typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function normalizeExternalUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    const protocol = String(parsed.protocol || "").toLowerCase();
+    if (protocol !== "http:" && protocol !== "https:") return "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
 function createVerificationCode() {
   const bytes = crypto.randomBytes(5);
   const num = bytes.readUInt32BE(0) % 10 ** OTP_LENGTH;
@@ -1075,6 +1088,7 @@ async function handleApi(req, res, url) {
     }
     const question = String(body.question || "").trim();
     if (!question) return sendJson(res, 400, { error: "Question is required" });
+    if (profileId === user.id) return sendJson(res, 400, { error: "You cannot ask yourself a question" });
     const entry = {
       id: id("qna"),
       profileId,
@@ -1115,7 +1129,7 @@ async function handleApi(req, res, url) {
     const slot = String(body.slot || "").trim().slice(0, 40);
     const title = String(body.title || "").trim().slice(0, 120);
     const adBody = String(body.body || "").trim().slice(0, 320);
-    const adUrl = String(body.url || "").trim().slice(0, 500);
+    const adUrl = normalizeExternalUrl(String(body.url || "").trim().slice(0, 500));
     if (!slot || !title) return sendJson(res, 400, { error: "Slot and title are required" });
     if (!AD_SLOTS.has(slot)) return sendJson(res, 400, { error: "Invalid ad slot" });
     store.data.ads ||= [];

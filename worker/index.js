@@ -996,6 +996,7 @@ async function handleApi(request, env, url, route) {
 
     const question = String(body.question || "").trim();
     if (!question) return json({ error: "Question is required" }, 400);
+    if (profile.id === authUser.id) return json({ error: "You cannot ask yourself a question" }, 400);
     const entry = {
       id: id("qna"),
       profile_id: profile.id,
@@ -1061,7 +1062,7 @@ async function handleApi(request, env, url, route) {
     const slot = String(body.slot || "").trim().slice(0, 40);
     const title = String(body.title || "").trim().slice(0, 120);
     const text = String(body.body || "").trim().slice(0, 320);
-    const url = String(body.url || "").trim().slice(0, 500);
+    const url = normalizeExternalUrl(String(body.url || "").trim().slice(0, 500));
     if (!slot || !title) return json({ error: "Slot and title are required" }, 400);
     if (!AD_SLOTS.has(slot)) return json({ error: "Invalid ad slot" }, 400);
     const ad = { id: id("ad"), slot, title, body: text, url, active: body.active === false ? 0 : 1, created_at: now() };
@@ -1579,6 +1580,19 @@ function isAuthRateLimited(request, scope = "auth") {
 
 function safeName(name) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "file.bin";
+}
+
+function normalizeExternalUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    const protocol = String(parsed.protocol || "").toLowerCase();
+    if (protocol !== "http:" && protocol !== "https:") return "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
 }
 
 function parseRangeHeader(rangeHeader, size) {

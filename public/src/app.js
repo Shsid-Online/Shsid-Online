@@ -3428,6 +3428,7 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "ask-qna") {
+    if (!id || id === currentUser()?.id) return toast("You cannot ask yourself a question");
     const payload = await askQnaPopup();
     if (!payload) return;
     await apiRequest(`/users/${id}/qna`, { method: "POST", body: JSON.stringify(payload) });
