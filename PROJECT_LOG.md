@@ -801,3 +801,14 @@
     - Ban revoke endpoint now rejects warn-record revocation.
     - Ban endpoint now rejects already-banned users.
   - Validation: `npm run check` passed.
+- 2026-05-13: Client API cache optimization pass.
+  - Frontend (`public/src/app.js`):
+    - Added short-lived GET response cache with per-endpoint TTLs (`posts`, `students`, `conversations`, `notifications`, `suggestions`, `ads`, `qna`, `admin`, `verificationQueue`).
+    - Added request de-duplication for in-flight GET calls by cache key, reducing duplicate parallel network calls during fast tab swaps.
+    - Added automatic cache invalidation on all non-GET API writes to prevent stale state after mutations.
+    - Added explicit cache clear on logout and bootstrap auth failure/session reset.
+    - Wired TTL caching into high-traffic refresh paths (`fetchPostsPage`, `refreshConversations`, `refreshSuggestions`, `refreshVerificationQueue`, and existing cached refreshers).
+  - Effect:
+    - Faster view switching and lower API chatter under repeated navigation.
+    - Preserved freshness after writes via global cache invalidation.
+  - Validation: `npm run check` passed.

@@ -102,6 +102,22 @@ let feedAheadPrefetchInFlight = false;
 let categoryPrefetchInFlight = false;
 let feedCategoryWarmDone = false;
 const prefetchedCategoryPosts = Object.fromEntries(CONTENT_CATEGORIES.map((category) => [category, []]));
+const API_CACHE_TTL = {
+  posts: 20_000,
+  students: 60_000,
+  conversations: 8_000,
+  notifications: 10_000,
+  suggestions: 20_000,
+  ads: 120_000,
+  qna: 20_000,
+  admin: 15_000,
+  verificationQueue: 5_000
+};
+const apiResponseCache = new Map();
+
+function clearApiCache() {
+  apiResponseCache.clear();
+}
 
 hydrateAuthFromUrl();
 
@@ -227,28 +243,62 @@ function setAuthInFlight(isBusy) {
 }
 
 async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const method = String(options.method || "GET").toUpperCase();
+  const cacheTtlMs = Number(options.cacheTtlMs || 0);
+  const cacheForce = Boolean(options.cacheForce);
+  const cacheKey = `${state.currentUserId || "anon"}::${path}`;
+  const useCache = method === "GET" && cacheTtlMs > 0;
+  const nowMs = Date.now();
+  if (useCache && !cacheForce) {
+    const cached = apiResponseCache.get(cacheKey);
+    if (cached && cached.expiresAt > nowMs) {
+      if (cached.data) return cached.data;
+      if (cached.promise) return cached.promise;
+    }
+  }
+  const requestOptions = {
     ...options,
     headers: {
       ...(options.body ? { "content-type": "application/json" } : {}),
       ...(state.apiToken ? { authorization: `Bearer ${state.apiToken}` } : {}),
       ...(options.headers || {})
     }
-  });
-  const raw = await response.text();
-  let body = {};
-  try {
-    body = raw ? JSON.parse(raw) : {};
-  } catch {
-    body = { detail: raw || "" };
+  };
+  delete requestOptions.cacheTtlMs;
+  delete requestOptions.cacheForce;
+  const fetchPromise = (async () => {
+    const response = await fetch(`${API_BASE}${path}`, requestOptions);
+    const raw = await response.text();
+    let body = {};
+    try {
+      body = raw ? JSON.parse(raw) : {};
+    } catch {
+      body = { detail: raw || "" };
+    }
+    if (!response.ok) {
+      const message = [body.error, body.detail].filter(Boolean).join(": ");
+      const error = new Error(message || "Request failed");
+      error.status = response.status;
+      throw error;
+    }
+    return body;
+  })();
+  if (useCache) {
+    apiResponseCache.set(cacheKey, { promise: fetchPromise, data: null, expiresAt: nowMs + cacheTtlMs });
   }
-  if (!response.ok) {
-    const message = [body.error, body.detail].filter(Boolean).join(": ");
-    const error = new Error(message || "Request failed");
-    error.status = response.status;
+  let result;
+  try {
+    result = await fetchPromise;
+  } catch (error) {
+    if (useCache) apiResponseCache.delete(cacheKey);
     throw error;
   }
-  return body;
+  if (method !== "GET") {
+    apiResponseCache.clear();
+  } else if (useCache) {
+    apiResponseCache.set(cacheKey, { promise: null, data: result, expiresAt: Date.now() + cacheTtlMs });
+  }
+  return result;
 }
 
 function at(ts) {
@@ -444,7 +494,7 @@ async function fetchPostsPage({ offset = 0, limit = 10, category = "" } = {}) {
   query.set("limit", String(limit));
   query.set("offset", String(Math.max(0, Number(offset) || 0)));
   if (category) query.set("category", String(category).trim().toLowerCase());
-  const result = await apiRequest(`/posts?${query.toString()}`);
+  const result = await apiRequest(`/posts?${query.toString()}`, { cacheTtlMs: API_CACHE_TTL.posts });
   return {
     posts: (result.posts || []).map(normalizePost),
     pagination: result.pagination || {}
@@ -507,7 +557,7 @@ async function refreshPosts(reset = true) {
 async function refreshConversations() {
   if (!state.apiToken) return;
   try {
-    const result = await apiRequest("/conversations");
+    const result = await apiRequest("/conversations", { cacheTtlMs: API_CACHE_TTL.conversations });
     state.conversations = (result.conversations || []).map(normalizeConversation);
     if (!state.conversations.some((item) => item.id === activeConversationId)) {
       const visible = state.conversations.find((item) => !state.deletedChats?.[item.id]);
@@ -525,7 +575,7 @@ async function refreshReports() {
   const user = currentUser();
   if (!user || user.role !== "admin") return;
   try {
-    const result = await apiRequest("/admin/reports");
+    const result = await apiRequest("/admin/reports", { cacheTtlMs: API_CACHE_TTL.admin });
     state.reports = (result.reports || []).map((report) => ({
       ...report,
       reporterId: report.reporterId || report.reporter_id,
@@ -543,7 +593,7 @@ async function refreshAuditLogs() {
   const user = currentUser();
   if (!user || user.role !== "admin") return;
   try {
-    const result = await apiRequest("/admin/audit-logs");
+    const result = await apiRequest("/admin/audit-logs", { cacheTtlMs: API_CACHE_TTL.admin });
     state.audit = (result.auditLogs || []).map((entry) => ({
       ...entry,
       userId: entry.actorId || entry.userId,
@@ -559,7 +609,7 @@ async function refreshAuditLogs() {
 async function refreshNotifications() {
   if (!state.apiToken) return;
   try {
-    const result = await apiRequest("/notifications");
+    const result = await apiRequest("/notifications", { cacheTtlMs: API_CACHE_TTL.notifications });
     state.notifications = (result.notifications || []).map((item) => ({
       id: item.id,
       userId: item.userId,
@@ -580,16 +630,16 @@ async function refreshSuggestions() {
     let result;
     if (isAdmin) {
       try {
-        result = await apiRequest("/admin/suggestions");
+        result = await apiRequest("/admin/suggestions", { cacheTtlMs: API_CACHE_TTL.suggestions });
       } catch (error) {
         if (error?.status === 404 || String(error.message || "").toLowerCase().includes("not found")) {
-          result = await apiRequest("/suggestions");
+          result = await apiRequest("/suggestions", { cacheTtlMs: API_CACHE_TTL.suggestions });
         } else {
           throw error;
         }
       }
     } else {
-      result = await apiRequest("/suggestions");
+      result = await apiRequest("/suggestions", { cacheTtlMs: API_CACHE_TTL.suggestions });
     }
     if (result && Array.isArray(result.suggestions)) {
       state.suggestions = result.suggestions;
@@ -607,7 +657,7 @@ async function refreshSuggestions() {
 async function refreshAds() {
   if (!state.apiToken) return;
   try {
-    const result = await apiRequest("/ads");
+    const result = await apiRequest("/ads", { cacheTtlMs: API_CACHE_TTL.ads });
     state.ads = Array.isArray(result.ads) ? result.ads : [];
     saveState();
   } catch (error) {
@@ -618,7 +668,7 @@ async function refreshAds() {
 async function refreshQnaForProfile(profileId) {
   if (!state.apiToken || !profileId) return;
   try {
-    const result = await apiRequest(`/users/${profileId}/qna`);
+    const result = await apiRequest(`/users/${profileId}/qna`, { cacheTtlMs: API_CACHE_TTL.qna });
     const rows = result.questions || [];
     state.qna = [...state.qna.filter((item) => item.profileId !== profileId), ...rows];
     saveState();
@@ -686,6 +736,7 @@ async function bootstrapSession() {
   } catch {
     state.apiToken = null;
     state.currentUserId = null;
+    clearApiCache();
     clearAuthDraftState();
     state.authMode = "login";
     state.authStep = "email";
@@ -701,7 +752,7 @@ async function refreshAdminVerifications() {
   const user = currentUser();
   if (!user || user.role !== "admin") return;
   try {
-    const result = await apiRequest("/admin/verifications");
+    const result = await apiRequest("/admin/verifications", { cacheTtlMs: API_CACHE_TTL.admin });
     state.adminVerifications = Array.isArray(result.students) ? result.students : [];
     saveState();
   } catch (error) {
@@ -712,7 +763,7 @@ async function refreshAdminVerifications() {
 async function refreshStudents() {
   if (!state.apiToken) return;
   try {
-    const result = await apiRequest("/students");
+    const result = await apiRequest("/students", { cacheTtlMs: API_CACHE_TTL.students });
     mergeApiUsers(result.students || []);
     warmUserAssetCache();
     saveState();
@@ -1524,7 +1575,7 @@ async function refreshVerificationQueue() {
   const user = currentUser();
   if (!user || user.role === "admin" || user.status === "verified") return;
   try {
-    const result = await apiRequest("/me/verification-queue");
+    const result = await apiRequest("/me/verification-queue", { cacheTtlMs: API_CACHE_TTL.verificationQueue });
     state.verificationQueue = {
       pendingTotal: Number(result.pendingTotal || 0),
       ahead: Number(result.ahead || 0),
@@ -2901,6 +2952,7 @@ async function handleAction(action, id) {
     }
     state.apiToken = null;
     state.currentUserId = null;
+    clearApiCache();
     clearAuthDraftState();
     state.authMode = "login";
     state.authStep = "email";
