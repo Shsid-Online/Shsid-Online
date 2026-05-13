@@ -1967,7 +1967,8 @@ function renderComposer() {
 }
 
 function renderStudents() {
-  const students = state.users.filter((u) => u.role !== "admin" && u.status === "verified");
+  const meId = currentUser()?.id;
+  const students = state.users.filter((u) => u.role !== "admin" && u.status === "verified" && u.id !== meId);
   const myFollowing = Array.isArray(currentUser()?.following) ? currentUser().following : [];
   return page("Students", "Meet verified classmates and start conversations.", `
     <section class="grid two">${students.map((user, idx) => `
@@ -2093,8 +2094,8 @@ function showConversationDetailsPopup(conversation) {
       state.deletedChats[conversation.id] = true;
       saveState();
       if (activeConversationId === conversation.id) {
-        const { inbox, requests } = classifyConversations();
-        activeConversationId = inbox[0]?.id || requests[0]?.id || "";
+        const { inbox, requests, requestsSent } = classifyConversations();
+        activeConversationId = inbox[0]?.id || requests[0]?.id || requestsSent[0]?.id || "";
       }
       toast("Chat deleted");
       render();
@@ -2142,8 +2143,8 @@ function showConversationDetailsPopup(conversation) {
     state.deletedChats[conversation.id] = true;
     saveState();
     if (activeConversationId === conversation.id) {
-      const { inbox, requests } = classifyConversations();
-      activeConversationId = inbox[0]?.id || requests[0]?.id || "";
+      const { inbox, requests, requestsSent } = classifyConversations();
+      activeConversationId = inbox[0]?.id || requests[0]?.id || requestsSent[0]?.id || "";
     }
     toast("Chat deleted");
     render();
@@ -3141,6 +3142,7 @@ async function handleAction(action, id) {
   }
   if (action === "follow") {
     if (!id) return toast("Invalid user");
+    if (user.role === "admin") return toast("Admin cannot follow students");
     if (user.role !== "admin" && user.status !== "verified") return toast("Verification required before following");
     const target = state.users.find((item) => item.id === id);
     if (!target) return toast("User not found");
@@ -3172,6 +3174,7 @@ async function handleAction(action, id) {
   }
   if (action === "start-chat") {
     if (!id) return toast("Invalid user");
+    if (id === user.id) return toast("You cannot message yourself");
     if (user.role !== "admin" && user.status !== "verified") return toast("Verification required before messaging");
     if (startChatInFlight) return;
     const target = state.users.find((item) => item.id === id);
@@ -3387,16 +3390,20 @@ async function handleAction(action, id) {
       if (invalidMember) return toast("Invalid member selected");
       const title = String(popup.querySelector("#create-convo-title")?.value || "").trim();
       const payload = { memberIds, group: memberIds.length > 1, title: title || undefined };
+      const directTarget = !payload.group ? choices.find((item) => item.id === memberIds[0]) : null;
       if (submitBtn) {
         submitBtn.dataset.busy = "1";
         submitBtn.disabled = true;
       }
       try {
-        const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
+        let mode = "public";
         if (!payload.group) {
-          const mode = await askIdentityModePopup("this student");
-          if (mode) setConversationIdentityMode(result.conversation.id, mode);
+          const picked = await askIdentityModePopup(directTarget?.englishName || "this student");
+          if (!picked) return;
+          mode = picked;
         }
+        const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
+        if (!payload.group) setConversationIdentityMode(result.conversation.id, mode);
         popup.remove();
         await refreshConversations();
         conversationTab = payload.group ? "inbox" : "sent";

@@ -770,3 +770,17 @@
     - Same report target validation and duplicate-pending-report guard.
     - Same direct-conversation dedupe behavior for non-group chats.
   - Validation: `npm run check` passed.
+- 2026-05-13: Messaging/follow/report auth-edge hardening batch.
+  - Frontend (`public/src/app.js`):
+    - Students list now excludes current user (prevents self-target actions in cards).
+    - Follow action now explicitly blocks admin users in UI.
+    - Start-chat action now blocks self-target (`message yourself`) before request.
+    - Direct single-member create-conversation flow now asks identity mode before API create; cancel no longer creates conversation.
+    - Deleting chats from conversation-detail popups now picks next active conversation across inbox/requests/sent (prevents blank thread state).
+  - Backend Node (`server/server.js`):
+    - Follow endpoint now blocks admin users from following students.
+    - Conversation report creation now requires non-admin reporter to be a member of the target conversation.
+  - Backend Worker (`worker/index.js`) parity:
+    - Follow endpoint now blocks admin users from following students.
+    - Conversation report creation now requires non-admin reporter membership in target conversation.
+  - Validation: `npm run check` passed.

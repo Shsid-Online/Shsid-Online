@@ -706,6 +706,11 @@ async function handleApi(request, env, url, route) {
     if (targetType === "conversation") {
       const targetConversation = await env.DB.prepare("select id from conversations where id=?").bind(targetId).first();
       if (!targetConversation) return json({ error: "Report target not found" }, 404);
+      if (authUser.role !== "admin") {
+        const memberRow = await env.DB.prepare("select members from conversations where id=?").bind(targetId).first();
+        const members = jsonArray(memberRow?.members);
+        if (!members.includes(authUser.id)) return json({ error: "Not allowed to report this conversation" }, 403);
+      }
     }
     const duplicatePending = await env.DB.prepare("select id from reports where reporter_id=? and target_type=? and target_id=? and status='pending' limit 1")
       .bind(authUser.id, targetType, targetId)
@@ -1014,6 +1019,7 @@ async function handleApi(request, env, url, route) {
   const followMatch = route.match(/^\/users\/([^/]+)\/follow$/);
   if (method === "POST" && followMatch) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
+    if (authUser.role === "admin") return json({ error: "Admins cannot follow students" }, 403);
     if (authUser.role !== "admin" && authUser.status !== "verified") return json({ error: "Verification required before following" }, 403);
     const targetId = followMatch[1];
     if (targetId === authUser.id) return json({ error: "Cannot follow yourself" }, 400);

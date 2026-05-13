@@ -879,6 +879,9 @@ async function handleApi(req, res, url) {
     if (targetType === "conversation") {
       const targetConversation = store.data.conversations.find((item) => item.id === targetId);
       if (!targetConversation) return sendJson(res, 404, { error: "Report target not found" }, req);
+      if (user.role !== "admin" && !targetConversation.members.includes(user.id)) {
+        return sendJson(res, 403, { error: "Not allowed to report this conversation" }, req);
+      }
     }
     const duplicatePending = store.data.reports.find((item) =>
       item.reporterId === user.id
@@ -1121,6 +1124,7 @@ async function handleApi(req, res, url) {
   if (method === "POST" && userFollowMatch) {
     const user = requireAuth(req, res);
     if (!user) return;
+    if (user.role === "admin") return sendJson(res, 403, { error: "Admins cannot follow students" });
     if (user.role !== "admin" && user.status !== "verified") return sendJson(res, 403, { error: "Verification required before following" });
     const targetId = userFollowMatch[1];
     const target = store.findUserById(targetId);
