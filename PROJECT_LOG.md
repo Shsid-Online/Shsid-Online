@@ -741,3 +741,19 @@
     - Admin verification review now rejects non-pending targets (`status` must be `pending_verification`).
     - Admin report handling now rejects already-handled reports (`status !== pending`).
   - Validation: `npm run check` passed.
+- 2026-05-13: Verified-gating + moderation edge-case hardening batch.
+  - Backend (Node `server/server.js`):
+    - Conversation creation now blocks unverified non-admin senders (`403`) to prevent bypassing UI gating.
+    - Follow route now blocks unverified non-admin followers.
+    - Q&A ask route now blocks unverified non-admin askers.
+    - Suggestion submit route now blocks unverified users.
+    - Admin verification route now rejects admin targets explicitly.
+    - Ban revoke route now rejects duplicate revoke calls and only flips status to `verified` if target is currently `banned`.
+  - Backend (Worker `worker/index.js`) parity:
+    - Added the same verified-gating checks to conversations/follow/Q&A/suggestions.
+    - Admin verification now rejects admin targets.
+    - Ban revoke now rejects already-revoked bans and only unbans users currently marked `banned`.
+  - Frontend (`public/src/app.js`):
+    - Report handling now surfaces an explicit error for non-actionable report targets instead of silently no-oping.
+    - Single-member conversation create flow now prompts identity mode and persists it, matching direct-start behavior.
+  - Validation: `npm run check` passed.

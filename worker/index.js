@@ -895,6 +895,7 @@ async function handleApi(request, env, url, route) {
 
   if (method === "POST" && route === "/conversations") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
+    if (authUser.role !== "admin" && authUser.status !== "verified") return json({ error: "Verification required before messaging" }, 403);
     const memberIds = Array.isArray(body.memberIds) ? body.memberIds.map((v) => String(v || "").trim()).filter(Boolean) : [];
     const members = [...new Set([authUser.id, ...memberIds])];
     if (members.length < 2) return json({ error: "Select at least one other person to message" }, 400);
@@ -980,6 +981,7 @@ async function handleApi(request, env, url, route) {
   const followMatch = route.match(/^\/users\/([^/]+)\/follow$/);
   if (method === "POST" && followMatch) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
+    if (authUser.role !== "admin" && authUser.status !== "verified") return json({ error: "Verification required before following" }, 403);
     const targetId = followMatch[1];
     if (targetId === authUser.id) return json({ error: "Cannot follow yourself" }, 400);
     const target = await getUserById(env, targetId);
@@ -1015,6 +1017,7 @@ async function handleApi(request, env, url, route) {
     const question = String(body.question || "").trim().slice(0, MAX_TEXT_LEN);
     const visibility = String(body.visibility || "public").trim().toLowerCase();
     if (!question) return json({ error: "Question is required" }, 400);
+    if (authUser.role !== "admin" && authUser.status !== "verified") return json({ error: "Verification required before asking questions" }, 403);
     if (profile.id === authUser.id) return json({ error: "You cannot ask yourself a question" }, 400);
     if (!["public", "private"].includes(visibility)) return json({ error: "Invalid visibility" }, 400);
     const entry = {
@@ -1114,6 +1117,7 @@ async function handleApi(request, env, url, route) {
   if (method === "POST" && route === "/suggestions") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     if (authUser.role === "admin") return json({ error: "Admins cannot submit suggestions" }, 403);
+    if (authUser.status !== "verified") return json({ error: "Verification required before submitting suggestions" }, 403);
     const text = String(body.text || "").trim().slice(0, 1000);
     if (!text) return json({ error: "Suggestion text is required" }, 400);
     const suggestion = { id: id("sgg"), user_id: authUser.id, text, status: "pending", created_at: now() };
@@ -1170,6 +1174,7 @@ async function handleApi(request, env, url, route) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const user = await getUserById(env, adminVerifyMatch[1]);
     if (!user) return json({ error: "Not found" }, 404);
+    if (user.role === "admin") return json({ error: "Cannot verify admin account" }, 400);
     if (user.status !== "pending_verification") return json({ error: "User is not pending verification" }, 400);
     const requestedDecision = String(body.decision || "").trim().toLowerCase();
     if (!VERIFICATION_DECISIONS.has(requestedDecision)) return json({ error: "Invalid verification decision" }, 400);
@@ -1280,8 +1285,9 @@ async function handleApi(request, env, url, route) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const ban = await env.DB.prepare("select * from bans where id=?").bind(revokeBanMatch[1]).first();
     if (!ban) return json({ error: "Not found" }, 404);
+    if (ban.revoked_at) return json({ error: "Ban already revoked" }, 400);
     await env.DB.prepare("update bans set revoked_at=? where id=?").bind(now(), ban.id).run();
-    await env.DB.prepare("update users set status='verified', updated_at=? where id=?").bind(now(), ban.user_id).run();
+    await env.DB.prepare("update users set status='verified', updated_at=? where id=? and status='banned'").bind(now(), ban.user_id).run();
     await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
       .bind(id("ntf"), ban.user_id, "moderation", "Your account suspension has been lifted.", null, now())
       .run();

@@ -900,6 +900,7 @@ async function handleApi(req, res, url) {
   if (method === "POST" && url.pathname === "/api/conversations") {
     const user = requireAuth(req, res);
     if (!user) return;
+    if (user.role !== "admin" && user.status !== "verified") return sendJson(res, 403, { error: "Verification required before messaging" });
     const memberIds = Array.isArray(body.memberIds) ? body.memberIds.map((item) => String(item || "").trim()).filter(Boolean) : [];
     const uniqueMembers = [...new Set([user.id, ...memberIds])];
     if (uniqueMembers.length < 2) return sendJson(res, 400, { error: "Select at least one other person to message" });
@@ -1095,6 +1096,7 @@ async function handleApi(req, res, url) {
   if (method === "POST" && userFollowMatch) {
     const user = requireAuth(req, res);
     if (!user) return;
+    if (user.role !== "admin" && user.status !== "verified") return sendJson(res, 403, { error: "Verification required before following" });
     const targetId = userFollowMatch[1];
     const target = store.findUserById(targetId);
     if (!target || target.role !== "student") return sendJson(res, 404, { error: "Student not found" });
@@ -1130,6 +1132,7 @@ async function handleApi(req, res, url) {
     const question = String(body.question || "").trim().slice(0, MAX_TEXT_LEN);
     const visibility = String(body.visibility || "public").trim().toLowerCase();
     if (!question) return sendJson(res, 400, { error: "Question is required" });
+    if (user.role !== "admin" && user.status !== "verified") return sendJson(res, 403, { error: "Verification required before asking questions" });
     if (profileId === user.id) return sendJson(res, 400, { error: "You cannot ask yourself a question" });
     if (!["public", "private"].includes(visibility)) return sendJson(res, 400, { error: "Invalid visibility" });
     const entry = {
@@ -1233,6 +1236,7 @@ async function handleApi(req, res, url) {
     const user = requireAuth(req, res);
     if (!user) return;
     if (user.role === "admin") return sendJson(res, 403, { error: "Admins cannot submit suggestions" });
+    if (user.status !== "verified") return sendJson(res, 403, { error: "Verification required before submitting suggestions" });
     const text = String(body.text || "").trim().slice(0, 1000);
     if (!text) return sendJson(res, 400, { error: "Suggestion text is required" });
     const suggestion = {
@@ -1284,6 +1288,7 @@ async function handleApi(req, res, url) {
     if (!admin) return;
     const user = store.findUserById(verifyMatch[1]);
     if (!user) return notFound(res);
+    if (user.role === "admin") return sendJson(res, 400, { error: "Cannot verify admin account" });
     if (user.status !== "pending_verification") return sendJson(res, 400, { error: "User is not pending verification" });
     const requestedDecision = String(body.decision || "").trim().toLowerCase();
     if (!VERIFICATION_DECISIONS.has(requestedDecision)) return sendJson(res, 400, { error: "Invalid verification decision" });
@@ -1414,11 +1419,14 @@ async function handleApi(req, res, url) {
     if (!admin) return;
     const ban = store.data.bans.find((item) => item.id === revokeBanMatch[1]);
     if (!ban) return notFound(res);
+    if (ban.revokedAt) return sendJson(res, 400, { error: "Ban already revoked" });
     ban.revokedAt = now();
     const targetUser = store.findUserById(ban.userId);
     if (targetUser) {
-      targetUser.status = "verified";
-      targetUser.updatedAt = now();
+      if (targetUser.status === "banned") {
+        targetUser.status = "verified";
+        targetUser.updatedAt = now();
+      }
       store.data.notifications.push({ id: id("ntf"), userId: targetUser.id, type: "moderation", body: "Your account suspension has been lifted.", readAt: null, createdAt: now() });
     }
     store.audit(admin.id, "ban_revoked", { banId: ban.id, userId: ban.userId });

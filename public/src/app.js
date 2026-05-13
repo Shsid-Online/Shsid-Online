@@ -3391,6 +3391,10 @@ async function handleAction(action, id) {
       }
       try {
         const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
+        if (!payload.group) {
+          const mode = await askIdentityModePopup("this student");
+          if (mode) setConversationIdentityMode(result.conversation.id, mode);
+        }
         popup.remove();
         await refreshConversations();
         conversationTab = payload.group ? "inbox" : "sent";
@@ -3607,6 +3611,8 @@ async function handleAction(action, id) {
             body: JSON.stringify({ action: reportAction, reason, days })
           });
           await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "actioned" }) });
+        } else {
+          return toast("Cannot take action on this report target");
         }
         result.remove();
         toast(reportAction === "dismiss" ? "Report dismissed" : "Action taken");
