@@ -1164,7 +1164,7 @@ async function handleApi(req, res, url) {
   if (method === "POST" && url.pathname === "/api/suggestions") {
     const user = requireAuth(req, res);
     if (!user) return;
-    const text = String(body.text || "").trim();
+    const text = String(body.text || "").trim().slice(0, 1000);
     if (!text) return sendJson(res, 400, { error: "Suggestion text is required" });
     const suggestion = {
       id: id("sgg"),
@@ -1193,7 +1193,7 @@ async function handleApi(req, res, url) {
     if (!admin) return;
     const suggestion = store.data.suggestions.find((item) => item.id === adminSuggestionMatch[1]);
     if (!suggestion) return notFound(res);
-    const response = String(body.response || "").trim();
+    const response = String(body.response || "").trim().slice(0, 280);
     if (!response) return sendJson(res, 400, { error: "Response is required" });
     suggestion.status = `responded::${response}`;
     suggestion.updatedAt = now();

@@ -595,3 +595,15 @@
 - 2026-05-13: Security/robustness batch: made frontend `apiRequest` tolerant to non-JSON/empty responses; added auth email length and format validation for Worker start/verify/register/login; added Worker password max length validation; and added periodic cleanup for in-memory auth rate-limit map to reduce memory growth risk.
 - 2026-05-13: Bugfix batch: preserve active conversation selection against deleted chats after refresh; reset deleted/request-acceptance state on logout; guard send-message against stale/missing input DOM; validate direct-message target id; validate group member ids before create; and prefer non-deleted conversation when opening new group chat.
 - 2026-05-13: Bugfix/security batch: blocked self-Q&A in frontend + Worker + Node backend, and normalized ad URLs in Worker + Node admin create-ad endpoints to allow only http/https schemes.
+- 2026-05-13: Bugfix hardening batch: action guardrails + suggestion payload bounds.
+  - Frontend `handleAction` hardening in `public/src/app.js`:
+    - Guarded create-post path against missing post form DOM nodes.
+    - Safely read post text/media inputs and added category fallback.
+    - Added missing-id validation for `follow`, `report-message`, `verify-user`, `reject-user`, and `ban-user` actions.
+    - Added report-action whitelist validation in admin report handling.
+    - Added temp-ban day range validation (1..365) for user-ban and report-ban flows.
+    - Added profile-open guard to avoid switching to nonexistent profile ids.
+  - Backend parity bounds:
+    - Worker: capped suggestion text to 1000 chars in `POST /suggestions`.
+    - Node server: capped suggestion text to 1000 chars and admin suggestion response to 280 chars.
+  - Validation: `npm run check` passed.

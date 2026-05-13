@@ -1093,7 +1093,7 @@ async function handleApi(request, env, url, route) {
 
   if (method === "POST" && route === "/suggestions") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
-    const text = String(body.text || "").trim();
+    const text = String(body.text || "").trim().slice(0, 1000);
     if (!text) return json({ error: "Suggestion text is required" }, 400);
     const suggestion = { id: id("sgg"), user_id: authUser.id, text, status: "pending", created_at: now() };
     await env.DB.prepare("insert into suggestions (id, user_id, text, status, created_at) values (?, ?, ?, ?, ?)")

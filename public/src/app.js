@@ -2895,8 +2895,14 @@ async function handleAction(action, id) {
     if (postPublishInFlight) return;
     postPublishInFlight = true;
     const title = document.querySelector("#post-title")?.value?.trim() || "";
-    const text = document.querySelector("#post-text").value.trim();
-    const files = [...document.querySelector("#post-media").files].slice(0, 20);
+    const postTextInput = document.querySelector("#post-text");
+    const postMediaInput = document.querySelector("#post-media");
+    if (!postTextInput || !postMediaInput) {
+      postPublishInFlight = false;
+      return toast("Post form is not ready");
+    }
+    const text = String(postTextInput.value || "").trim();
+    const files = [...(postMediaInput.files || [])].slice(0, 20);
     try {
       if (!text && !files.length) {
         toast("Write something or attach media");
@@ -2908,8 +2914,8 @@ async function handleAction(action, id) {
         body: JSON.stringify({
           title,
           text,
-          anonymous: document.querySelector("#post-anon").value === "true",
-          category: document.querySelector("#post-category").value,
+          anonymous: document.querySelector("#post-anon")?.value === "true",
+          category: document.querySelector("#post-category")?.value || "school",
           media
         })
       });
@@ -3056,10 +3062,12 @@ async function handleAction(action, id) {
     toast("Comment deleted");
   }
   if (action === "follow") {
+    if (!id) return toast("Invalid user");
     const result = await apiRequest(`/users/${id}/follow`, { method: "POST", body: JSON.stringify({}) });
     mergeApiUsers([result.user]);
   }
   if (action === "view-profile") {
+    if (!id || !state.users.some((item) => item.id === id)) return toast("Profile not found");
     profileBackView = view || "students";
     state.selectedProfileId = id;
     view = "profile";
@@ -3283,12 +3291,14 @@ async function handleAction(action, id) {
     view = "messages";
   }
   if (action === "report-message") {
+    if (!id) return toast("Select a conversation first");
     const reason = await askTextPopup("Report Conversation", "Reason", "Describe the issue");
     if (!reason) return;
     await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "conversation", targetId: id, reason }) });
     if (user.role === "admin") await refreshReports();
   }
   if (action === "verify-user") {
+    if (!id) return toast("Invalid user");
     await apiRequest(`/admin/verifications/${id}`, {
       method: "POST",
       body: JSON.stringify({ decision: "approve" })
@@ -3297,6 +3307,7 @@ async function handleAction(action, id) {
     await refreshStudents();
   }
   if (action === "reject-user") {
+    if (!id) return toast("Invalid user");
     const ok = await askConfirmPopup("Reject Verification", "Reject this student's verification submission?", "Reject");
     if (!ok) return;
     await apiRequest(`/admin/verifications/${id}`, {
@@ -3307,6 +3318,7 @@ async function handleAction(action, id) {
     await refreshStudents();
   }
   if (action === "ban-user") {
+    if (!id) return toast("Invalid user");
     const user = state.users.find((u) => u.id === id);
     const result = await showFormPopup("Ban / Warn User", `
       <form id="ban-user-form" class="grid">
@@ -3344,6 +3356,7 @@ async function handleAction(action, id) {
       const reason = result.querySelector("#ban-reason")?.value?.trim();
       if (!reason) return toast("Please enter a reason");
       const days = banAction === "ban_temp" ? parseInt(result.querySelector("#ban-days")?.value || "7", 10) : 0;
+      if (banAction === "ban_temp" && (!Number.isInteger(days) || days < 1 || days > 365)) return toast("Days must be between 1 and 365");
       await apiRequest(`/admin/bans/${id}/user`, {
         method: "POST",
         body: JSON.stringify({ action: banAction, reason, days })
@@ -3401,9 +3414,11 @@ async function handleAction(action, id) {
     result.querySelector("#handle-report-form")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const reportAction = result.querySelector("#report-action")?.value || "dismiss";
+      if (!["dismiss", "warn", "ban_temp", "ban_perm"].includes(reportAction)) return toast("Invalid report action");
       const reason = result.querySelector("#report-reason")?.value?.trim();
       if (reportAction !== "dismiss" && !reason) return toast("Please enter a reason for non-dismiss actions");
       const days = reportAction === "ban_temp" ? parseInt(result.querySelector("#report-days")?.value || "7", 10) : 0;
+      if (reportAction === "ban_temp" && (!Number.isInteger(days) || days < 1 || days > 365)) return toast("Days must be between 1 and 365");
       if (reportAction === "dismiss") {
         await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "dismissed" }) });
       } else if (targetId && targetId !== report.reporterId) {
