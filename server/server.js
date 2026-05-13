@@ -1144,6 +1144,31 @@ async function handleApi(req, res, url) {
     return sendJson(res, 201, { question: entry });
   }
 
+  const qnaAnswerMatch = url.pathname.match(/^\/api\/qna\/([^/]+)\/answer$/);
+  if (qnaAnswerMatch && method === "POST") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const entry = store.data.qna.find((item) => item.id === qnaAnswerMatch[1]);
+    if (!entry) return notFound(res);
+    if (user.role !== "admin" && user.id !== entry.profileId) return sendJson(res, 403, { error: "Not allowed" });
+    const answer = String(body.answer || "").trim().slice(0, MAX_TEXT_LEN);
+    if (!answer) return sendJson(res, 400, { error: "Answer is required" });
+    entry.answer = answer;
+    if (entry.askerId) {
+      store.data.notifications.push({
+        id: id("ntf"),
+        userId: entry.askerId,
+        type: "qna",
+        body: "Your Q&A question got a reply.",
+        readAt: null,
+        createdAt: now()
+      });
+    }
+    store.audit(user.id, "qna_answered", { qnaId: entry.id, profileId: entry.profileId });
+    store.save();
+    return sendJson(res, 200, { question: entry });
+  }
+
   if (method === "GET" && url.pathname === "/api/suggestions") {
     const user = requireAuth(req, res);
     if (!user) return;

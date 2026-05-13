@@ -676,3 +676,15 @@
   - Suggestion UX: clear student suggestion textarea after successful submit.
   - Suggestion admin reply now caps response length locally to 280 chars before API call.
   - Validation: `npm run check` passed.
+- 2026-05-13: Duplicate-submit/race hardening + Node Q&A parity endpoint batch.
+  - Frontend (`public/src/app.js`):
+    - Added in-flight lock for `start-chat` to prevent duplicate direct-conversation creation.
+    - Tightened request actions: `accept-request`/`reject-request` now require conversation to be in current Requests list.
+    - Added per-button busy guard for direct-message picker to prevent duplicate rapid creation calls.
+    - Added submit-button busy guard for create-conversation popup to prevent double submit.
+    - Added in-flight lock for `mark-read` to prevent duplicate notification read-all requests.
+    - Added in-flight lock for suggestion submit action.
+    - Added in-flight lock for suggestion admin reply action.
+  - Backend parity (`server/server.js`):
+    - Added missing Node endpoint `POST /api/qna/:id/answer` with auth/ownership checks, answer length cap, notification fanout to asker, audit log write, and persistence.
+  - Validation: `npm run check` passed.

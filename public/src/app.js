@@ -67,6 +67,10 @@ let uploadProgressTimer = null;
 let uploadCompleting = false;
 let postPublishInFlight = false;
 let loadMorePostsInFlight = false;
+let startChatInFlight = false;
+let suggestionSubmitInFlight = false;
+let suggestionReplyInFlight = false;
+let markReadInFlight = false;
 let modalLockedScrollY = 0;
 const postMediaIndexByPostId = {};
 let feedVideoObserver = null;
@@ -3133,16 +3137,22 @@ async function handleAction(action, id) {
   }
   if (action === "start-chat") {
     if (!id) return toast("Invalid user");
+    if (startChatInFlight) return;
     const target = state.users.find((item) => item.id === id);
     if (!target || target.role === "admin" || target.status !== "verified") return toast("Only verified students can be messaged");
-    const mode = await askIdentityModePopup(target.englishName || "student");
-    if (!mode) return;
-    const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: [id], group: false }) });
-    setConversationIdentityMode(result.conversation.id, mode);
-    conversationTab = "sent";
-    await refreshConversations();
-    activeConversationId = result.conversation.id;
-    view = "messages";
+    startChatInFlight = true;
+    try {
+      const mode = await askIdentityModePopup(target.englishName || "student");
+      if (!mode) return;
+      const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: [id], group: false }) });
+      setConversationIdentityMode(result.conversation.id, mode);
+      conversationTab = "sent";
+      await refreshConversations();
+      activeConversationId = result.conversation.id;
+      view = "messages";
+    } finally {
+      startChatInFlight = false;
+    }
   }
   if (action === "send-message") {
     const conversation = state.conversations.find((item) => item.id === id);
@@ -3215,7 +3225,9 @@ async function handleAction(action, id) {
   }
   if (action === "accept-request") {
     if (!id) return toast("Conversation not found");
-    if (!state.conversations.some((conversation) => conversation.id === id)) return toast("Conversation not found");
+    const convo = state.conversations.find((conversation) => conversation.id === id);
+    if (!convo) return toast("Conversation not found");
+    if (!classifyConversations().requests.some((conversation) => conversation.id === id)) return toast("Conversation is not in requests");
     if (!state.acceptedRequests || typeof state.acceptedRequests !== "object") state.acceptedRequests = {};
     state.acceptedRequests[id] = true;
     if (state.rejectedRequests && typeof state.rejectedRequests === "object") delete state.rejectedRequests[id];
@@ -3226,7 +3238,9 @@ async function handleAction(action, id) {
   }
   if (action === "reject-request") {
     if (!id) return toast("Conversation not found");
-    if (!state.conversations.some((conversation) => conversation.id === id)) return toast("Conversation not found");
+    const convo = state.conversations.find((conversation) => conversation.id === id);
+    if (!convo) return toast("Conversation not found");
+    if (!classifyConversations().requests.some((conversation) => conversation.id === id)) return toast("Conversation is not in requests");
     if (!state.rejectedRequests || typeof state.rejectedRequests !== "object") state.rejectedRequests = {};
     state.rejectedRequests[id] = true;
     if (state.acceptedRequests && typeof state.acceptedRequests === "object") delete state.acceptedRequests[id];
@@ -3258,18 +3272,27 @@ async function handleAction(action, id) {
     });
     popup.querySelectorAll("[data-direct-target]").forEach((button) => {
       button.addEventListener("click", async () => {
+        if (button.dataset.busy === "1") return;
+        button.dataset.busy = "1";
         const targetId = button.getAttribute("data-direct-target");
         if (!targetId) return toast("Invalid target");
         const target = choices.find((item) => item.id === targetId);
         const mode = await askIdentityModePopup(target?.englishName || "student");
-        if (!mode) return;
-        const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: [targetId], group: false }) });
-        setConversationIdentityMode(result.conversation.id, mode);
-        conversationTab = "sent";
-        await refreshConversations();
-        activeConversationId = result.conversation.id;
-        popup.remove();
-        render();
+        if (!mode) {
+          button.dataset.busy = "0";
+          return;
+        }
+        try {
+          const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: [targetId], group: false }) });
+          setConversationIdentityMode(result.conversation.id, mode);
+          conversationTab = "sent";
+          await refreshConversations();
+          activeConversationId = result.conversation.id;
+          popup.remove();
+          render();
+        } finally {
+          button.dataset.busy = "0";
+        }
       });
     });
     return;
@@ -3309,6 +3332,12 @@ async function handleAction(action, id) {
     });
     popup.querySelector("#create-convo-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
+      const submitBtn = popup.querySelector('button[type="submit"]');
+      if (submitBtn?.dataset.busy === "1") return;
+      if (submitBtn) {
+        submitBtn.dataset.busy = "1";
+        submitBtn.disabled = true;
+      }
       const memberIds = [...popup.querySelectorAll("[data-convo-member]:checked")].map((input) => input.value).filter(Boolean);
       if (!memberIds.length) return toast("Select at least one member");
       const allowedIds = new Set(choices.map((item) => item.id));
@@ -3316,13 +3345,20 @@ async function handleAction(action, id) {
       if (invalidMember) return toast("Invalid member selected");
       const title = String(popup.querySelector("#create-convo-title")?.value || "").trim();
       const payload = { memberIds, group: memberIds.length > 1, title: title || undefined };
-      const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
-      popup.remove();
-      await refreshConversations();
-      conversationTab = payload.group ? "inbox" : "sent";
-      activeConversationId = result?.conversation?.id || state.conversations[0]?.id;
-      toast("Conversation created");
-      render();
+      try {
+        const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
+        popup.remove();
+        await refreshConversations();
+        conversationTab = payload.group ? "inbox" : "sent";
+        activeConversationId = result?.conversation?.id || state.conversations[0]?.id;
+        toast("Conversation created");
+        render();
+      } finally {
+        if (submitBtn) {
+          submitBtn.dataset.busy = "0";
+          submitBtn.disabled = false;
+        }
+      }
     });
     return;
   }
@@ -3499,10 +3535,16 @@ async function handleAction(action, id) {
   }
   if (action === "mark-read") {
     if (!currentUser()) return toast("Please log in first");
-    await apiRequest("/notifications/read-all", { method: "POST", body: JSON.stringify({}) });
-    await refreshNotifications();
-    saveState();
-    renderNotificationsPanelOnly();
+    if (markReadInFlight) return;
+    markReadInFlight = true;
+    try {
+      await apiRequest("/notifications/read-all", { method: "POST", body: JSON.stringify({}) });
+      await refreshNotifications();
+      saveState();
+      renderNotificationsPanelOnly();
+    } finally {
+      markReadInFlight = false;
+    }
     return;
   }
   if (action === "ask-qna") {
@@ -3550,26 +3592,38 @@ async function handleAction(action, id) {
   }
   if (action === "submit-suggestion") {
     if (currentUser()?.role === "admin") return toast("Admins cannot submit suggestions");
+    if (suggestionSubmitInFlight) return;
     const text = String(document.querySelector("#suggestion-text")?.value || "").trim();
     if (!text) return toast("Write a suggestion first");
-    await apiRequest("/suggestions", { method: "POST", body: JSON.stringify({ text }) });
-    const input = document.querySelector("#suggestion-text");
-    if (input) input.value = "";
-    await refreshSuggestions();
-    toast("Suggestion submitted");
+    suggestionSubmitInFlight = true;
+    try {
+      await apiRequest("/suggestions", { method: "POST", body: JSON.stringify({ text }) });
+      const input = document.querySelector("#suggestion-text");
+      if (input) input.value = "";
+      await refreshSuggestions();
+      toast("Suggestion submitted");
+    } finally {
+      suggestionSubmitInFlight = false;
+    }
   }
   if (action === "reply-suggestion") {
     if (currentUser()?.role !== "admin") return toast("Admin access required");
     if (!id) return toast("Invalid suggestion");
     const target = (state.suggestions || []).find((item) => item.id === id);
     if (!target) return toast("Suggestion not found");
+    if (suggestionReplyInFlight) return;
     const response = await askTextPopup("Respond to Suggestion", "Response", "Write your response");
     if (response == null) return;
     const clean = String(response).trim().slice(0, 280);
     if (!clean) return toast("Response is required");
-    await apiRequest(`/admin/suggestions/${id}`, { method: "POST", body: JSON.stringify({ response: clean }) });
-    await refreshSuggestions();
-    toast("Suggestion response sent");
+    suggestionReplyInFlight = true;
+    try {
+      await apiRequest(`/admin/suggestions/${id}`, { method: "POST", body: JSON.stringify({ response: clean }) });
+      await refreshSuggestions();
+      toast("Suggestion response sent");
+    } finally {
+      suggestionReplyInFlight = false;
+    }
   }
   if (action === "create-ad") {
     const slot = String(document.querySelector("#ad-slot")?.value || "").trim();
