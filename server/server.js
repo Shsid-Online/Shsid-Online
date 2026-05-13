@@ -35,7 +35,7 @@ store.load();
 
 const RATE_LIMIT = { windowMs: 15 * 60 * 1000, maxAuthRequests: 20, maxOtpAttempts: 5 };
 const rateLimitMap = new Map();
-const OTP_LENGTH = 8;
+const OTP_LENGTH = 6;
 const MAX_TEXT_LEN = 10000;
 const MAX_NAME_LEN = 100;
 const MAX_TITLE_LEN = 200;
