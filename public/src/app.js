@@ -753,19 +753,21 @@ async function refreshPosts(reset = true) {
 }
 
 async function refreshConversations() {
-  if (!state.apiToken) return;
+  if (!state.apiToken) return false;
   try {
     const before = conversationsSnapshot();
     const result = await apiRequest("/conversations", { cacheTtlMs: API_CACHE_TTL.conversations });
     state.conversations = (result.conversations || []).map(normalizeConversation);
     if (!state.conversations.some((item) => item.id === activeConversationId)) activeConversationId = "";
     const after = conversationsSnapshot();
-    if (after === before) return;
+    if (after === before) return false;
     warmUserAssetCache();
     saveState();
+    return true;
   } catch (error) {
     console.error("refreshConversations failed", error);
   }
+  return false;
 }
 
 async function refreshReports() {
@@ -1746,6 +1748,27 @@ function renderUploadOverlay() {
   `;
 }
 
+function syncUploadOverlayDom() {
+  const appRoot = document.querySelector("#app");
+  if (!appRoot) return;
+  const existing = appRoot.querySelector(".upload-overlay");
+  if (!uploadUi.active) {
+    if (existing) existing.remove();
+    return;
+  }
+  const pct = Math.max(0, Math.min(100, Number(uploadUi.percent || 0)));
+  if (!existing) {
+    appRoot.insertAdjacentHTML("beforeend", renderUploadOverlay());
+    return;
+  }
+  const ring = existing.querySelector(".upload-ring");
+  if (ring) ring.style.setProperty("--pct", String(pct));
+  const inner = existing.querySelector(".upload-ring-inner");
+  if (inner) inner.textContent = `${Math.round(pct)}%`;
+  const label = existing.querySelector("strong");
+  if (label) label.textContent = uploadUi.label || "Uploading...";
+}
+
 function startUploadProgressTicker() {
   if (uploadProgressTimer) return;
   uploadProgressTimer = setInterval(() => {
@@ -1761,14 +1784,14 @@ function startUploadProgressTicker() {
         uploadTargetPercent = 0;
         uploadCompleting = false;
         stopUploadProgressTicker();
-        render();
+        syncUploadOverlayDom();
       }
       return;
     }
     const step = Math.max(1, Math.ceil((target - current) * 0.28));
     const next = Math.min(target, current + step);
     uploadUi = { ...uploadUi, percent: next };
-    render();
+    syncUploadOverlayDom();
   }, 500);
 }
 
@@ -1779,10 +1802,10 @@ function setUploadProgress(label, percent) {
   uploadCompleting = false;
   if (!uploadUi.active) {
     uploadUi = { active: true, label: nextLabel, percent: 0 };
-    render();
+    syncUploadOverlayDom();
   } else if (uploadUi.label !== nextLabel) {
     uploadUi = { ...uploadUi, label: nextLabel };
-    render();
+    syncUploadOverlayDom();
   }
   startUploadProgressTicker();
 }
@@ -1793,7 +1816,7 @@ function clearUploadProgress({ immediate = false } = {}) {
     uploadTargetPercent = 0;
     uploadCompleting = false;
     stopUploadProgressTicker();
-    render();
+    syncUploadOverlayDom();
     return;
   }
   uploadTargetPercent = 100;
@@ -1873,11 +1896,9 @@ async function pollLiveChatUpdates() {
   if (liveChatPollInFlight || !state.apiToken) return;
   liveChatPollInFlight = true;
   try {
-    const before = conversationsSnapshot();
-    await refreshConversations();
-    const next = conversationsSnapshot();
-    if (next !== before) {
-      liveChatSnapshot = next;
+    const changed = await refreshConversations();
+    if (changed) {
+      liveChatSnapshot = conversationsSnapshot();
       render();
     }
   } catch (error) {

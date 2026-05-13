@@ -950,3 +950,16 @@
     - Eliminates repeated full-state JSON serialization + localStorage writes during chat polling cycles.
     - Avoids unnecessary rerenders on unchanged periodic data.
   - Validation: `npm run check` passed.
+- 2026-05-13: Deeper performance blocker fixes (lag/jank reduction).
+  - Identified blockers:
+    - Upload progress ticker triggered full-app `render()` every 500ms while uploads were active.
+    - Live-chat polling did duplicate heavy conversation snapshots (`before/after`) across both caller and callee.
+  - Fixes (`public/src/app.js`):
+    - Added `syncUploadOverlayDom()` to update only upload overlay DOM (ring percent + label + mount/unmount) without full app rerender.
+    - Replaced upload-ticker and upload-progress path `render()` calls with `syncUploadOverlayDom()`.
+    - Updated `refreshConversations()` to return a `changed` boolean and skip extra work when unchanged.
+    - Updated `pollLiveChatUpdates()` to use `refreshConversations()` change flag, removing redundant snapshot roundtrip.
+  - Effect:
+    - Uploading no longer causes continuous full page rebuilds.
+    - Chat polling uses less CPU and less JSON/stringify overhead during idle updates.
+  - Validation: `npm run check` passed.
