@@ -831,3 +831,16 @@
     - Reduced write amplification by skipping full cache rewrites when media list signature is unchanged.
     - Applied the same media snapshot + API cache clear behavior to auth-screen logout path (parity with main logout).
   - Validation: `npm run check` passed.
+- 2026-05-13: 10-bug pass (logout/session reset + static cache policy).
+  - Frontend (`public/src/app.js`):
+    - Added `resetClientSessionState()` and switched both logout paths to use one consistent reset flow.
+    - Fixed auth-screen logout path not clearing full app state (users/posts/conversations/notifications/reports/qna/ads/etc).
+    - Fixed auth-screen logout path not resetting conversation/admin navigation pointers.
+    - Fixed auth-screen logout path not clearing file-input stores.
+    - Fixed auth-screen logout path not stopping verification queue polling loop.
+    - Fixed auth-screen logout path not stopping upload UI ticker/progress.
+    - Fixed main logout path to also stop verification queue and clear upload progress via unified reset.
+  - Server (`server/server.js`):
+    - Improved static caching policy: HTML remains `no-store`, but non-HTML static assets now use `public, max-age=3600, stale-while-revalidate=300`.
+    - Static cache logic now computes by extension/content-type to avoid stale shell caching while speeding CSS/JS/media reloads.
+  - Validation: `npm run check` passed.

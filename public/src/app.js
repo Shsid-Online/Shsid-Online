@@ -323,6 +323,44 @@ function clearAuthDraftState() {
   state.selectedProfileId = null;
 }
 
+function resetClientSessionState() {
+  state.apiToken = null;
+  state.currentUserId = null;
+  clearApiCache();
+  clearAuthDraftState();
+  state.authMode = "login";
+  state.authStep = "email";
+  state.deletedChats = {};
+  state.acceptedRequests = {};
+  state.rejectedRequests = {};
+  state.users = [];
+  state.posts = [];
+  state.conversations = [];
+  state.notifications = [];
+  state.suggestions = [];
+  state.reports = [];
+  state.auditLogs = [];
+  state.adminVerifications = [];
+  state.qna = [];
+  state.ads = [];
+  state.selectedProfileId = null;
+  profileBackView = "students";
+  deepLinkedPostId = "";
+  openCommentPostId = null;
+  openReplyCommentKey = null;
+  adminTab = "overview";
+  adminChatMonitorFilter = "all";
+  adminActiveConversationId = "";
+  activeConversationId = "";
+  conversationTab = "inbox";
+  inputFileStore["message-media-file"] = [];
+  inputFileStore["message-doc-file"] = [];
+  inputFileStore["post-media"] = [];
+  stopLiveChatLoop();
+  stopVerificationQueueLoop();
+  clearUploadProgress({ immediate: true });
+}
+
 function setAuthInFlight(isBusy) {
   authRequestInFlight = isBusy;
   document.querySelectorAll("#auth-email-form button, #auth-verify-form button, #auth-password-form button, #auth-profile-form button, #auth-video-form button").forEach((button) => {
@@ -2855,14 +2893,7 @@ function bindAuth() {
           } catch {
             // ignore
           }
-          state.apiToken = null;
-          state.currentUserId = null;
-          clearApiCache();
-          clearAuthDraftState();
-          state.adminVerifications = [];
-          state.authMode = "login";
-          state.authStep = "email";
-          stopLiveChatLoop();
+          resetClientSessionState();
           saveState();
           render();
         }
@@ -3045,39 +3076,7 @@ async function handleAction(action, id) {
     } catch {
       // ignore
     }
-    state.apiToken = null;
-    state.currentUserId = null;
-    clearApiCache();
-    clearAuthDraftState();
-    state.authMode = "login";
-    state.authStep = "email";
-    state.deletedChats = {};
-    state.acceptedRequests = {};
-    state.rejectedRequests = {};
-    state.users = [];
-    state.posts = [];
-    state.conversations = [];
-    state.notifications = [];
-    state.suggestions = [];
-    state.reports = [];
-    state.auditLogs = [];
-    state.adminVerifications = [];
-    state.qna = [];
-    state.ads = [];
-    state.selectedProfileId = null;
-    profileBackView = "students";
-    deepLinkedPostId = "";
-    openCommentPostId = null;
-    openReplyCommentKey = null;
-    adminTab = "overview";
-    adminChatMonitorFilter = "all";
-    adminActiveConversationId = "";
-    activeConversationId = "";
-    conversationTab = "inbox";
-    inputFileStore["message-media-file"] = [];
-    inputFileStore["message-doc-file"] = [];
-    inputFileStore["post-media"] = [];
-    stopLiveChatLoop();
+    resetClientSessionState();
   }
   if (action === "create-post") {
     if (postPublishInFlight) return;
