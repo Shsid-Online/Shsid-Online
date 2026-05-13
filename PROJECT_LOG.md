@@ -655,3 +655,13 @@
   - Backend parity:
     - Worker + Node follow endpoints now require target student to be `verified`.
   - Validation: `npm run check` passed.
+- 2026-05-13: Feed/comment target-validation and tab-state hardening batch.
+  - Frontend (`public/src/app.js`):
+    - Added strict id/post existence guards for media carousel prev/next actions.
+    - Added strict reply-target validation in `reply-comment` before opening reply composer.
+    - Hardened single-post open flow: if deep-linked post cannot be loaded, restore Feed and show toast.
+    - Added strict target validation for comment-delete flow (target format + post + comment existence).
+    - Hardened profile-back routing so non-admin users cannot be sent to admin view.
+    - Fixed chat tab switching to clear stale active conversation ids when target tab has no conversations.
+    - Added auth guard to notification mark-read action.
+  - Validation: `npm run check` passed.

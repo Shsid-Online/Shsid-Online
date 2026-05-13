@@ -2968,7 +2968,9 @@ async function handleAction(action, id) {
     if (idx >= 0) state.posts[idx] = normalizePost(result.post);
   }
   if (action === "media-prev") {
+    if (!id) return toast("Invalid post");
     const post = state.posts.find((item) => item.id === id);
+    if (!post) return toast("Post not found");
     const total = post?.media?.length || 0;
     if (!total) return;
     const current = postMediaIndexByPostId[id] || 0;
@@ -2977,7 +2979,9 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "media-next") {
+    if (!id) return toast("Invalid post");
     const post = state.posts.find((item) => item.id === id);
+    if (!post) return toast("Post not found");
     const total = post?.media?.length || 0;
     if (!total) return;
     const current = postMediaIndexByPostId[id] || 0;
@@ -2993,6 +2997,10 @@ async function handleAction(action, id) {
     openCommentPostId = null;
   }
   if (action === "reply-comment") {
+    const [postId, commentId] = String(id || "").split(":");
+    if (!postId || !commentId) return toast("Invalid reply target");
+    const post = state.posts.find((item) => item.id === postId);
+    if (!post || !(post.comments || []).some((comment) => comment.id === commentId)) return toast("Comment not found");
     openReplyCommentKey = openReplyCommentKey === id ? null : id;
   }
   if (action === "close-reply") {
@@ -3038,10 +3046,15 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "open-post-day") {
-    if (!id) return;
+    if (!id) return toast("Invalid post");
     deepLinkedPostId = id;
     view = "single-post";
     await ensureDeepLinkedPostLoaded();
+    if (!state.posts.some((post) => post.id === id)) {
+      view = "feed";
+      deepLinkedPostId = "";
+      return toast("Post not found");
+    }
     render();
     return;
   }
@@ -3073,7 +3086,10 @@ async function handleAction(action, id) {
   }
   if (action === "delete-comment") {
     const [postId, commentId] = String(id || "").split(":");
-    if (!postId || !commentId) return;
+    if (!postId || !commentId) return toast("Invalid comment target");
+    const post = state.posts.find((item) => item.id === postId);
+    if (!post) return toast("Post not found");
+    if (!(post.comments || []).some((comment) => comment.id === commentId)) return toast("Comment not found");
     const ok = await askConfirmPopup("Delete Comment", "This will remove the comment. Continue?", "Delete");
     if (!ok) return;
     await apiRequest(`/posts/${postId}/comments/${commentId}`, { method: "DELETE" });
@@ -3096,6 +3112,7 @@ async function handleAction(action, id) {
     state.selectedProfileId = null;
     const nextView = profileBackView || "students";
     view = nextView === "profile" ? "students" : nextView;
+    if (view === "admin" && user.role !== "admin") view = "students";
     if (view === "students") await refreshStudents();
     if (view === "messages") await refreshConversations();
     if (view === "admin") {
@@ -3175,17 +3192,17 @@ async function handleAction(action, id) {
   if (action === "chat-tab-inbox") {
     conversationTab = "inbox";
     const next = classifyConversations().inbox[0];
-    activeConversationId = next?.id || activeConversationId;
+    activeConversationId = next?.id || "";
   }
   if (action === "chat-tab-requests") {
     conversationTab = "requests";
     const next = classifyConversations().requests[0];
-    activeConversationId = next?.id || activeConversationId;
+    activeConversationId = next?.id || "";
   }
   if (action === "chat-tab-sent") {
     conversationTab = "sent";
     const next = classifyConversations().requestsSent[0];
-    activeConversationId = next?.id || activeConversationId;
+    activeConversationId = next?.id || "";
   }
   if (action === "accept-request") {
     if (!id) return toast("Conversation not found");
@@ -3469,6 +3486,7 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "mark-read") {
+    if (!currentUser()) return toast("Please log in first");
     await apiRequest("/notifications/read-all", { method: "POST", body: JSON.stringify({}) });
     await refreshNotifications();
     saveState();
