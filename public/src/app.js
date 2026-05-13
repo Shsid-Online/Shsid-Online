@@ -493,7 +493,8 @@ async function refreshConversations() {
     const result = await apiRequest("/conversations");
     state.conversations = (result.conversations || []).map(normalizeConversation);
     if (!state.conversations.some((item) => item.id === activeConversationId)) {
-      activeConversationId = state.conversations[0]?.id;
+      const visible = state.conversations.find((item) => !state.deletedChats?.[item.id]);
+      activeConversationId = visible?.id || state.conversations[0]?.id;
     }
     warmUserAssetCache();
     saveState();
@@ -2885,6 +2886,9 @@ async function handleAction(action, id) {
     clearAuthDraftState();
     state.authMode = "login";
     state.authStep = "email";
+    state.deletedChats = {};
+    state.acceptedRequests = {};
+    state.rejectedRequests = {};
     stopLiveChatLoop();
   }
   if (action === "create-post") {
@@ -3094,7 +3098,9 @@ async function handleAction(action, id) {
     const acceptedByReply = Boolean(firstAuthorId && (conversation?.messages || []).some((message) => message.authorId && message.authorId !== firstAuthorId));
     const accepted = acceptedByLocal || acceptedByReply;
     if (!accepted && firstAuthorId && firstAuthorId !== user.id) return toast("Accept request before replying");
-    const text = document.querySelector("#message-text").value.trim();
+    const messageInput = document.querySelector("#message-text");
+    if (!messageInput) return toast("Message input is not ready");
+    const text = String(messageInput.value || "").trim();
     const mediaFiles = [...(document.querySelector("#message-media-file")?.files || [])];
     const docFiles = [...(document.querySelector("#message-doc-file")?.files || [])];
     const uploadFilesList = [...mediaFiles, ...docFiles];
@@ -3105,7 +3111,7 @@ async function handleAction(action, id) {
       method: "POST",
       body: JSON.stringify({ text, media, anonymous })
     });
-    document.querySelector("#message-text").value = "";
+    messageInput.value = "";
     inputFileStore["message-media-file"] = [];
     inputFileStore["message-doc-file"] = [];
     const mediaInput = document.querySelector("#message-media-file");
@@ -3189,6 +3195,7 @@ async function handleAction(action, id) {
     popup.querySelectorAll("[data-direct-target]").forEach((button) => {
       button.addEventListener("click", async () => {
         const targetId = button.getAttribute("data-direct-target");
+        if (!targetId) return toast("Invalid target");
         const target = choices.find((item) => item.id === targetId);
         const mode = await askIdentityModePopup(target?.englishName || "student");
         if (!mode) return;
@@ -3239,6 +3246,9 @@ async function handleAction(action, id) {
       event.preventDefault();
       const memberIds = [...popup.querySelectorAll("[data-convo-member]:checked")].map((input) => input.value).filter(Boolean);
       if (!memberIds.length) return toast("Select at least one member");
+      const allowedIds = new Set(choices.map((item) => item.id));
+      const invalidMember = memberIds.find((memberId) => !allowedIds.has(memberId));
+      if (invalidMember) return toast("Invalid member selected");
       const title = String(popup.querySelector("#create-convo-title").value || "").trim();
       const payload = { memberIds, group: memberIds.length > 1, title: title || undefined };
       const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
@@ -3268,7 +3278,8 @@ async function handleAction(action, id) {
     if (!peers.length) return toast("No classmates to add yet");
     await apiRequest("/conversations", { method: "POST", body: JSON.stringify({ memberIds: peers, group: true, title: "New group chat" }) });
     await refreshConversations();
-    activeConversationId = state.conversations[0]?.id;
+    const visible = state.conversations.find((item) => !state.deletedChats?.[item.id]);
+    activeConversationId = visible?.id || state.conversations[0]?.id;
     view = "messages";
   }
   if (action === "report-message") {
