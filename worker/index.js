@@ -891,6 +891,14 @@ async function handleApi(request, env, url, route) {
     const memberIds = Array.isArray(body.memberIds) ? body.memberIds.map((v) => String(v || "").trim()).filter(Boolean) : [];
     const members = [...new Set([authUser.id, ...memberIds])];
     if (members.length < 2) return json({ error: "Select at least one other person to message" }, 400);
+    if (members.length > 50) return json({ error: "Conversation has too many members" }, 400);
+    const others = members.filter((memberId) => memberId !== authUser.id);
+    for (const memberId of others) {
+      const target = await getUserById(env, memberId);
+      if (!target || target.role !== "student" || target.status !== "verified") {
+        return json({ error: "Only verified students can be added to conversations" }, 400);
+      }
+    }
     const group = Boolean(body.group);
 
     let title = String(body.title || "").trim();
@@ -1220,10 +1228,13 @@ async function handleApi(request, env, url, route) {
     if (!targetRow) return json({ error: "Not found" }, 404);
     if (targetRow.role === "admin") return json({ error: "Cannot ban admin account" }, 400);
     const action = String(body.action || "warn");
+    if (!["warn", "ban_temp", "ban_perm"].includes(action)) return json({ error: "Invalid moderation action" }, 400);
     const reason = String(body.reason || "Violation of community guidelines").slice(0, 500);
     let endsAt = null;
+    let days = 7;
     if (action === "ban_temp") {
-      const days = Math.max(1, Math.min(365, parseInt(body.days || "7", 10)));
+      const parsedDays = parseInt(String(body.days || "7"), 10);
+      days = Number.isInteger(parsedDays) ? Math.max(1, Math.min(365, parsedDays)) : 7;
       endsAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
     }
     if (action !== "warn") {
@@ -1236,7 +1247,7 @@ async function handleApi(request, env, url, route) {
     const notifBody = action === "warn"
       ? `You have received a warning from admin: ${reason}`
       : action === "ban_temp"
-        ? `Your account has been temporarily suspended for ${body.days || 7} days. Reason: ${reason}`
+        ? `Your account has been temporarily suspended for ${days} days. Reason: ${reason}`
         : "Your account has been banned by admin review.";
     await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
       .bind(id("ntf"), targetRow.id, "moderation", notifBody, null, now())

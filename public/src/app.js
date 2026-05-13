@@ -299,7 +299,12 @@ function safeExternalUrl(value) {
 function normalizeConversation(conversation) {
   if (!conversation) return conversation;
   const copy = { ...conversation };
-  copy.messages = (copy.messages || []).map((message) => ({ ...message, createdAt: at(message.createdAt) }));
+  copy.messages = (copy.messages || []).map((message) => ({
+    ...message,
+    text: String(message?.text || ""),
+    media: Array.isArray(message?.media) ? message.media : [],
+    createdAt: at(message?.createdAt)
+  }));
   return copy;
 }
 
@@ -2945,16 +2950,19 @@ async function handleAction(action, id) {
     }
   }
   if (action === "like-post") {
+    if (!id) return toast("Invalid post");
     const result = await apiRequest(`/posts/${id}/like`, { method: "POST", body: JSON.stringify({}) });
     const idx = state.posts.findIndex((item) => item.id === id);
     if (idx >= 0) state.posts[idx] = normalizePost(result.post);
   }
   if (action === "heart-post") {
+    if (!id) return toast("Invalid post");
     const result = await apiRequest(`/posts/${id}/heart`, { method: "POST", body: JSON.stringify({}) });
     const idx = state.posts.findIndex((item) => item.id === id);
     if (idx >= 0) state.posts[idx] = normalizePost(result.post);
   }
   if (action === "save-post") {
+    if (!id) return toast("Invalid post");
     const result = await apiRequest(`/posts/${id}/save`, { method: "POST", body: JSON.stringify({}) });
     const idx = state.posts.findIndex((item) => item.id === id);
     if (idx >= 0) state.posts[idx] = normalizePost(result.post);
@@ -2978,6 +2986,7 @@ async function handleAction(action, id) {
     return;
   }
   if (action === "comment-post") {
+    if (!id) return toast("Invalid post");
     openCommentPostId = openCommentPostId === id ? null : id;
   }
   if (action === "close-comment") {
@@ -3008,6 +3017,7 @@ async function handleAction(action, id) {
     await refreshPosts();
   }
   if (action === "report-post") {
+    if (!id) return toast("Invalid post");
     const reason = await askTextPopup("Report Post", "Reason", "Describe the issue");
     if (!reason) return;
     await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "post", targetId: id, reason }) });
@@ -3040,12 +3050,14 @@ async function handleAction(action, id) {
     }
   }
   if (action === "toggle-sticky") {
+    if (!id) return toast("Invalid post");
     const post = state.posts.find((item) => item.id === id);
     if (!post) return;
     await apiRequest(`/posts/${id}`, { method: "PATCH", body: JSON.stringify({ sticky: !post.sticky }) });
     await refreshPosts();
   }
   if (action === "delete-post") {
+    if (!id) return toast("Invalid post");
     const ok = await askConfirmPopup("Delete Post", "This will delete the post from feed. Continue?", "Delete");
     if (!ok) return;
     await apiRequest(`/posts/${id}`, { method: "DELETE" });
@@ -3137,7 +3149,10 @@ async function handleAction(action, id) {
     render();
     return;
   }
-  if (action === "open-conv") activeConversationId = id;
+  if (action === "open-conv") {
+    if (!id || !state.conversations.some((item) => item.id === id)) return toast("Conversation not found");
+    activeConversationId = id;
+  }
   if (action === "rename-conv") {
     await renameConversation(id);
   }
@@ -3257,7 +3272,7 @@ async function handleAction(action, id) {
       const allowedIds = new Set(choices.map((item) => item.id));
       const invalidMember = memberIds.find((memberId) => !allowedIds.has(memberId));
       if (invalidMember) return toast("Invalid member selected");
-      const title = String(popup.querySelector("#create-convo-title").value || "").trim();
+      const title = String(popup.querySelector("#create-convo-title")?.value || "").trim();
       const payload = { memberIds, group: memberIds.length > 1, title: title || undefined };
       const result = await apiRequest("/conversations", { method: "POST", body: JSON.stringify(payload) });
       popup.remove();

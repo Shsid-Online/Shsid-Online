@@ -882,6 +882,14 @@ async function handleApi(req, res, url) {
     const memberIds = Array.isArray(body.memberIds) ? body.memberIds.map((item) => String(item || "").trim()).filter(Boolean) : [];
     const uniqueMembers = [...new Set([user.id, ...memberIds])];
     if (uniqueMembers.length < 2) return sendJson(res, 400, { error: "Select at least one other person to message" });
+    if (uniqueMembers.length > 50) return sendJson(res, 400, { error: "Conversation has too many members" });
+    const otherMembers = uniqueMembers.filter((memberId) => memberId !== user.id);
+    for (const memberId of otherMembers) {
+      const target = store.findUserById(memberId);
+      if (!target || target.role !== "student" || target.status !== "verified") {
+        return sendJson(res, 400, { error: "Only verified students can be added to conversations" });
+      }
+    }
     const group = Boolean(body.group);
     let title = String(body.title || "").trim();
     if (!title) {
@@ -918,8 +926,23 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { messages: items, pagination });
     }
     const text = String(body.text || "").trim();
-    if (!text) return sendJson(res, 400, { error: "Message text is required" }, req);
-    const message = { id: id("msg"), authorId: user.id, anonymous: Boolean(body.anonymous), text: text.slice(0, MAX_TEXT_LEN), createdAt: now(), deletedAt: null };
+    const media = Array.isArray(body.media)
+      ? body.media.slice(0, 5).map((item) => ({
+        url: String(item?.url || "").trim().slice(0, 1000),
+        type: String(item?.type || "application/octet-stream").trim().slice(0, 120),
+        name: String(item?.name || "").trim().slice(0, 260)
+      })).filter((item) => item.url)
+      : [];
+    if (!text && !media.length) return sendJson(res, 400, { error: "Message text or media is required" }, req);
+    const message = {
+      id: id("msg"),
+      authorId: user.id,
+      anonymous: Boolean(body.anonymous),
+      text: text.slice(0, MAX_TEXT_LEN),
+      media,
+      createdAt: now(),
+      deletedAt: null
+    };
     conversation.messages.push(message);
     for (const memberId of conversation.members || []) {
       if (!memberId || memberId === user.id) continue;
@@ -1294,11 +1317,16 @@ async function handleApi(req, res, url) {
     const targetUser = store.findUserById(banUserMatch[1]);
     if (!targetUser) return notFound(res);
     if (targetUser.role === "admin") return sendJson(res, 400, { error: "Cannot ban admin account" });
-    const action = body.action || "warn";
+    const action = String(body.action || "warn");
+    if (!["warn", "ban_temp", "ban_perm"].includes(action)) {
+      return sendJson(res, 400, { error: "Invalid moderation action" });
+    }
     const reason = String(body.reason || "Violation of community guidelines").slice(0, 500);
     let endsAt = null;
+    let days = 7;
     if (action === "ban_temp") {
-      const days = Math.max(1, Math.min(365, parseInt(body.days || "7", 10)));
+      const parsedDays = parseInt(String(body.days || "7"), 10);
+      days = Number.isInteger(parsedDays) ? Math.max(1, Math.min(365, parsedDays)) : 7;
       endsAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
     }
     if (action !== "warn") {
@@ -1320,7 +1348,7 @@ async function handleApi(req, res, url) {
     const notifBody = action === "warn"
       ? `You have received a warning from admin: ${reason}`
       : action === "ban_temp"
-        ? `Your account has been temporarily suspended for ${body.days || 7} days. Reason: ${reason}`
+        ? `Your account has been temporarily suspended for ${days} days. Reason: ${reason}`
         : "Your account has been banned by admin review.";
     store.data.notifications.push({ id: id("ntf"), userId: targetUser.id, type: "moderation", body: notifBody, readAt: null, createdAt: now() });
     store.audit(admin.id, action === "warn" ? "user_warned" : (action === "ban_temp" ? "user_temp_banned" : "user_banned"), { userId: targetUser.id, action, reason, endsAt });

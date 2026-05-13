@@ -607,3 +607,18 @@
     - Worker: capped suggestion text to 1000 chars in `POST /suggestions`.
     - Node server: capped suggestion text to 1000 chars and admin suggestion response to 280 chars.
   - Validation: `npm run check` passed.
+- 2026-05-13: Bugfix/security parity batch: conversation + moderation + action guards.
+  - Frontend (`public/src/app.js`):
+    - Normalized conversation messages to always include safe `text` and `media` fields.
+    - Added invalid-id guards for post actions (`like-post`, `heart-post`, `save-post`, `comment-post`, `report-post`, `toggle-sticky`, `delete-post`).
+    - Hardened `open-conv` to reject stale/nonexistent conversation ids.
+    - Guarded create-conversation title input access with optional chaining.
+  - Worker (`worker/index.js`):
+    - `POST /conversations` now enforces max 50 members and verifies all non-self members are existing verified students.
+    - `POST /admin/bans/:id/user` now validates moderation action whitelist (`warn|ban_temp|ban_perm`).
+    - Temp-ban day parsing normalized and notification text now uses validated day count.
+  - Node parity (`server/server.js`):
+    - Matched conversation member validation (max 50 + verified-student existence checks).
+    - `POST /conversations/:id/messages` now supports media-only messages with normalized `media` items.
+    - Matched moderation action whitelist and validated day count handling in admin ban flow.
+  - Validation: `npm run check` passed.
