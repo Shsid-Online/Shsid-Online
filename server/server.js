@@ -523,6 +523,9 @@ function userView(target, viewer) {
     delete safe.email;
     delete safe.verificationVideo;
   }
+  safe.followingCount = store.data.follows.filter((row) => row.followerId === target.id).length;
+  safe.followerCount = store.data.follows.filter((row) => row.followingId === target.id).length;
+
   if (viewer?.id === target.id) {
     safe.following = store.data.follows.filter((row) => row.followerId === target.id).map((row) => row.followingId);
     safe.followers = store.data.follows.filter((row) => row.followingId === target.id).map((row) => row.followerId);

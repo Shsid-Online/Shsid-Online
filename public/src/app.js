@@ -903,6 +903,8 @@ function mergeApiUsers(apiUsers = []) {
       profilePhoto: apiUser.profilePhoto || "",
       followers: Array.isArray(apiUser.followers) ? apiUser.followers : (existing?.followers || []),
       following: Array.isArray(apiUser.following) ? apiUser.following : (existing?.following || []),
+      followerCount: Number.isFinite(Number(apiUser.followerCount)) ? Number(apiUser.followerCount) : Number(existing?.followerCount || 0),
+      followingCount: Number.isFinite(Number(apiUser.followingCount)) ? Number(apiUser.followingCount) : Number(existing?.followingCount || 0),
       online: true
     };
     const index = state.users.findIndex((user) => user.id === localUser.id);
@@ -2183,6 +2185,7 @@ function renderFeed() {
   });
   const searched = searchQuery ? posts.filter((p) => p.text?.toLowerCase().includes(searchQuery) || p.title?.toLowerCase().includes(searchQuery) || p.category?.toLowerCase().includes(searchQuery)) : posts;
   const filtered = searched.filter((post) => {
+    if (engagementFilter === "following") return followingSet.has(post.authorId);
     if (engagementFilter === "hearted") return (post.hearts || []).includes(meId);
     if (engagementFilter === "liked-private") return (post.likes || []).includes(meId);
     if (engagementFilter === "saved") return (post.savedBy || []).includes(meId);
@@ -2191,11 +2194,22 @@ function renderFeed() {
   const postsByCategory = new Map();
   for (const category of CONTENT_CATEGORIES) postsByCategory.set(category, []);
   postsByCategory.set("other", []);
+  const followingRows = [];
   for (const post of filtered) {
+    if (followingSet.has(post.authorId)) followingRows.push(post);
     const category = String(post.category || "").trim().toLowerCase();
     if (postsByCategory.has(category)) postsByCategory.get(category).push(post);
     else postsByCategory.get("other").push(post);
   }
+  const followingSection = followingRows.length ? `
+    <section class="panel feed-category-block">
+      <div class="between feed-category-head">
+        <h3>Following</h3>
+        <span class="muted">${followingRows.length} post${followingRows.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="grid">${followingRows.map((post, idx) => `${idx > 0 && idx % 12 === 0 ? renderAdCard("feed_inline", "Feed sponsor") : ""}${renderPost(post)}`).join("")}</div>
+    </section>
+  ` : "";
   const orderedCategories = [...CONTENT_CATEGORIES, "other"];
   const categorySections = orderedCategories
     .filter((category) => (postsByCategory.get(category) || []).length > 0)
@@ -2213,7 +2227,7 @@ function renderFeed() {
       `;
     }).join("");
   const postsHtml = filtered.length
-    ? categorySections
+    ? `${followingSection}${categorySections}`
     : `<div class="empty-state">No posts yet. Share something positive or helpful to get the feed started.</div>`;
   return page("Feed", "Catch up with what students are sharing right now.", `
     <div class="grid two" style="margin-bottom:16px">
@@ -2223,6 +2237,7 @@ function renderFeed() {
       <div class="field" style="margin:0">
         <select id="feed-engagement-filter">
           <option value="all" ${engagementFilter === "all" ? "selected" : ""}>All posts</option>
+          <option value="following" ${engagementFilter === "following" ? "selected" : ""}>Following only</option>
           <option value="hearted" ${engagementFilter === "hearted" ? "selected" : ""}>Hearted (public)</option>
           <option value="liked-private" ${engagementFilter === "liked-private" ? "selected" : ""}>Liked (private)</option>
           <option value="saved" ${engagementFilter === "saved" ? "selected" : ""}>Saved posts</option>
@@ -2296,7 +2311,7 @@ function renderPost(post) {
             <strong>${escapeHtml(userName(post.authorId, post.anonymous))}</strong>
             ${post.sticky ? `<span class="status gold">Sticky</span>` : ""}
           </div>
-          <div class="muted">${post.category} · ${timeAgo(post.createdAt)} ${currentUser().role === "admin" && post.anonymous ? `· Admin sees ${escapeHtml(userName(post.authorId))}` : ""}</div>
+          <div class="muted">${post.category} · ${timeAgo(post.createdAt)} · ${authorFollowerCount} follower${authorFollowerCount === 1 ? "" : "s"} ${currentUser().role === "admin" && post.anonymous ? `· Admin sees ${escapeHtml(userName(post.authorId))}` : ""}</div>
         </div>
       </div>
       <div class="post-text">${escapeHtml(post.text || "")}</div>
@@ -2361,12 +2376,20 @@ function renderStudents() {
   const meId = currentUser()?.id;
   const students = state.users.filter((u) => u.role !== "admin" && u.status === "verified" && u.id !== meId);
   const myFollowing = Array.isArray(currentUser()?.following) ? currentUser().following : [];
+  const followedUsers = students.filter((student) => myFollowing.includes(student.id));
   return page("Students", "Meet verified classmates and start conversations.", `
+    <section class="panel" style="margin-bottom:12px">
+      <h3 style="margin:0 0 8px">Following (${followedUsers.length})</h3>
+      ${followedUsers.length
+        ? `<div class="row">${followedUsers.map((followed) => `<button class="btn small" data-action="view-profile" data-id="${followed.id}">${escapeHtml(followed.englishName)}</button>`).join("")}</div>`
+        : `<p class="muted" style="margin:0">You are not following anyone yet.</p>`
+      }
+    </section>
     <section class="grid two">${students.map((user, idx) => `
       ${idx > 0 && idx % 20 === 0 ? renderAdCard("students_inline", "Student section sponsor") : ""}
       <article class="panel" data-action="view-profile" data-id="${user.id}" style="cursor:pointer">
         <div class="between">
-          <div class="row">${renderAvatar(user)}<div><strong>${escapeHtml(user.englishName)}</strong><div class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</div></div></div>
+          <div class="row">${renderAvatar(user)}<div><strong>${escapeHtml(user.englishName)}</strong><div class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</div><div class="muted">${Number(user.followerCount || 0)} follower${Number(user.followerCount || 0) === 1 ? "" : "s"}</div></div></div>
         </div>
         <p>${escapeHtml(user.bio)}</p>
         <div class="row">
@@ -2570,6 +2593,9 @@ function renderProfile() {
     .filter((post) => post.authorId === user.id && !post.deletedAt)
     .sort((a, b) => at(b.createdAt) - at(a.createdAt));
   const isOwnProfile = user.id === me.id;
+  const followerCount = Number(user.followerCount ?? (Array.isArray(user.followers) ? user.followers.length : 0));
+  const followingCount = Number(user.followingCount ?? (Array.isArray(user.following) ? user.following.length : 0));
+  const followingUsers = isOwnProfile ? state.users.filter((item) => (user.following || []).includes(item.id)) : [];
   return page("Profile", "Your profile, updates, and question box.", `
     ${!isOwnProfile ? `<div class="row" style="margin-bottom:10px"><button class="btn small" data-action="profile-back">Back</button></div>` : ""}
     <section class="grid two">
@@ -2578,6 +2604,10 @@ function renderProfile() {
         <div style="margin-top:10px">
           <strong>Bio</strong>
           <p style="margin:6px 0 0">${escapeHtml(user.bio || "No bio added yet.")}</p>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <span class="chip">${followerCount} follower${followerCount === 1 ? "" : "s"}</span>
+          <span class="chip">${followingCount} following</span>
         </div>
         <span class="status ${user.status === "verified" ? "green" : "gold"}">${user.status}</span>
         ${!isOwnProfile ? `
@@ -2606,6 +2636,15 @@ function renderProfile() {
         </div>
       </div>
     </section>
+    ${isOwnProfile ? `
+      <section class="panel" style="margin-top:16px">
+        <h3 style="margin-top:0">People You Follow</h3>
+        ${followingUsers.length
+          ? `<div class="row">${followingUsers.map((item) => `<button class="btn small" data-action="view-profile" data-id="${item.id}">${escapeHtml(item.englishName)}</button>`).join("")}</div>`
+          : `<p class="muted">You are not following anyone yet.</p>`
+        }
+      </section>
+    ` : ""}
     <section class="panel" style="margin-top:16px">
       <h3 style="margin-top:0">Posts</h3>
       ${userPosts.length
@@ -3638,8 +3677,17 @@ async function handleAction(action, id) {
     if (!target) return toast("User not found");
     if (target.role === "admin" || target.status !== "verified") return toast("Only verified students can be followed");
     if (target.id === user.id) return toast("You cannot follow yourself");
+    const wasFollowing = Array.isArray(user.following) && user.following.includes(id);
     const result = await apiRequest(`/users/${id}/follow`, { method: "POST", body: JSON.stringify({}) });
     mergeApiUsers([result.user]);
+    await refreshStudents();
+    const targetIdx = state.users.findIndex((item) => item.id === id);
+    if (targetIdx >= 0) {
+      const prev = Number(state.users[targetIdx].followerCount || 0);
+      state.users[targetIdx].followerCount = Math.max(0, prev + (wasFollowing ? -1 : 1));
+    }
+    saveState();
+    toast(wasFollowing ? "Unfollowed" : "Followed");
   }
   if (action === "view-profile") {
     if (!id || !state.users.some((item) => item.id === id)) return toast("Profile not found");
@@ -4831,3 +4879,4 @@ async function uploadMultipartPartsInParallel({ file, chunkSize, endpointPrefix,
 }
 
 bootstrapSession();
+  const authorFollowerCount = Number(author?.followerCount ?? (Array.isArray(author?.followers) ? author.followers.length : 0));

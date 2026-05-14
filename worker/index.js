@@ -1587,6 +1587,11 @@ async function userView(env, target, viewer) {
     delete safe.verificationVideo;
   }
 
+  const followingCountRow = await env.DB.prepare("select count(*) as count from follows where follower_id=?").bind(target.id).first();
+  const followerCountRow = await env.DB.prepare("select count(*) as count from follows where following_id=?").bind(target.id).first();
+  safe.followingCount = Number(followingCountRow?.count || 0);
+  safe.followerCount = Number(followerCountRow?.count || 0);
+
   if (viewer?.id === target.id) {
     const followingRows = await env.DB.prepare("select following_id from follows where follower_id=?").bind(target.id).all();
     const followerRows = await env.DB.prepare("select follower_id from follows where following_id=?").bind(target.id).all();

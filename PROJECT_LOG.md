@@ -1045,3 +1045,19 @@
 - 2026-05-14: Updated DM anonymous title wording.
   - Frontend (`public/src/app.js`): replaced direct-chat anonymous suffix from `name(anon)` style to explicit `Anonymous message to <name>` in `conversationDisplayTitle`.
   - Validation: `npm run check` passed.
+- 2026-05-14: Improved follow UX + surfaced following/follower visibility.
+  - Feed (`public/src/app.js`):
+    - Added `Following only` filter option.
+    - Added dedicated `Following` section in feed categories showing posts from followed users.
+    - Added follower count display on post metadata line.
+  - Follow action UX (`public/src/app.js`):
+    - `follow` now gives explicit `Followed` / `Unfollowed` toast feedback.
+    - Follow action now refreshes student data so button/list state updates immediately.
+  - Students/Profile UI (`public/src/app.js`):
+    - Added `Following` panel in Students view listing users you follow.
+    - Added follower count line on student cards.
+    - Added follower/following chips on profile header and `People You Follow` list on own profile.
+  - API model enrichment:
+    - Frontend user merge now persists `followerCount` and `followingCount`.
+    - Backend user serializers now include `followerCount` and `followingCount` in both runtimes (`worker/index.js`, `server/server.js`).
+  - Validation: `npm run check` passed.
