@@ -1061,3 +1061,7 @@
     - Frontend user merge now persists `followerCount` and `followingCount`.
     - Backend user serializers now include `followerCount` and `followingCount` in both runtimes (`worker/index.js`, `server/server.js`).
   - Validation: `npm run check` passed.
+- 2026-05-14: Fixed `authorFollowerCount` runtime ReferenceError in feed rendering.
+  - Root cause: variable accidentally inserted at file end after `bootstrapSession()` instead of inside `renderPost()`.
+  - Fix (`public/src/app.js`): moved `authorFollowerCount` initialization into `renderPost` scope and removed stray global line.
+  - Validation: `npm run check` passed.

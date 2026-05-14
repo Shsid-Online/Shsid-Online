@@ -2251,6 +2251,7 @@ function renderFeed() {
 
 function renderPost(post) {
   const author = state.users.find((u) => u.id === post.authorId);
+  const authorFollowerCount = Number(author?.followerCount ?? (Array.isArray(author?.followers) ? author.followers.length : 0));
   const likes = post.likes || [];
   const hearts = post.hearts || [];
   const saves = post.savedBy || [];
@@ -4879,4 +4880,3 @@ async function uploadMultipartPartsInParallel({ file, chunkSize, endpointPrefix,
 }
 
 bootstrapSession();
-  const authorFollowerCount = Number(author?.followerCount ?? (Array.isArray(author?.followers) ? author.followers.length : 0));
