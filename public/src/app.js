@@ -1077,6 +1077,65 @@ function metadataDetailsLabel(metadata = {}) {
   return entries.slice(0, 4).map(([key, value]) => `${key}: ${value}`).join(" | ");
 }
 
+function auditTargetHtml(item = {}) {
+  const m = item.metadata || {};
+  const postId = String(m.postId || "").trim();
+  const commentId = String(m.commentId || "").trim();
+  const conversationId = String(m.conversationId || "").trim();
+  const reportId = String(m.reportId || "").trim();
+  if (postId) {
+    return `<button class="btn small" data-action="open-post-day" data-id="${escapeHtml(postId)}">Open Post</button><br><span class="muted">${escapeHtml(postId)}</span>`;
+  }
+  if (commentId) {
+    return `Comment<br><span class="muted">${escapeHtml(commentId)}</span>`;
+  }
+  if (conversationId) {
+    return `Conversation<br><span class="muted">${escapeHtml(conversationId)}</span>`;
+  }
+  if (reportId) {
+    return `Report<br><span class="muted">${escapeHtml(reportId)}</span>`;
+  }
+  if (m.userId) return `User ${escapeHtml(userName(m.userId))}`;
+  return "System";
+}
+
+function auditDetailsHtml(item = {}) {
+  const m = item.metadata || {};
+  const postId = String(m.postId || "").trim();
+  const commentId = String(m.commentId || "").trim();
+  const conversationId = String(m.conversationId || "").trim();
+  if (postId) {
+    const post = (state.posts || []).find((p) => p.id === postId);
+    const postTitle = String(m.postTitle || post?.title || "").trim();
+    const postText = String(m.postText || post?.text || "").trim();
+    const lines = [];
+    if (postTitle) lines.push(`Title: ${postTitle}`);
+    if (postText) lines.push(`Text: ${postText.slice(0, 180)}`);
+    lines.push(`Link: /?post=${postId}`);
+    return `<span class="muted">${escapeHtml(lines.join(" | "))}</span>`;
+  }
+  if (commentId) {
+    const commentText = String(m.commentText || "").trim();
+    const lines = [];
+    if (commentText) lines.push(`Comment: ${commentText.slice(0, 180)}`);
+    if (postId) lines.push(`Post: ${postId} | Link: /?post=${postId}`);
+    if (m.replyTo) lines.push(`Reply to: ${String(m.replyTo)}`);
+    return `<span class="muted">${escapeHtml(lines.join(" | ") || metadataDetailsLabel(m))}</span>`;
+  }
+  if (conversationId) {
+    const members = Array.isArray(m.members) ? m.members : [];
+    const memberNames = members.map((id) => userName(id, false)).join(", ");
+    const creatorName = m.createdBy ? userName(m.createdBy, false) : userName(item.userId, false);
+    const title = String(m.title || "").trim();
+    const lines = [];
+    if (title) lines.push(`Title: ${title}`);
+    if (memberNames) lines.push(`Participants: ${memberNames}`);
+    if (creatorName) lines.push(`Created by: ${creatorName}`);
+    return `<span class="muted">${escapeHtml(lines.join(" | ") || metadataDetailsLabel(m))}</span>`;
+  }
+  return `<span class="muted">${escapeHtml(metadataDetailsLabel(m))}</span>`;
+}
+
 function parseSuggestionStatus(status) {
   const raw = String(status || "").trim();
   if (raw.startsWith("responded::")) return { stage: "responded", response: raw.slice("responded::".length).trim() };
@@ -2771,7 +2830,7 @@ function renderAdmin() {
         <h2>Audit Trail</h2>
         <div class="table-wrap">
           <table class="table"><thead><tr><th>Actor</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th><th>Time</th></tr></thead><tbody>
-            ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}<br><span class="muted">${escapeHtml(item.userId || "-")}</span></td><td>${escapeHtml(formatActionLabel(item.action))}</td><td>${escapeHtml(metadataTargetLabel(item.metadata || {}))}</td><td><span class="muted">${escapeHtml(metadataDetailsLabel(item.metadata || {}))}</span></td><td>${escapeHtml(item.ip || "-")}</td><td>${new Date(item.createdAt).toLocaleString()}<br><span class="muted">${timeAgo(item.createdAt)} ago</span></td></tr>`).join("")}
+            ${state.audit.map((item) => `<tr><td>${escapeHtml(userName(item.userId))}<br><span class="muted">${escapeHtml(item.userId || "-")}</span></td><td>${escapeHtml(formatActionLabel(item.action))}</td><td>${auditTargetHtml(item)}</td><td>${auditDetailsHtml(item)}</td><td>${escapeHtml(item.ip || "-")}</td><td>${new Date(item.createdAt).toLocaleString()}<br><span class="muted">${timeAgo(item.createdAt)} ago</span></td></tr>`).join("")}
           </tbody></table>
         </div>
       </div>

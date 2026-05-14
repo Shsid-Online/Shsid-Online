@@ -1000,3 +1000,15 @@
   - Frontend (`public/src/app.js`):
     - Comment `Delete` button now appears for admins and for the comment owner.
   - Validation: `npm run check` passed.
+- 2026-05-14: Made admin Audit Trail much more specific and actionable.
+  - Backend metadata enrichment (`server/server.js`) for new audit events:
+    - `post_created`: now includes post title/text/category.
+    - `comment_created` / `comment_deleted`: now includes comment text (+ reply target when relevant).
+    - `conversation_created`: now includes title, group flag, participant IDs, and creator ID.
+  - Frontend audit rendering (`public/src/app.js`):
+    - Added rich renderers `auditTargetHtml()` and `auditDetailsHtml()`.
+    - Audit target now shows actionable post open button + IDs.
+    - Post-related details now include title/text snippets + link path (`/?post=<id>`).
+    - Comment-related details now include comment text + post ID/link.
+    - Conversation-related details now include participants and creator name.
+  - Validation: `npm run check` passed.

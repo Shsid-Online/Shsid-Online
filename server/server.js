@@ -768,7 +768,12 @@ async function handleApi(req, res, url) {
       deletedAt: null
     };
     store.data.posts.unshift(post);
-    store.audit(user.id, "post_created", { postId: post.id });
+    store.audit(user.id, "post_created", {
+      postId: post.id,
+      postTitle: title || "",
+      postText: sanitizedText.slice(0, 240),
+      category
+    });
     store.save();
     return sendJson(res, 201, { post });
   }
@@ -842,7 +847,12 @@ async function handleApi(req, res, url) {
     if (post.authorId && post.authorId !== user.id) {
       store.data.notifications.push({ id: id("ntf"), userId: post.authorId, type: "post_comment", body: `${user.englishName || "A student"} commented on your post.`, readAt: null, createdAt: now() });
     }
-    store.audit(user.id, "comment_created", { postId: post.id, commentId: comment.id });
+    store.audit(user.id, "comment_created", {
+      postId: post.id,
+      commentId: comment.id,
+      commentText: comment.text,
+      replyTo: comment.replyTo || null
+    });
     store.save();
     return sendJson(res, 201, { comment });
   }
@@ -873,7 +883,11 @@ async function handleApi(req, res, url) {
     const canDelete = user.role === "admin" || comment.authorId === user.id;
     if (!canDelete) return sendJson(res, 403, { error: "Not allowed to delete this comment" }, req);
     comment.deletedAt = now();
-    store.audit(user.id, "comment_deleted", { postId: post.id, commentId: comment.id });
+    store.audit(user.id, "comment_deleted", {
+      postId: post.id,
+      commentId: comment.id,
+      commentText: comment.text || ""
+    });
     store.save();
     return sendJson(res, 200, { ok: true, commentId: comment.id });
   }
@@ -993,7 +1007,13 @@ async function handleApi(req, res, url) {
       createdAt: now()
     };
     store.data.conversations.unshift(conversation);
-    store.audit(user.id, "conversation_created", { conversationId: conversation.id });
+    store.audit(user.id, "conversation_created", {
+      conversationId: conversation.id,
+      title: conversation.title || "",
+      group: Boolean(conversation.group),
+      members: Array.isArray(conversation.members) ? conversation.members : [],
+      createdBy: user.id
+    });
     store.save();
     return sendJson(res, 201, { conversation });
   }
