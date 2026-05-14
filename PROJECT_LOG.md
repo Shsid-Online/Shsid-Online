@@ -1042,3 +1042,6 @@
   - Node backend (`server/server.js`):
     - Mirrored the same conversation member validation and error-message update for local/runtime parity.
   - Validation: `npm run check` passed.
+- 2026-05-14: Updated DM anonymous title wording.
+  - Frontend (`public/src/app.js`): replaced direct-chat anonymous suffix from `name(anon)` style to explicit `Anonymous message to <name>` in `conversationDisplayTitle`.
+  - Validation: `npm run check` passed.

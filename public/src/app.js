@@ -661,7 +661,7 @@ function conversationDisplayTitle(conversation, forAdmin = false) {
   if (forAdmin) return directConversationTitle(conversation);
   const base = conversationCounterpartName(conversation);
   const status = getConversationIdentityMode(conversation.id) === "anonymous" ? "anon" : "public";
-  return status === "anonymous" || status === "anon" ? `${base}(anon)` : base;
+  return status === "anonymous" || status === "anon" ? `Anonymous message to ${base}` : base;
 }
 
 async function ensureDeepLinkedPostLoaded() {
