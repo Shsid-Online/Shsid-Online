@@ -971,7 +971,10 @@ async function refreshStudents() {
   if (!state.apiToken) return;
   try {
     const result = await apiRequest("/students", { cacheTtlMs: API_CACHE_TTL.students });
-    mergeApiUsers(result.students || []);
+    const remoteStudents = Array.isArray(result.students) ? result.students : [];
+    const remoteStudentIds = new Set(remoteStudents.map((item) => item?.id).filter(Boolean));
+    state.users = state.users.filter((user) => user.role === "admin" || remoteStudentIds.has(user.id));
+    mergeApiUsers(remoteStudents);
     warmUserAssetCache();
     saveState();
   } catch (error) {
@@ -1165,6 +1168,11 @@ function reportTargetHumanLabel(report = {}) {
     }
     return "Comment";
   }
+  if (type === "user") {
+    const target = state.users.find((item) => item.id === targetId);
+    if (target) return `User: ${target.englishName || "Unknown"}`;
+    return "User";
+  }
   return type ? `${type[0].toUpperCase()}${type.slice(1)}` : "Content";
 }
 
@@ -1196,6 +1204,11 @@ function reportTargetPreview(report = {}) {
     }
     return "Preview unavailable. Comment may be unavailable.";
   }
+  if (type === "user") {
+    const target = state.users.find((item) => item.id === targetId);
+    if (!target) return "Preview unavailable. User may be unavailable.";
+    return `${target.englishName || "Unknown"} · Grade ${target.grade ?? "-"}, Class ${target.classNo ?? "-"}`;
+  }
   return `Target ID: ${targetId || "-"}`;
 }
 
@@ -1219,6 +1232,9 @@ function resolveReportTargetUserId(report = {}) {
     if (!convo) return "";
     const reporterId = String(report.reporterId || "");
     return String((convo.members || []).find((memberId) => String(memberId) !== reporterId) || "");
+  }
+  if (type === "user") {
+    return targetId;
   }
   return "";
 }
@@ -3898,7 +3914,7 @@ async function handleAction(action, id) {
       <form id="direct-start-form" class="grid">
         <div class="field"><label>Search people</label><input id="direct-search" placeholder="Search by name, grade, class" /></div>
         <div id="direct-list" class="grid" style="max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px">
-          ${choices.map((item) => `<button class="btn" type="button" data-direct-target="${escapeHtml(item.id)}">${escapeHtml(item.englishName)} <span class="muted">· G${item.grade} C${item.classNo}</span></button>`).join("")}
+          ${choices.map((item) => `<button class="btn" type="button" data-direct-target="${escapeHtml(item.id)}">${escapeHtml(item.englishName)} <span class="muted">· ${item.role === "admin" ? "Admin" : `G${item.grade} C${item.classNo}`}</span></button>`).join("")}
         </div>
         <div class="row"><button class="btn" type="button" data-cancel>Cancel</button></div>
       </form>
@@ -3951,7 +3967,7 @@ async function handleAction(action, id) {
           ${choices.map((item) => `
             <label class="row" style="justify-content:flex-start;gap:10px;padding:6px;border-radius:8px">
               <input type="checkbox" value="${escapeHtml(item.id)}" data-convo-member />
-              <span><strong>${escapeHtml(item.englishName)}</strong> <span class="muted">· G${item.grade} C${item.classNo}</span></span>
+              <span><strong>${escapeHtml(item.englishName)}</strong> <span class="muted">· ${item.role === "admin" ? "Admin" : `G${item.grade} C${item.classNo}`}</span></span>
             </label>
           `).join("") || `<p class="muted">No messageable users available.</p>`}
         </div>
@@ -4158,7 +4174,13 @@ async function handleAction(action, id) {
     if (report.status && report.status !== "pending") return toast("Report already handled");
     const targetPost = report.type === "post" ? state.posts.find((p) => p.id === report.targetId) : null;
     const reportTargetUserId = resolveReportTargetUserId(report);
-    const canModerateTarget = Boolean(reportTargetUserId && reportTargetUserId !== report.reporterId);
+    const reportTargetUser = state.users.find((item) => item.id === reportTargetUserId);
+    const canModerateTarget = Boolean(
+      reportTargetUserId
+      && reportTargetUserId !== report.reporterId
+      && reportTargetUser
+      && reportTargetUser.role !== "admin"
+    );
     const result = await showFormPopup("Handle Report", `
       <form id="handle-report-form" class="grid">
         <p><strong>Reporter:</strong> ${escapeHtml(userName(report.reporterId))}</p>
@@ -4175,7 +4197,7 @@ async function handleAction(action, id) {
             <option value="ban_perm" ${canModerateTarget ? "" : "disabled"}>Permanent Ban</option>
           </select>
         </div>
-        ${canModerateTarget ? "" : `<p class="muted">Only dismiss is available because target user cannot be resolved.</p>`}
+        ${canModerateTarget ? "" : `<p class="muted">Only dismiss is available because target user cannot be moderated.</p>`}
         <div class="field" id="report-days-field" style="display:none">
           <label>Days (1-365)</label>
           <input id="report-days" type="number" min="1" max="365" value="7" />

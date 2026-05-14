@@ -1118,3 +1118,8 @@
     - `npm run check` passed (frontend/server/worker syntax checks).
     - Live API health check passed: `GET https://www.shsid.online/api/health` -> `200` with `{ "ok": true, "service": "shsid-social-api" }`.
     - Note: `GET https://www.shsid.online/health` had DNS resolution failures from this execution environment during this run.
+- 2026-05-14: Fixed stale Students list after Cloudflare student-account deletions.
+  - Root cause (`public/src/app.js`): `refreshStudents()` merged API rows into `state.users` but never removed users no longer returned by `/api/students`.
+  - Fix: added pruning in `refreshStudents()` to drop local non-admin users that are not present in the latest remote student ID set before merge.
+  - Result: deleted smoke/student accounts no longer persist in Students UI after refresh/reload.
+  - Validation: `npm run check` passed.
