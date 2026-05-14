@@ -26,6 +26,7 @@ const ALLOWED_UPLOAD_TYPES = [
 let hasUsersProfilePhotoColumnCache = null;
 let hasPostsTitleColumnCache = null;
 let hasCommentsReplyToColumnCache = null;
+let hasCommentsLikesColumnCache = null;
 let hasPostsEngagementColumnsCache = null;
 let hasAdsTableCache = null;
 
@@ -640,14 +641,25 @@ async function handleApi(request, env, url, route) {
       post_id: post.id,
       author_id: authUser.id,
       text: text.slice(0, MAX_TEXT_LEN),
+      likes: "[]",
       reply_to: replyTo || null,
-      anonymous: body.anonymous ? 1 : 0,
+      anonymous: authUser.role === "admin" ? 0 : (body.anonymous ? 1 : 0),
       deleted_at: null,
       created_at: now()
     };
-    if (await hasCommentsReplyToColumn(env)) {
+    const hasReplyTo = await hasCommentsReplyToColumn(env);
+    const hasLikes = await hasCommentsLikesColumn(env);
+    if (hasReplyTo && hasLikes) {
+      await env.DB.prepare("insert into comments (id, post_id, author_id, text, likes, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.likes, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
+        .run();
+    } else if (hasReplyTo) {
       await env.DB.prepare("insert into comments (id, post_id, author_id, text, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
+        .run();
+    } else if (hasLikes) {
+      await env.DB.prepare("insert into comments (id, post_id, author_id, text, likes, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.likes, comment.anonymous, comment.deleted_at, comment.created_at)
         .run();
     } else {
       await env.DB.prepare("insert into comments (id, post_id, author_id, text, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?)")
@@ -661,6 +673,32 @@ async function handleApi(request, env, url, route) {
     }
 
     return json({ comment: fromDbComment(comment) }, 201);
+  }
+
+  const postCommentLikeMatch = route.match(/^\/posts\/([^/]+)\/comments\/([^/]+)\/like$/);
+  if (method === "POST" && postCommentLikeMatch) {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    await hasCommentsLikesColumn(env);
+    const postId = postCommentLikeMatch[1];
+    const commentId = postCommentLikeMatch[2];
+    const comment = await env.DB.prepare("select * from comments where id=? and post_id=? and deleted_at is null").bind(commentId, postId).first();
+    if (!comment) return json({ error: "Not found" }, 404);
+    const likes = jsonArray(comment.likes);
+    const nextLikes = likes.includes(authUser.id) ? likes.filter((v) => v !== authUser.id) : [...likes, authUser.id];
+    await env.DB.prepare("update comments set likes=? where id=?").bind(JSON.stringify(nextLikes), comment.id).run();
+    comment.likes = JSON.stringify(nextLikes);
+    const post = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postId).first();
+    if (!post) return json({ error: "Not found" }, 404);
+    const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
+    return json({
+      post: {
+        ...fromDbPost(post),
+        comments: (comments.results || []).map(fromDbComment),
+        author: post.anonymous && authUser.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
+        adminAuthor: authUser.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
+      },
+      comment: fromDbComment(comment)
+    }, 200);
   }
 
   const postCommentDeleteMatch = route.match(/^\/posts\/([^/]+)\/comments\/([^/]+)$/);
@@ -1485,6 +1523,7 @@ function fromDbComment(row) {
     postId: row.post_id,
     authorId: row.author_id,
     text: row.text,
+    likes: jsonArray(row.likes),
     replyTo: row.reply_to || null,
     anonymous: Boolean(row.anonymous),
     deletedAt: row.deleted_at,
@@ -1608,6 +1647,24 @@ async function hasCommentsReplyToColumn(env) {
     return true;
   } catch {
     hasCommentsReplyToColumnCache = false;
+    return false;
+  }
+}
+
+async function hasCommentsLikesColumn(env) {
+  if (hasCommentsLikesColumnCache !== null) return hasCommentsLikesColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(comments)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (names.includes("likes")) {
+      hasCommentsLikesColumnCache = true;
+      return true;
+    }
+    await env.DB.prepare("alter table comments add column likes text default '[]'").run();
+    hasCommentsLikesColumnCache = true;
+    return true;
+  } catch {
+    hasCommentsLikesColumnCache = false;
     return false;
   }
 }

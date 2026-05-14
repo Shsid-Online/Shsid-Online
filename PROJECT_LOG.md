@@ -1012,3 +1012,14 @@
     - Comment-related details now include comment text + post ID/link.
     - Conversation-related details now include participants and creator name.
   - Validation: `npm run check` passed.
+- 2026-05-14: Fixed production 404 for comment likes + refined comment sizing/input fit.
+  - 404 root cause: frontend called `POST /posts/:postId/comments/:commentId/like`, but Worker runtime lacked this route.
+  - Worker fixes (`worker/index.js`):
+    - Added `POST /posts/:postId/comments/:commentId/like` toggle endpoint.
+    - Added comments `likes` migration helper (`hasCommentsLikesColumn`) and DB update path.
+    - Updated comment creation to persist `likes` and enforce admin comments as non-anonymous.
+  - UI sizing polish (`public/src/styles.css`):
+    - Smaller comment blocks/reply indentation.
+    - Comment composer made tighter.
+    - Added explicit styling for single-line comment input to fit feed environment.
+  - Validation: `npm run check` passed.
