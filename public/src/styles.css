@@ -681,6 +681,13 @@ body {
   background: #f8faff;
 }
 
+.comment-composer-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .comment-composer textarea,
 .comment-composer input[type="text"] {
   width: 100%;
@@ -701,6 +708,10 @@ body {
   margin-bottom: 8px;
 }
 
+.comment-composer-inline input[type="text"] {
+  margin-bottom: 0;
+}
+
 .post-actions {
   display: flex;
   gap: 8px;
@@ -716,6 +727,17 @@ body {
   background: #f6f8fc;
   font-size: 13px;
   line-height: 1.35;
+}
+
+.comment-thread {
+  margin: 8px 0 0;
+  max-height: 460px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.comment-empty {
+  margin: 0 12px 8px;
 }
 
 .comment-replies {

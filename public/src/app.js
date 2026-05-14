@@ -2330,13 +2330,16 @@ function renderPost(post) {
         </div>
       ` : ""}
       ${commentsOpen ? `
-        ${rootComments.map((comment) => renderComment(comment)).join("")}
-        <div class="comment-composer">
-          <input id="comment-text-${post.id}" type="text" placeholder="Write a comment..." />
-          <div class="row">
-            <button class="btn small primary" data-action="submit-comment" data-id="${post.id}">Send</button>
-            <button class="btn small" data-action="close-comment" data-id="${post.id}">Cancel</button>
-          </div>
+        <div class="comment-thread">
+          ${rootComments.length
+            ? rootComments.map((comment) => renderComment(comment)).join("")
+            : `<p class="muted comment-empty">No comments yet.</p>`
+          }
+        </div>
+        <div class="comment-composer comment-composer-inline">
+          <input id="comment-text-${post.id}" type="text" placeholder="Add a comment..." />
+          <button class="btn small primary" data-action="submit-comment" data-id="${post.id}">Send</button>
+          <button class="btn small" data-action="close-comment" data-id="${post.id}">Close</button>
         </div>
       ` : ""}
       <div class="post-actions">

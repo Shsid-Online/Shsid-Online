@@ -1065,3 +1065,13 @@
   - Root cause: variable accidentally inserted at file end after `bootstrapSession()` instead of inside `renderPost()`.
   - Fix (`public/src/app.js`): moved `authorFollowerCount` initialization into `renderPost` scope and removed stray global line.
   - Validation: `npm run check` passed.
+- 2026-05-14: Refined feed comment UX for expand + capped-scroll behavior.
+  - Frontend (`public/src/app.js`):
+    - Comments still open only when tapping the comment button.
+    - Wrapped comment list in `comment-thread` container with empty-state text.
+    - Reworked comment composer into inline single-row input (`Add a comment...`) with Send/Close buttons.
+  - Styles (`public/src/styles.css`):
+    - Added `comment-thread` with fixed max height + internal vertical scrolling (about 7 comment slots).
+    - Added `comment-composer-inline` grid layout for cleaner input/submit alignment.
+    - Adjusted inline input spacing and empty-state styling.
+  - Validation: `npm run check` passed.
