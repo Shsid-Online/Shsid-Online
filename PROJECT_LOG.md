@@ -975,3 +975,10 @@
     - Updated `like-post`, `heart-post`, and `save-post` handlers to use in-place action-row updates first, falling back to card rerender only if needed.
   - Effect: liking/hearting/saving no longer restarts the playing video on the single post view.
   - Validation: `npm run check` passed.
+- 2026-05-14: Updated post comment UI to single-line inline composer.
+  - Behavior: pressing the comment button opens comments + a one-line comment input directly underneath.
+  - Frontend (`public/src/app.js`):
+    - Replaced comment composer `textarea` with single-line `input`.
+    - Removed inline anonymous selector for this quick comment row.
+    - Submit now posts `anonymous: false` from this composer.
+  - Validation: `npm run check` passed.

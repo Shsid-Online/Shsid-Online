@@ -2249,12 +2249,8 @@ function renderPost(post) {
       ${rootComments.map((comment) => renderComment(comment)).join("")}
       ${openCommentPostId === post.id ? `
         <div class="comment-composer">
-          <textarea id="comment-text-${post.id}" placeholder="Write a comment..."></textarea>
+          <input id="comment-text-${post.id}" type="text" placeholder="Write a comment..." />
           <div class="row">
-            <select id="comment-anon-${post.id}" class="btn small">
-              <option value="false">Public</option>
-              <option value="true">Anonymous</option>
-            </select>
             <button class="btn small primary" data-action="submit-comment" data-id="${post.id}">Send</button>
             <button class="btn small" data-action="close-comment" data-id="${post.id}">Cancel</button>
           </div>
@@ -3438,9 +3434,8 @@ async function handleAction(action, id) {
     const post = state.posts.find((item) => item.id === id);
     if (!post) return toast("Post not found");
     const text = String(document.querySelector(`#comment-text-${id}`)?.value || "").trim();
-    const anonymous = document.querySelector(`#comment-anon-${id}`)?.value === "true";
     if (!text) return toast("Enter a comment");
-    await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous }) });
+    await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous: false }) });
     openCommentPostId = null;
     await refreshPosts();
     saveState();
