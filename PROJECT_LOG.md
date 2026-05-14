@@ -1106,3 +1106,15 @@
     - Follow endpoints now return explicit `Admins cannot be followed` for admin targets.
     - Keeps `Student not found` behavior for unknown/non-student targets.
   - Validation: `npm run check` passed.
+- 2026-05-14: Final launch bug check + live data purge (students/posts/questions).
+  - Pre-cleanup live D1 counts (`shsid-social-db`): `admins=2`, `students=6`, `posts=4`, `qna=3`.
+  - Ran ordered remote cleanup via `wrangler d1 execute --remote` to remove non-admin launch data:
+    - Deleted all comments/messages/conversations/follows tied to smoke/student activity.
+    - Deleted student-linked notifications/reports/suggestions/email verifications.
+    - Deleted all `qna`, `reel_comments`, `reels`, `stories`, and all `posts`.
+    - Deleted all non-admin users (`role <> 'admin'`).
+  - Post-cleanup live D1 counts: `admins=2`, `students=0`, `posts=0`, `qna=0`, `conversations=0`, `messages=0`.
+  - Final bug checks:
+    - `npm run check` passed (frontend/server/worker syntax checks).
+    - Live API health check passed: `GET https://www.shsid.online/api/health` -> `200` with `{ "ok": true, "service": "shsid-social-api" }`.
+    - Note: `GET https://www.shsid.online/health` had DNS resolution failures from this execution environment during this run.
