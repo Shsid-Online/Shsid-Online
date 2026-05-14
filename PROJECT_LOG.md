@@ -992,3 +992,11 @@
     - Comment model now carries `likes` array (new + normalized for existing data).
     - Added like button per comment/reply with live count and state (`♥︎/♡`).
   - Validation: `npm run check` passed.
+- 2026-05-14: Enabled users to delete their own comments.
+  - Backend (`server/server.js`):
+    - Added `DELETE /api/posts/:postId/comments/:commentId`.
+    - Authorization now allows delete by comment author or admin.
+    - Soft-delete behavior: marks `comment.deletedAt` and records `comment_deleted` audit event.
+  - Frontend (`public/src/app.js`):
+    - Comment `Delete` button now appears for admins and for the comment owner.
+  - Validation: `npm run check` passed.

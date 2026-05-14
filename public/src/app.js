@@ -2206,7 +2206,7 @@ function renderPost(post) {
       <div class="comment${nested ? " comment-reply" : ""}">
         <p style="margin:0">
           <strong>${escapeHtml(userName(comment.authorId, comment.anonymous))}:</strong> ${escapeHtml(comment.text)}
-          ${currentUser().role === "admin" ? `<button class="btn small danger" style="margin-left:8px" data-action="delete-comment" data-id="${post.id}:${comment.id}">Delete</button>` : ""}
+          ${(currentUser().role === "admin" || comment.authorId === state.currentUserId) ? `<button class="btn small danger" style="margin-left:8px" data-action="delete-comment" data-id="${post.id}:${comment.id}">Delete</button>` : ""}
           <button class="btn small" style="margin-left:8px" data-action="like-comment" data-id="${post.id}:${comment.id}">${commentLiked ? "♥︎" : "♡"} ${commentLikes.length}</button>
           <button class="btn small" style="margin-left:8px" data-action="reply-comment" data-id="${post.id}:${comment.id}">Reply</button>
         </p>

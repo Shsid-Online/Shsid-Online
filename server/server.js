@@ -862,6 +862,22 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { post, comment });
   }
 
+  const postCommentDeleteMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/comments\/([^/]+)$/);
+  if (method === "DELETE" && postCommentDeleteMatch) {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const post = store.data.posts.find((item) => item.id === postCommentDeleteMatch[1] && !item.deletedAt);
+    if (!post) return notFound(res);
+    const comment = (post.comments || []).find((item) => item.id === postCommentDeleteMatch[2] && !item.deletedAt);
+    if (!comment) return notFound(res);
+    const canDelete = user.role === "admin" || comment.authorId === user.id;
+    if (!canDelete) return sendJson(res, 403, { error: "Not allowed to delete this comment" }, req);
+    comment.deletedAt = now();
+    store.audit(user.id, "comment_deleted", { postId: post.id, commentId: comment.id });
+    store.save();
+    return sendJson(res, 200, { ok: true, commentId: comment.id });
+  }
+
   const postIdOnlyMatch = url.pathname.match(/^\/api\/posts\/([^/]+)$/);
   if (postIdOnlyMatch && (method === "PATCH" || method === "DELETE")) {
     const admin = requireAdmin(req, res);
