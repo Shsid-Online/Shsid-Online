@@ -1031,3 +1031,14 @@
     - Keeps manual image URL input as fallback.
     - Clears ad image file selection after successful ad create.
   - Validation: `npm run check` passed.
+- 2026-05-14: Enabled messaging admins from direct/group chat flows.
+  - Frontend (`public/src/app.js`):
+    - Removed admin-target block in `start-chat`; now allows admin targets while still requiring verified status for non-admin users.
+    - Included admins in `open-start-direct` and `open-create-convo` user pickers.
+    - Updated user-facing validation message to "Only verified students or admins can be messaged".
+  - Worker backend (`worker/index.js`):
+    - Conversation member validation now allows admins; non-admin targets must still be verified.
+    - Updated validation error text accordingly.
+  - Node backend (`server/server.js`):
+    - Mirrored the same conversation member validation and error-message update for local/runtime parity.
+  - Validation: `npm run check` passed.

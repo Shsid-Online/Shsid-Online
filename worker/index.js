@@ -958,8 +958,8 @@ async function handleApi(request, env, url, route) {
     const others = members.filter((memberId) => memberId !== authUser.id);
     for (const memberId of others) {
       const target = await getUserById(env, memberId);
-      if (!target || target.role !== "student" || target.status !== "verified") {
-        return json({ error: "Only verified students can be added to conversations" }, 400);
+      if (!target || (target.role !== "admin" && target.status !== "verified")) {
+        return json({ error: "Only verified students or admins can be added to conversations" }, 400);
       }
     }
     const group = Boolean(body.group);

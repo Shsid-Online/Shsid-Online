@@ -973,8 +973,8 @@ async function handleApi(req, res, url) {
     const otherMembers = uniqueMembers.filter((memberId) => memberId !== user.id);
     for (const memberId of otherMembers) {
       const target = store.findUserById(memberId);
-      if (!target || target.role !== "student" || target.status !== "verified") {
-        return sendJson(res, 400, { error: "Only verified students can be added to conversations" });
+      if (!target || (target.role !== "admin" && target.status !== "verified")) {
+        return sendJson(res, 400, { error: "Only verified students or admins can be added to conversations" });
       }
     }
     const group = Boolean(body.group);

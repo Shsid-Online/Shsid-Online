@@ -3668,7 +3668,7 @@ async function handleAction(action, id) {
     if (user.role !== "admin" && user.status !== "verified") return toast("Verification required before messaging");
     if (startChatInFlight) return;
     const target = state.users.find((item) => item.id === id);
-    if (!target || target.role === "admin" || target.status !== "verified") return toast("Only verified students can be messaged");
+    if (!target || (target.role !== "admin" && target.status !== "verified")) return toast("Only verified students or admins can be messaged");
     startChatInFlight = true;
     try {
       const mode = await askIdentityModePopup(target.englishName || "student");
@@ -3788,7 +3788,7 @@ async function handleAction(action, id) {
   if (action === "open-start-direct") {
     if (user.role === "admin") return toast("Admin cannot start direct student chats here");
     if (user.status !== "verified") return toast("Verification required before messaging");
-    const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified");
+    const choices = state.users.filter((item) => item.id !== user.id && (item.role === "admin" || item.status === "verified"));
     if (!choices.length) return toast("No verified students available");
     const popup = showFormPopup("Start Direct Message", `
       <form id="direct-start-form" class="grid">
@@ -3834,7 +3834,7 @@ async function handleAction(action, id) {
   if (action === "open-create-convo") {
     if (user.role === "admin") return toast("Admin cannot create student chats here");
     if (user.status !== "verified") return toast("Verification required before messaging");
-    const choices = state.users.filter((item) => item.id !== user.id && item.role !== "admin" && item.status === "verified");
+    const choices = state.users.filter((item) => item.id !== user.id && (item.role === "admin" || item.status === "verified"));
     const popup = showFormPopup("Create Conversation", `
       <form id="create-convo-form" class="grid">
         <div class="field"><label>Title (optional)</label><input id="create-convo-title" placeholder="Conversation title"></div>
