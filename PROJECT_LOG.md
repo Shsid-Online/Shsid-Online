@@ -1075,3 +1075,18 @@
     - Added `comment-composer-inline` grid layout for cleaner input/submit alignment.
     - Adjusted inline input spacing and empty-state styling.
   - Validation: `npm run check` passed.
+- 2026-05-14: Bug sweep pass with 10+ fixes across follow/feed/comments/chat/admin bans.
+  - Fixed follow count drift bug (`public/src/app.js`): removed manual local `followerCount` increment/decrement after `/users/:id/follow`; relied on backend + `refreshStudents()` source of truth.
+  - Fixed feed duplication (`public/src/app.js`): `Following` section no longer repeats when `Following only` filter is active.
+  - Improved feed empty-state (`public/src/app.js`): `Following only` now shows a specific empty message.
+  - Fixed direct-message empty-state wording (`public/src/app.js`): changed misleading `No verified students available` to `No messageable users available`.
+  - Fixed direct-message picker label (`public/src/app.js`): `Search verified students` -> `Search people`.
+  - Fixed create-conversation no-choice flow (`public/src/app.js`): early return with clear toast when no eligible users.
+  - Fixed create-conversation picker label (`public/src/app.js`): `Find verified students` -> `Find people`.
+  - Fixed create-conversation empty list copy (`public/src/app.js`): now references messageable users.
+  - Fixed create-conversation cancel CTA text (`public/src/app.js`): `Create later` -> `Cancel`.
+  - Added quick-submit for comments (`public/src/app.js`): Enter now submits inline comment input.
+  - Fixed comments viewport sizing (`public/src/styles.css`): comment thread capped to ~7 items (`max-height: 392px`) with scroll.
+  - Fixed mobile comment composer layout (`public/src/styles.css`): inline composer stacks on small screens to avoid overflow.
+  - Fixed Worker admin bans enrichment bug (`worker/index.js`): removed broken placeholder mapping and now resolves `targetName` / `adminName` from user IDs.
+  - Validation: `npm run check` passed.

@@ -731,13 +731,19 @@ body {
 
 .comment-thread {
   margin: 8px 0 0;
-  max-height: 460px;
+  max-height: 392px;
   overflow-y: auto;
   padding-right: 4px;
 }
 
 .comment-empty {
   margin: 0 12px 8px;
+}
+
+@media (max-width: 700px) {
+  .comment-composer-inline {
+    grid-template-columns: 1fr;
+  }
 }
 
 .comment-replies {

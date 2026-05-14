@@ -2201,7 +2201,7 @@ function renderFeed() {
     if (postsByCategory.has(category)) postsByCategory.get(category).push(post);
     else postsByCategory.get("other").push(post);
   }
-  const followingSection = followingRows.length ? `
+  const followingSection = followingRows.length && engagementFilter !== "following" ? `
     <section class="panel feed-category-block">
       <div class="between feed-category-head">
         <h3>Following</h3>
@@ -2228,7 +2228,7 @@ function renderFeed() {
     }).join("");
   const postsHtml = filtered.length
     ? `${followingSection}${categorySections}`
-    : `<div class="empty-state">No posts yet. Share something positive or helpful to get the feed started.</div>`;
+    : `<div class="empty-state">${engagementFilter === "following" ? "No posts from people you follow yet." : "No posts yet. Share something positive or helpful to get the feed started."}</div>`;
   return page("Feed", "Catch up with what students are sharing right now.", `
     <div class="grid two" style="margin-bottom:16px">
       <div class="field" style="margin:0">
@@ -3134,6 +3134,16 @@ function bindEvents() {
     }
   };
 
+  document.querySelectorAll('input[id^="comment-text-"]').forEach((input) => {
+    input.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+      event.preventDefault();
+      const postId = String(input.id || "").replace(/^comment-text-/, "").trim();
+      if (!postId) return;
+      await handleAction("submit-comment", postId);
+    });
+  });
+
   setupDropzone("post-dropzone", "post-media", true);  bindFileChips("post-media", "post-file-chips");
   setupDropzone("ad-image-dropzone", "ad-image-file", false); bindFileChips("ad-image-file", "ad-image-chips");
   bindMessageAttachmentStrip();
@@ -3685,11 +3695,6 @@ async function handleAction(action, id) {
     const result = await apiRequest(`/users/${id}/follow`, { method: "POST", body: JSON.stringify({}) });
     mergeApiUsers([result.user]);
     await refreshStudents();
-    const targetIdx = state.users.findIndex((item) => item.id === id);
-    if (targetIdx >= 0) {
-      const prev = Number(state.users[targetIdx].followerCount || 0);
-      state.users[targetIdx].followerCount = Math.max(0, prev + (wasFollowing ? -1 : 1));
-    }
     saveState();
     toast(wasFollowing ? "Unfollowed" : "Followed");
   }
@@ -3841,10 +3846,10 @@ async function handleAction(action, id) {
     if (user.role === "admin") return toast("Admin cannot start direct student chats here");
     if (user.status !== "verified") return toast("Verification required before messaging");
     const choices = state.users.filter((item) => item.id !== user.id && (item.role === "admin" || item.status === "verified"));
-    if (!choices.length) return toast("No verified students available");
+    if (!choices.length) return toast("No messageable users available");
     const popup = showFormPopup("Start Direct Message", `
       <form id="direct-start-form" class="grid">
-        <div class="field"><label>Search verified students</label><input id="direct-search" placeholder="Search by name, grade, class" /></div>
+        <div class="field"><label>Search people</label><input id="direct-search" placeholder="Search by name, grade, class" /></div>
         <div id="direct-list" class="grid" style="max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px">
           ${choices.map((item) => `<button class="btn" type="button" data-direct-target="${escapeHtml(item.id)}">${escapeHtml(item.englishName)} <span class="muted">· G${item.grade} C${item.classNo}</span></button>`).join("")}
         </div>
@@ -3887,11 +3892,12 @@ async function handleAction(action, id) {
     if (user.role === "admin") return toast("Admin cannot create student chats here");
     if (user.status !== "verified") return toast("Verification required before messaging");
     const choices = state.users.filter((item) => item.id !== user.id && (item.role === "admin" || item.status === "verified"));
+    if (!choices.length) return toast("No messageable users available");
     const popup = showFormPopup("Create Conversation", `
       <form id="create-convo-form" class="grid">
         <div class="field"><label>Title (optional)</label><input id="create-convo-title" placeholder="Conversation title"></div>
         <div class="field">
-          <label>Find verified students</label>
+          <label>Find people</label>
           <input id="create-convo-search" placeholder="Search by name, grade, class" />
         </div>
         <div id="create-convo-list" class="grid" style="max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px">
@@ -3900,11 +3906,11 @@ async function handleAction(action, id) {
               <input type="checkbox" value="${escapeHtml(item.id)}" data-convo-member />
               <span><strong>${escapeHtml(item.englishName)}</strong> <span class="muted">· G${item.grade} C${item.classNo}</span></span>
             </label>
-          `).join("") || `<p class="muted">No verified students available.</p>`}
+          `).join("") || `<p class="muted">No messageable users available.</p>`}
         </div>
         <div class="row">
           <button class="btn primary" type="submit">Create</button>
-          <button class="btn" type="button" data-cancel>Create later</button>
+          <button class="btn" type="button" data-cancel>Cancel</button>
         </div>
       </form>
     `);

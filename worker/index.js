@@ -1315,10 +1315,22 @@ async function handleApi(request, env, url, route) {
   if (method === "GET" && route === "/admin/bans") {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const rows = await env.DB.prepare("select * from bans order by created_at desc").all();
-    const enriched = (rows.results || []).map((ban) => {
-      const targetUser = rows.results?.find ? null : ban;
-      const targetRow = ban;
-      return { ...ban, targetName: ban.target_name || "Unknown", adminName: ban.admin_name || "Unknown" };
+    const bans = rows.results || [];
+    const userIds = [...new Set(bans.flatMap((ban) => [ban.user_id, ban.admin_id]).filter(Boolean))];
+    const usersById = new Map();
+    if (userIds.length) {
+      const placeholders = userIds.map(() => "?").join(",");
+      const users = await env.DB.prepare(`select id, english_name, email from users where id in (${placeholders})`).bind(...userIds).all();
+      for (const row of users.results || []) usersById.set(row.id, row);
+    }
+    const enriched = bans.map((ban) => {
+      const target = usersById.get(ban.user_id);
+      const admin = usersById.get(ban.admin_id);
+      return {
+        ...ban,
+        targetName: String(target?.english_name || target?.email || "Unknown"),
+        adminName: String(admin?.english_name || admin?.email || "Unknown")
+      };
     });
     return json({ bans: enriched, pagination: { limit: 100, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
   }
