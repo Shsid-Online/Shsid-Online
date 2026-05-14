@@ -831,7 +831,7 @@ async function handleApi(req, res, url) {
     const comment = {
       id: id("cmt"),
       authorId: user.id,
-      anonymous: Boolean(body.anonymous),
+      anonymous: user.role === "admin" ? false : Boolean(body.anonymous),
       text: text.slice(0, MAX_TEXT_LEN),
       replyTo: replyTo || null,
       createdAt: now(),

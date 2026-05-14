@@ -963,3 +963,8 @@
     - Uploading no longer causes continuous full page rebuilds.
     - Chat polling uses less CPU and less JSON/stringify overhead during idle updates.
   - Validation: `npm run check` passed.
+- 2026-05-14: Fixed admin comments showing as anonymous.
+  - Root cause: backend comment creation used `anonymous: Boolean(body.anonymous)` for all users, including admins.
+  - Fix (`server/server.js`): force admin post comments/replies to `anonymous: false`.
+  - Effect: Shanghai admin comments now always show admin identity publicly.
+  - Validation: `npm run check` passed.
