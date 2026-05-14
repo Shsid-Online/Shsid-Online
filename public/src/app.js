@@ -3348,7 +3348,7 @@ async function handleAction(action, id) {
       const idx = state.posts.findIndex((item) => item.id === id);
       if (idx >= 0) state.posts[idx] = normalizePost(result.post);
       saveState();
-      rerenderPostCard(id, { preserveVideoPlayback: true });
+      if (!syncPostActionButtons(id)) rerenderPostCard(id, { preserveVideoPlayback: true });
       return;
     } catch (err) { console.error("like-post failed", err); }
   }
@@ -3359,7 +3359,7 @@ async function handleAction(action, id) {
       const idx = state.posts.findIndex((item) => item.id === id);
       if (idx >= 0) state.posts[idx] = normalizePost(result.post);
       saveState();
-      rerenderPostCard(id, { preserveVideoPlayback: true });
+      if (!syncPostActionButtons(id)) rerenderPostCard(id, { preserveVideoPlayback: true });
       return;
     } catch (err) { console.error("heart-post failed", err); }
   }
@@ -3369,6 +3369,9 @@ async function handleAction(action, id) {
       const result = await apiRequest(`/posts/${id}/save`, { method: "POST", body: JSON.stringify({}) });
       const idx = state.posts.findIndex((item) => item.id === id);
       if (idx >= 0) state.posts[idx] = normalizePost(result.post);
+      saveState();
+      if (!syncPostActionButtons(id)) rerenderPostCard(id, { preserveVideoPlayback: true });
+      return;
     } catch (err) { console.error("save-post failed", err); }
   }
   if (action === "media-prev") {
@@ -4308,6 +4311,25 @@ function updatePostMediaCarousel(postId) {
   setupMediaLoadingIndicators(card);
   setupFeedVideoAutoplay();
   preloadPostMediaAround(postId);
+}
+
+function syncPostActionButtons(postId) {
+  const post = state.posts.find((item) => item.id === postId);
+  const card = document.querySelector(`article.card[data-post-id="${postId}"]`);
+  if (!post || !card) return false;
+  const likes = Array.isArray(post.likes) ? post.likes : [];
+  const hearts = Array.isArray(post.hearts) ? post.hearts : [];
+  const saves = Array.isArray(post.savedBy) ? post.savedBy : [];
+  const liked = likes.includes(state.currentUserId);
+  const hearted = hearts.includes(state.currentUserId);
+  const saved = saves.includes(state.currentUserId);
+  const heartBtn = card.querySelector('[data-action="heart-post"]');
+  if (heartBtn) heartBtn.textContent = `${hearted ? "♥︎" : "♡"} ${hearts.length}`;
+  const likeBtn = card.querySelector('[data-action="like-post"]');
+  if (likeBtn) likeBtn.textContent = `${liked ? "👍" : "👍🏻"} ${likes.length}`;
+  const saveBtn = card.querySelector('[data-action="save-post"]');
+  if (saveBtn) saveBtn.textContent = `${saved ? "🔖" : "⌑"} ${saves.length}`;
+  return true;
 }
 
 function rerenderPostCard(postId, { preserveVideoPlayback = true, rebindAutoplay = false } = {}) {

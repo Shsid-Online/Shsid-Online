@@ -968,3 +968,10 @@
   - Fix (`server/server.js`): force admin post comments/replies to `anonymous: false`.
   - Effect: Shanghai admin comments now always show admin identity publicly.
   - Validation: `npm run check` passed.
+- 2026-05-14: Fixed single-post video restart on like/heart/save.
+  - Cause: engagement actions rerendered the entire post card, recreating video node in single-post view.
+  - Fix (`public/src/app.js`):
+    - Added `syncPostActionButtons(postId)` to update only action button labels/counts in-place.
+    - Updated `like-post`, `heart-post`, and `save-post` handlers to use in-place action-row updates first, falling back to card rerender only if needed.
+  - Effect: liking/hearting/saving no longer restarts the playing video on the single post view.
+  - Validation: `npm run check` passed.
