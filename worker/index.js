@@ -1062,7 +1062,9 @@ async function handleApi(request, env, url, route) {
     const targetId = followMatch[1];
     if (targetId === authUser.id) return json({ error: "Cannot follow yourself" }, 400);
     const target = await getUserById(env, targetId);
-    if (!target || target.role !== "student") return json({ error: "Student not found" }, 404);
+    if (!target) return json({ error: "Student not found" }, 404);
+    if (target.role === "admin") return json({ error: "Admins cannot be followed" }, 400);
+    if (target.role !== "student") return json({ error: "Student not found" }, 404);
     if (target.status !== "verified") return json({ error: "Only verified students can be followed" }, 400);
 
     const exists = await env.DB.prepare("select 1 from follows where follower_id=? and following_id=?").bind(authUser.id, targetId).first();

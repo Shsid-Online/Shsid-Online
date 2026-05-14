@@ -1184,7 +1184,9 @@ async function handleApi(req, res, url) {
     if (user.role !== "admin" && user.status !== "verified") return sendJson(res, 403, { error: "Verification required before following" });
     const targetId = userFollowMatch[1];
     const target = store.findUserById(targetId);
-    if (!target || target.role !== "student") return sendJson(res, 404, { error: "Student not found" });
+    if (!target) return sendJson(res, 404, { error: "Student not found" });
+    if (target.role === "admin") return sendJson(res, 400, { error: "Admins cannot be followed" });
+    if (target.role !== "student") return sendJson(res, 404, { error: "Student not found" });
     if (target.status !== "verified") return sendJson(res, 400, { error: "Only verified students can be followed" });
     if (targetId === user.id) return sendJson(res, 400, { error: "Cannot follow yourself" });
     const idx = store.data.follows.findIndex((row) => row.followerId === user.id && row.followingId === targetId);

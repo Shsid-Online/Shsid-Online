@@ -1090,3 +1090,19 @@
   - Fixed mobile comment composer layout (`public/src/styles.css`): inline composer stacks on small screens to avoid overflow.
   - Fixed Worker admin bans enrichment bug (`worker/index.js`): removed broken placeholder mapping and now resolves `targetName` / `adminName` from user IDs.
   - Validation: `npm run check` passed.
+- 2026-05-14: Second bug sweep pass (10+ additional fixes).
+  - Reports/moderation targeting fixes (`public/src/app.js`):
+    - Added `resolveReportTargetUserId()` to correctly map report targets to user IDs for post/comment/conversation reports.
+    - `handle-report` now bans/warns resolved user IDs only (no longer attempts to ban conversation IDs).
+    - Added guard UI: warn/ban options are disabled when target user cannot be resolved.
+    - Auto-initialized report action form state on open (`change` dispatch) so days/reason fields match selected action immediately.
+  - Report UX fixes (`public/src/app.js`):
+    - Added comment-aware report labels (`Comment by ...`) and preview text.
+    - Added explicit `Report submitted` toast for both post reports and conversation reports.
+  - Comment state fixes (`public/src/app.js`):
+    - Clearing/toggling comments now clears stale reply-open state tied to that post.
+    - Enter-to-submit comment handler now catches errors and toasts instead of surfacing unhandled rejection.
+  - Follow API parity fixes (`worker/index.js`, `server/server.js`):
+    - Follow endpoints now return explicit `Admins cannot be followed` for admin targets.
+    - Keeps `Student not found` behavior for unknown/non-student targets.
+  - Validation: `npm run check` passed.

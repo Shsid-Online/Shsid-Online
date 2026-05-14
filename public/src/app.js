@@ -1158,6 +1158,13 @@ function reportTargetHumanLabel(report = {}) {
     if (convo) return convo.group ? `Group chat: ${conversationDisplayTitle(convo, true)}` : `Direct chat: ${conversationDisplayTitle(convo, true)}`;
     return "Conversation";
   }
+  if (type === "comment") {
+    for (const post of state.posts || []) {
+      const comment = (post.comments || []).find((item) => item.id === targetId);
+      if (comment) return `Comment by ${userName(comment.authorId, comment.anonymous)}`;
+    }
+    return "Comment";
+  }
   return type ? `${type[0].toUpperCase()}${type.slice(1)}` : "Content";
 }
 
@@ -1180,7 +1187,40 @@ function reportTargetPreview(report = {}) {
     const body = String(latest.text || "").trim();
     return body ? `Latest: ${body.slice(0, 140)}` : "Latest message contains attachment only.";
   }
+  if (type === "comment") {
+    for (const post of state.posts || []) {
+      const comment = (post.comments || []).find((item) => item.id === targetId);
+      if (!comment) continue;
+      const body = String(comment.text || "").trim();
+      return body ? body.slice(0, 160) : "Comment has no text.";
+    }
+    return "Preview unavailable. Comment may be unavailable.";
+  }
   return `Target ID: ${targetId || "-"}`;
+}
+
+function resolveReportTargetUserId(report = {}) {
+  const type = String(report.type || "").toLowerCase();
+  const targetId = String(report.targetId || "");
+  if (!targetId) return "";
+  if (type === "post") {
+    const post = state.posts.find((item) => item.id === targetId);
+    return String(post?.authorId || "");
+  }
+  if (type === "comment") {
+    for (const post of state.posts || []) {
+      const comment = (post.comments || []).find((item) => item.id === targetId);
+      if (comment?.authorId) return String(comment.authorId);
+    }
+    return "";
+  }
+  if (type === "conversation" || type === "chat") {
+    const convo = state.conversations.find((item) => item.id === targetId);
+    if (!convo) return "";
+    const reporterId = String(report.reporterId || "");
+    return String((convo.members || []).find((memberId) => String(memberId) !== reporterId) || "");
+  }
+  return "";
 }
 
 function toast(message) {
@@ -3140,7 +3180,11 @@ function bindEvents() {
       event.preventDefault();
       const postId = String(input.id || "").replace(/^comment-text-/, "").trim();
       if (!postId) return;
-      await handleAction("submit-comment", postId);
+      try {
+        await handleAction("submit-comment", postId);
+      } catch (error) {
+        toast(error?.message || "Comment failed");
+      }
     });
   });
 
@@ -3523,6 +3567,7 @@ async function handleAction(action, id) {
     if (!id) return toast("Invalid post");
     if (!state.posts.some((item) => item.id === id)) return toast("Post not found");
     openCommentPostId = openCommentPostId === id ? null : id;
+    if (openCommentPostId !== id) openReplyCommentKey = null;
     saveState();
     rerenderPostCard(id, { preserveVideoPlayback: true });
     return;
@@ -3530,6 +3575,7 @@ async function handleAction(action, id) {
   if (action === "close-comment") {
     const targetPostId = openCommentPostId;
     openCommentPostId = null;
+    if (String(openReplyCommentKey || "").startsWith(`${id}:`)) openReplyCommentKey = null;
     if (targetPostId && state.posts.some((item) => item.id === targetPostId)) {
       saveState();
       rerenderPostCard(targetPostId, { preserveVideoPlayback: true });
@@ -3609,6 +3655,7 @@ async function handleAction(action, id) {
     const cleanReason = String(reason || "").trim();
     if (!cleanReason) return;
     await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "post", targetId: id, reason: cleanReason }) });
+    toast("Report submitted");
     if (user.role === "admin") await refreshReports();
   }
   if (action === "share-post") {
@@ -3994,6 +4041,7 @@ async function handleAction(action, id) {
     const cleanReason = String(reason || "").trim();
     if (!cleanReason) return;
     await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "conversation", targetId: id, reason: cleanReason }) });
+    toast("Report submitted");
     if (user.role === "admin") await refreshReports();
   }
   if (action === "verify-user") {
@@ -4109,8 +4157,8 @@ async function handleAction(action, id) {
     if (!report) return;
     if (report.status && report.status !== "pending") return toast("Report already handled");
     const targetPost = report.type === "post" ? state.posts.find((p) => p.id === report.targetId) : null;
-    const targetUser = targetPost ? state.users.find((u) => u.id === targetPost.authorId) : null;
-    const targetId = targetUser?.id || report.targetId;
+    const reportTargetUserId = resolveReportTargetUserId(report);
+    const canModerateTarget = Boolean(reportTargetUserId && reportTargetUserId !== report.reporterId);
     const result = await showFormPopup("Handle Report", `
       <form id="handle-report-form" class="grid">
         <p><strong>Reporter:</strong> ${escapeHtml(userName(report.reporterId))}</p>
@@ -4122,11 +4170,12 @@ async function handleAction(action, id) {
           <label>Take Action</label>
           <select id="report-action">
             <option value="dismiss">Dismiss Report</option>
-            <option value="warn">Warn User</option>
-            <option value="ban_temp">Temporary Ban</option>
-            <option value="ban_perm">Permanent Ban</option>
+            <option value="warn" ${canModerateTarget ? "" : "disabled"}>Warn User</option>
+            <option value="ban_temp" ${canModerateTarget ? "" : "disabled"}>Temporary Ban</option>
+            <option value="ban_perm" ${canModerateTarget ? "" : "disabled"}>Permanent Ban</option>
           </select>
         </div>
+        ${canModerateTarget ? "" : `<p class="muted">Only dismiss is available because target user cannot be resolved.</p>`}
         <div class="field" id="report-days-field" style="display:none">
           <label>Days (1-365)</label>
           <input id="report-days" type="number" min="1" max="365" value="7" />
@@ -4160,24 +4209,26 @@ async function handleAction(action, id) {
       try {
         if (reportAction === "dismiss") {
           await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "dismissed" }) });
-        } else if (targetId && targetId !== report.reporterId) {
-          await apiRequest(`/admin/bans/${targetId}/user`, {
+        } else if (reportTargetUserId && reportTargetUserId !== report.reporterId) {
+          await apiRequest(`/admin/bans/${reportTargetUserId}/user`, {
             method: "POST",
             body: JSON.stringify({ action: reportAction, reason, days })
           });
           await apiRequest(`/admin/reports/${id}`, { method: "POST", body: JSON.stringify({ status: "actioned" }) });
         } else {
-          return toast("Cannot take action on this report target");
+          return toast("Cannot resolve report target user");
         }
         result.remove();
         toast(reportAction === "dismiss" ? "Report dismissed" : "Action taken");
         await refreshReports();
-        if (targetId) await refreshStudents();
+        if (reportTargetUserId) await refreshStudents();
         render();
       } finally {
         handleReportInFlight = false;
       }
     });
+    const actionSelect = result.querySelector("#report-action");
+    if (actionSelect) actionSelect.dispatchEvent(new Event("change"));
     return;
   }
   if (action === "mark-read") {
