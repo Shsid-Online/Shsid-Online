@@ -2715,6 +2715,12 @@ function renderSettings() {
           <div class="field"><label>Body</label><input id="ad-body" placeholder="Short ad text"></div>
           <div class="field"><label>URL (optional)</label><input id="ad-url" placeholder="https://..."></div>
           <div class="field"><label>Image URL (optional: PNG/JPG/WebP/GIF)</label><input id="ad-image-url" placeholder="https://.../ad-image.png"></div>
+          <div class="field">
+            <label>Upload image (optional)</label>
+            <div id="ad-image-dropzone" class="dropzone">Drag and drop ad image here, or click to pick file.</div>
+            <input id="ad-image-file" type="file" accept="image/*">
+            <div id="ad-image-chips" class="file-chips"></div>
+          </div>
         </div>
         <div class="row"><button class="btn primary" data-action="create-ad">Create Ad</button></div>
         <div class="grid" style="margin-top:12px">
@@ -3086,6 +3092,7 @@ function bindEvents() {
   };
 
   setupDropzone("post-dropzone", "post-media", true);  bindFileChips("post-media", "post-file-chips");
+  setupDropzone("ad-image-dropzone", "ad-image-file", false); bindFileChips("ad-image-file", "ad-image-chips");
   bindMessageAttachmentStrip();
 }
 
@@ -4223,6 +4230,8 @@ async function handleAction(action, id) {
     const body = String(document.querySelector("#ad-body")?.value || "").trim();
     const url = String(document.querySelector("#ad-url")?.value || "").trim();
     const imageUrl = String(document.querySelector("#ad-image-url")?.value || "").trim();
+    const adImageInput = document.querySelector("#ad-image-file");
+    const adImageFile = (inputFileStore["ad-image-file"] || [...(adImageInput?.files || [])])[0] || null;
     const allowedSlots = new Set(["top_banner", "feed_inline", "students_inline", "popup"]);
     if (!slot || !title) return toast("Slot and title are required");
     if (title.length > 120) return toast("Title is too long");
@@ -4232,15 +4241,28 @@ async function handleAction(action, id) {
     if (!allowedSlots.has(slot)) return toast("Invalid ad slot");
     createAdInFlight = true;
     try {
-      await apiRequest("/admin/ads", { method: "POST", body: JSON.stringify({ slot, title, body, url, imageUrl, active: true }) });
+      let nextImageUrl = imageUrl;
+      if (adImageFile) {
+        const uploaded = await uploadFiles([adImageFile], { purpose: "media" });
+        nextImageUrl = String(uploaded?.[0]?.url || nextImageUrl || "").trim();
+      }
+      await apiRequest("/admin/ads", { method: "POST", body: JSON.stringify({ slot, title, body, url, imageUrl: nextImageUrl, active: true }) });
       const titleInput = document.querySelector("#ad-title");
       const bodyInput = document.querySelector("#ad-body");
       const urlInput = document.querySelector("#ad-url");
       const imageUrlInput = document.querySelector("#ad-image-url");
+      const imageFileInput = document.querySelector("#ad-image-file");
       if (titleInput) titleInput.value = "";
       if (bodyInput) bodyInput.value = "";
       if (urlInput) urlInput.value = "";
       if (imageUrlInput) imageUrlInput.value = "";
+      inputFileStore["ad-image-file"] = [];
+      if (imageFileInput) {
+        inputFileSyncLock.add("ad-image-file");
+        setInputFiles(imageFileInput, []);
+        inputFileSyncLock.delete("ad-image-file");
+        imageFileInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
       await refreshAds();
       toast("Ad created");
     } finally {

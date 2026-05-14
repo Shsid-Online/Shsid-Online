@@ -1023,3 +1023,11 @@
     - Comment composer made tighter.
     - Added explicit styling for single-line comment input to fit feed environment.
   - Validation: `npm run check` passed.
+- 2026-05-14: Admin can now drag/drop upload ad images directly.
+  - Frontend (`public/src/app.js`):
+    - Added ad image dropzone + file input (`ad-image-dropzone`, `ad-image-file`, chips).
+    - Wired dropzone/chips with existing file-store helpers.
+    - `create-ad` now uploads dropped image via existing upload pipeline and uses returned media URL as ad `imageUrl`.
+    - Keeps manual image URL input as fallback.
+    - Clears ad image file selection after successful ad create.
+  - Validation: `npm run check` passed.
