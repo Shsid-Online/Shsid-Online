@@ -982,3 +982,13 @@
     - Removed inline anonymous selector for this quick comment row.
     - Submit now posts `anonymous: false` from this composer.
   - Validation: `npm run check` passed.
+- 2026-05-14: Updated comment interaction model + added comment likes.
+  - Comment visibility behavior (`public/src/app.js`):
+    - Comments/replies are now hidden by default.
+    - Pressing the comment action button opens the thread for that post and shows comments + single-line composer.
+    - Submitting a comment no longer auto-closes the thread.
+  - Comment likes (`server/server.js` + `public/src/app.js`):
+    - Added backend endpoint: `POST /api/posts/:postId/comments/:commentId/like` (toggle like).
+    - Comment model now carries `likes` array (new + normalized for existing data).
+    - Added like button per comment/reply with live count and state (`♥︎/♡`).
+  - Validation: `npm run check` passed.

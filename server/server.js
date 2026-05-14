@@ -833,6 +833,7 @@ async function handleApi(req, res, url) {
       authorId: user.id,
       anonymous: user.role === "admin" ? false : Boolean(body.anonymous),
       text: text.slice(0, MAX_TEXT_LEN),
+      likes: [],
       replyTo: replyTo || null,
       createdAt: now(),
       deletedAt: null
@@ -844,6 +845,21 @@ async function handleApi(req, res, url) {
     store.audit(user.id, "comment_created", { postId: post.id, commentId: comment.id });
     store.save();
     return sendJson(res, 201, { comment });
+  }
+
+  const postCommentLikeMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/comments\/([^/]+)\/like$/);
+  if (method === "POST" && postCommentLikeMatch) {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const post = store.data.posts.find((item) => item.id === postCommentLikeMatch[1] && !item.deletedAt);
+    if (!post) return notFound(res);
+    const comment = (post.comments || []).find((item) => item.id === postCommentLikeMatch[2] && !item.deletedAt);
+    if (!comment) return notFound(res);
+    comment.likes ||= [];
+    const wasLiked = comment.likes.includes(user.id);
+    comment.likes = wasLiked ? comment.likes.filter((item) => item !== user.id) : [...comment.likes, user.id];
+    store.save();
+    return sendJson(res, 200, { post, comment });
   }
 
   const postIdOnlyMatch = url.pathname.match(/^\/api\/posts\/([^/]+)$/);

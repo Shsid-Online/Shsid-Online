@@ -499,7 +499,11 @@ function normalizePost(post) {
   copy.hearts = Array.isArray(copy.hearts) ? copy.hearts : [];
   copy.savedBy = Array.isArray(copy.savedBy) ? copy.savedBy : [];
   copy.media = Array.isArray(copy.media) ? copy.media : [];
-  copy.comments = (copy.comments || []).map((comment) => ({ ...comment, createdAt: at(comment.createdAt) }));
+  copy.comments = (copy.comments || []).map((comment) => ({
+    ...comment,
+    createdAt: at(comment.createdAt),
+    likes: Array.isArray(comment.likes) ? comment.likes : []
+  }));
   delete copy.author;
   delete copy.adminAuthor;
   return copy;
@@ -2185,6 +2189,7 @@ function renderPost(post) {
   const mediaIndex = Math.max(0, Math.min((postMediaIndexByPostId[post.id] || 0), Math.max(0, media.length - 1)));
   const activeMedia = media.length ? media[mediaIndex] : null;
   const comments = Array.isArray(post.comments) ? post.comments : [];
+  const commentsOpen = openCommentPostId === post.id;
   const repliesByParentId = new Map();
   for (const comment of comments) {
     const parentId = comment.replyTo || "";
@@ -2195,11 +2200,14 @@ function renderPost(post) {
   const renderComment = (comment, nested = false) => {
     const key = `${post.id}:${comment.id}`;
     const replies = repliesByParentId.get(comment.id) || [];
+    const commentLikes = Array.isArray(comment.likes) ? comment.likes : [];
+    const commentLiked = commentLikes.includes(state.currentUserId);
     return `
       <div class="comment${nested ? " comment-reply" : ""}">
         <p style="margin:0">
           <strong>${escapeHtml(userName(comment.authorId, comment.anonymous))}:</strong> ${escapeHtml(comment.text)}
           ${currentUser().role === "admin" ? `<button class="btn small danger" style="margin-left:8px" data-action="delete-comment" data-id="${post.id}:${comment.id}">Delete</button>` : ""}
+          <button class="btn small" style="margin-left:8px" data-action="like-comment" data-id="${post.id}:${comment.id}">${commentLiked ? "♥︎" : "♡"} ${commentLikes.length}</button>
           <button class="btn small" style="margin-left:8px" data-action="reply-comment" data-id="${post.id}:${comment.id}">Reply</button>
         </p>
         ${openReplyCommentKey === key ? `
@@ -2246,8 +2254,8 @@ function renderPost(post) {
           ${media.length > 1 ? `<div class="media-dots">${media.map((_, idx) => `<span class="media-dot ${idx === mediaIndex ? "active" : ""}"></span>`).join("")}</div>` : ""}
         </div>
       ` : ""}
-      ${rootComments.map((comment) => renderComment(comment)).join("")}
-      ${openCommentPostId === post.id ? `
+      ${commentsOpen ? `
+        ${rootComments.map((comment) => renderComment(comment)).join("")}
         <div class="comment-composer">
           <input id="comment-text-${post.id}" type="text" placeholder="Write a comment..." />
           <div class="row">
@@ -3436,7 +3444,6 @@ async function handleAction(action, id) {
     const text = String(document.querySelector(`#comment-text-${id}`)?.value || "").trim();
     if (!text) return toast("Enter a comment");
     await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous: false }) });
-    openCommentPostId = null;
     await refreshPosts();
     saveState();
     rerenderPostCard(id, { preserveVideoPlayback: true });
@@ -3457,6 +3464,25 @@ async function handleAction(action, id) {
     saveState();
     rerenderPostCard(postId, { preserveVideoPlayback: true });
     return;
+  }
+  if (action === "like-comment") {
+    const [postId, commentId] = String(id || "").split(":");
+    if (!postId || !commentId) return toast("Invalid comment target");
+    const post = state.posts.find((item) => item.id === postId);
+    if (!post) return toast("Post not found");
+    if (!(post.comments || []).some((comment) => comment.id === commentId && !comment.deletedAt)) return toast("Comment not found");
+    try {
+      const result = await apiRequest(`/posts/${postId}/comments/${commentId}/like`, { method: "POST", body: JSON.stringify({}) });
+      const idx = state.posts.findIndex((item) => item.id === postId);
+      if (idx >= 0 && result?.post) state.posts[idx] = normalizePost(result.post);
+      saveState();
+      if (!syncCommentLikeButton(postId, commentId)) rerenderPostCard(postId, { preserveVideoPlayback: true });
+      return;
+    } catch (err) {
+      console.error("like-comment failed", err);
+      toast("Failed to like comment");
+      return;
+    }
   }
   if (action === "report-post") {
     if (!id) return toast("Invalid post");
@@ -4324,6 +4350,19 @@ function syncPostActionButtons(postId) {
   if (likeBtn) likeBtn.textContent = `${liked ? "👍" : "👍🏻"} ${likes.length}`;
   const saveBtn = card.querySelector('[data-action="save-post"]');
   if (saveBtn) saveBtn.textContent = `${saved ? "🔖" : "⌑"} ${saves.length}`;
+  return true;
+}
+
+function syncCommentLikeButton(postId, commentId) {
+  const post = state.posts.find((item) => item.id === postId);
+  if (!post) return false;
+  const comment = (post.comments || []).find((item) => item.id === commentId);
+  if (!comment) return false;
+  const likes = Array.isArray(comment.likes) ? comment.likes : [];
+  const liked = likes.includes(state.currentUserId);
+  const btn = document.querySelector(`[data-action="like-comment"][data-id="${postId}:${commentId}"]`);
+  if (!btn) return false;
+  btn.textContent = `${liked ? "♥︎" : "♡"} ${likes.length}`;
   return true;
 }
 
