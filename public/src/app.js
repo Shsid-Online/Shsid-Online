@@ -342,6 +342,7 @@ function hydrateAuthFromUrl() {
 function nextAuthStepForUser(user) {
   if (user.role === "admin") return "app";
   if (!user.englishName || !user.grade || !user.classNo) return "profile";
+  if (user.status === "rejected") return "video";
   if (!user.verificationVideo) return "video";
   if (user.status !== "verified" && user.role !== "admin") return "waiting";
   return "app";
@@ -1977,7 +1978,7 @@ function conversationsSnapshot() {
 async function refreshVerificationQueue() {
   if (!state.apiToken) return;
   const user = currentUser();
-  if (!user || user.role === "admin" || user.status === "verified") return;
+  if (!user || user.role === "admin" || user.status !== "pending_verification") return;
   try {
     const previous = state.verificationQueue || { pendingTotal: 0, ahead: 0, position: 0 };
     const result = await apiRequest("/me/verification-queue", { cacheTtlMs: API_CACHE_TTL.verificationQueue });
@@ -2002,7 +2003,7 @@ async function refreshVerificationQueue() {
 
 function syncVerificationQueueLoop() {
   const user = currentUser();
-  const needsLoop = Boolean(user && state.authStep === "waiting" && user.role !== "admin" && user.status !== "verified");
+  const needsLoop = Boolean(user && state.authStep === "waiting" && user.role !== "admin" && user.status === "pending_verification");
   if (!needsLoop) {
     stopVerificationQueueLoop();
     return;
@@ -2074,6 +2075,7 @@ function renderAuth() {
         : step === "profile" ? "Student info"
           : step === "video" ? "Video verification"
             : "Waiting for confirmation";
+  const isRejected = currentUser()?.status === "rejected";
   const subtitle = step === "email"
     ? "Returning users can sign in immediately. New accounts get a verification email to any valid address."
     : step === "verify"
@@ -2086,7 +2088,9 @@ function renderAuth() {
             ? "Enter your legal names and class information."
             : step === "video"
               ? "Upload your verification video to submit your account."
-              : "Your account is submitted. Please wait for admin approval.";
+              : (isRejected
+                ? "Your previous verification was rejected. Update and resubmit your verification video."
+                : "Your account is submitted. Please wait for admin approval.");
   const resendSeconds = resendCooldownLeft();
   const queue = state.verificationQueue || { pendingTotal: 0, ahead: 0, position: 0 };
   const body = step === "email" ? `
@@ -2160,9 +2164,16 @@ function renderAuth() {
     </form>
   ` : step === "waiting" ? `
     <div class="grid">
-      <p class="muted">We received your information and video. You will be able to post and message after approval.</p>
-      <p class="muted">Users ahead: <strong>${Math.max(0, Number(queue.ahead || 0))}</strong> · Pending users: <strong>${Math.max(1, Number(queue.pendingTotal || 1))}</strong></p>
-      <div class="row"><button class="btn" type="button" data-auth="logout">Log out</button></div>
+      <p class="muted">${isRejected
+        ? "Your previous verification was rejected. You can upload a new video and submit again."
+        : "We received your information and video. You will be able to post and message after approval."}</p>
+      ${isRejected
+        ? ""
+        : `<p class="muted">Users ahead: <strong>${Math.max(0, Number(queue.ahead || 0))}</strong> · Pending users: <strong>${Math.max(1, Number(queue.pendingTotal || 1))}</strong></p>`}
+      <div class="row">
+        ${isRejected ? '<button class="btn primary" type="button" data-auth="resubmit-verification">Resubmit verification</button>' : ""}
+        <button class="btn" type="button" data-auth="logout">Log out</button>
+      </div>
     </div>
   ` : `
     <form class="grid" id="auth-password-form">
@@ -3273,7 +3284,7 @@ function bindAuth() {
     }
   });
 
-  document.querySelectorAll('[data-auth="back"], [data-auth="resend-code"], [data-auth="logout"]').forEach((button) => {
+  document.querySelectorAll('[data-auth="back"], [data-auth="resend-code"], [data-auth="logout"], [data-auth="resubmit-verification"]').forEach((button) => {
     button.addEventListener("click", async () => {
       const action = button.dataset.auth;
       try {
@@ -3309,6 +3320,18 @@ function bindAuth() {
             // ignore
           }
           resetClientSessionState();
+          saveState();
+          render();
+        }
+        if (action === "resubmit-verification") {
+          const user = currentUser() || {};
+          state.pendingEnglishName = state.pendingEnglishName || String(user.englishName || "").trim();
+          state.pendingChineseName = state.pendingChineseName || String(user.chineseName || "").trim();
+          state.pendingGrade = Number(state.pendingGrade || user.grade || 10);
+          state.pendingClassNo = Number(state.pendingClassNo || user.classNo || 1);
+          state.pendingVerificationWords = generateVerificationWords(10);
+          state.pendingVideoName = "";
+          state.authStep = "video";
           saveState();
           render();
         }

@@ -1222,3 +1222,11 @@
   - Frontend video-submit now also uses email-local fallback for `englishName` before submit.
   - Worker redeployed after this patch.
   - Live worker version: `e92d45a8-d458-4549-b46e-01e0d003392e`.
+- 2026-05-16: Fixed rejected-account verification dead-end in auth flow.
+  - Root bug: users with `status="rejected"` were routed to `waiting` and could not resubmit verification video.
+  - Frontend (`public/src/app.js`):
+    - `nextAuthStepForUser(...)` now routes rejected users to `video` instead of `waiting`.
+    - Verification queue refresh/poll now runs only for `pending_verification` users.
+    - Waiting screen now shows rejected-specific messaging and a `Resubmit verification` action.
+    - Added `data-auth="resubmit-verification"` handler to prefill profile context and return to the video step.
+  - Validation: `npm run check` passed.
