@@ -788,7 +788,7 @@ async function refreshReports() {
     state.reports = (result.reports || []).map((report) => ({
       ...report,
       reporterId: report.reporterId || report.reporter_id,
-      type: report.targetType || report.type,
+      type: report.targetType || report.target_type || report.type,
       targetId: report.targetId || report.target_id,
       adminNotes: report.adminNotes || report.admin_notes || "",
       createdAt: report.createdAt || report.created_at || "",

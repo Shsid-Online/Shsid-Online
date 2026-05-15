@@ -1153,3 +1153,13 @@
   - Updated moderator UI actions in report queue (`public/src/app.js`): `Warn` and `Request Delete` buttons for moderator users.
   - Admin queue now shows moderator notes so deletion requests are visible before admin handling.
   - Validation: `npm run check` passed.
+- 2026-05-15: Moderator system bug check pass (warnings + deletion requests).
+  - Live e2e validation with `admin-2@shsid.online`:
+    - Created test posts and post reports.
+    - Verified `request_delete` keeps report pending and appends `[Deletion Request] ...` into report notes.
+    - Verified `warn` marks report `actioned`, sets `resolved_at`, and appends `[Moderator Warning] ...` note.
+    - Verified `/api/admin/reports` returns updated rows with statuses/notes.
+  - Bug found/fixed in frontend report mapping (`public/src/app.js`):
+    - Worker responses use snake_case (`target_type`), but client only mapped camelCase (`targetType`).
+    - Fix: `type` now maps `targetType || target_type || type` so moderation table labels and target resolution are correct.
+  - Validation: `npm run check` passed.
