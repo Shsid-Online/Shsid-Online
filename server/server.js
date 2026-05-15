@@ -833,10 +833,16 @@ async function handleApi(req, res, url) {
       ? providedClassNo
       : (Number.isInteger(Number(user.classNo)) && Number(user.classNo) >= 1 && Number(user.classNo) <= 13 ? Number(user.classNo) : 1);
     if (!englishName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
+      store.audit(user.id, "profile_complete_failed", { reason: "invalid_profile_fields" });
+      store.save();
       return sendJson(res, 400, { error: "Name, grade 1-12, and class 1-13 are required" }, req);
     }
     const duplicate = store.data.users.find((item) => item.id !== user.id && item.englishName === englishName && item.chineseName === chineseName);
-    if (duplicate) return sendJson(res, 409, { error: "A student account with this real name already exists" }, req);
+    if (duplicate) {
+      store.audit(user.id, "profile_complete_failed", { reason: "duplicate_real_name", duplicateUserId: duplicate.id });
+      store.save();
+      return sendJson(res, 409, { error: "A student account with this real name already exists" }, req);
+    }
     Object.assign(user, {
       englishName,
       chineseName,

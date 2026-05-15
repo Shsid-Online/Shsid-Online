@@ -113,6 +113,7 @@ async function handleApi(request, env, url, route) {
     const upload = await env.R2_BUCKET.createMultipartUpload(key, {
       httpMetadata: { contentType }
     });
+    await audit(env, authUser.id, "verification_upload_init", { fileName, contentType }, request);
     return json({ key, uploadId: upload.uploadId, chunkSize: VERIFICATION_CHUNK_SIZE }, 200);
   }
 
@@ -209,9 +210,11 @@ async function handleApi(request, env, url, route) {
         etag: String(part.etag)
       })));
       const mediaUrl = `${url.origin}/api/media/${encodeURIComponent(key)}`;
+      await audit(env, authUser.id, "verification_upload_completed", { key }, request);
       return json({ ok: true, key, mediaUrl }, 200);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      await audit(env, authUser.id, "verification_upload_complete_failed", { key, detail: String(message || "").slice(0, 300) }, request);
       return json({ error: "Complete upload failed", detail: message }, 502);
     }
   }
@@ -521,13 +524,17 @@ async function handleApi(request, env, url, route) {
       ? providedClassNo
       : (Number.isInteger(existingClassNo) && existingClassNo >= 1 && existingClassNo <= 13 ? existingClassNo : 1);
     if (!englishName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
+      await audit(env, authUser.id, "profile_complete_failed", { reason: "invalid_profile_fields" }, request);
       return json({ error: "Name, grade 1-12, and class 1-13 are required" }, 400);
     }
 
     const duplicate = await env.DB.prepare("select id from users where id != ? and english_name = ? and chinese_name = ? limit 1")
       .bind(authUser.id, englishName, chineseName)
       .first();
-    if (duplicate) return json({ error: "A student account with this real name already exists" }, 409);
+    if (duplicate) {
+      await audit(env, authUser.id, "profile_complete_failed", { reason: "duplicate_real_name", duplicateUserId: duplicate.id }, request);
+      return json({ error: "A student account with this real name already exists" }, 409);
+    }
 
     const status = authUser.role === "admin" ? "verified" : "pending_verification";
     const profilePhoto = String(body.profilePhoto || "").trim().slice(0, 2000);

@@ -1247,3 +1247,23 @@
     - Live DB check after deploy:
       - `pending_all = 4` (incomplete signup rows still exist in DB)
       - `pending_reviewable = 0` (none should appear in admin verification queue now)
+- 2026-05-16: Deep verification-dropoff investigation (register vs video/profile submit).
+  - Live data evidence:
+    - Audit counts: `auth_register=22`, `profile_completed=8`.
+    - Student rows with full submitted verification payload (name + grade/class + video): `4`.
+    - Many student accounts had `password_hash` set but no `profile_completed`, and DB fields stayed empty (`english_name`, `grade/class_no`, `verification_video`).
+  - Root cause clarified:
+    - Historically, users were marked `pending_verification` before they actually submitted profile+video, so incomplete registrations appeared in verification workflows and were sometimes rejected manually.
+    - This made it look like "verification submission failed" even when users never reached successful profile completion.
+  - Guardrails shipped:
+    - Worker now audits verification upload and completion stages:
+      - `verification_upload_init`
+      - `verification_upload_completed`
+      - `verification_upload_complete_failed`
+    - Worker and Node now audit `profile_complete_failed` with reason on validation/duplicate-name failures.
+    - Existing review filters remain in place so admin verification queue only includes real submitted packets.
+    - Admin verify/reject endpoint guard remains: incomplete submissions return `Verification submission is incomplete`.
+  - Deployment:
+    - Live worker version: `0715e488-452e-437e-b486-3ef10c288bba`.
+  - Note:
+    - Attempted to introduce a new status (`registration_incomplete`) but live DB has a status CHECK constraint; change was reverted to avoid auth-flow breakage.
