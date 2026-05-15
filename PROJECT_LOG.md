@@ -1189,3 +1189,12 @@
     - Live e2e checks passed: request-delete (including duplicate `409`), warning action transition to `actioned`, handled-report guard, self-user-report block, and invalid-comment-target block.
   - Cleanup:
     - Removed all temporary live bug-test artifacts from D1 (test user, test posts, test reports, related notifications and audit entries).
+- 2026-05-15: Fixed user verification-video upload failure on auth step.
+  - Updated auth video submit flow in `public/src/app.js`:
+    - Uses `getSelectedInputFiles("reg-video")` so uploads still work when the browser cannot programmatically repopulate `input.files`.
+    - Replaced strict MIME-only check with `isLikelyVideoFile(...)` to allow valid videos with empty MIME metadata by extension fallback (`mp4/mov/m4v/webm/avi/mkv`).
+    - Improved error fallback message to `Verification submission failed. Please try again.` while keeping upload errors surfaced.
+  - Hardened file-input utility in `public/src/app.js`:
+    - `setInputFiles(...)` now safely handles missing `DataTransfer` support instead of throwing.
+    - Added `getSelectedInputFiles(...)` helper to prefer stored selections when native input file lists are unavailable.
+  - Validation: `npm run check` passed.

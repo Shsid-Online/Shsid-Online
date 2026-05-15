@@ -3404,12 +3404,16 @@ function bindAuth() {
     event.preventDefault();
     try {
       setAuthInFlight(true);
-      const videoInput = document.querySelector("#reg-video");
-      const videoFile = videoInput?.files?.[0];
+      const videoFile = getSelectedInputFiles("reg-video")[0];
       if (!videoFile) return toast("Upload a verification video");
-      if (!(videoFile.type || "").startsWith("video/")) return toast("Please upload a valid video file.");
+      if (!isLikelyVideoFile(videoFile)) return toast("Please upload a valid video file.");
       state.pendingVideoName = videoFile.name;
-      const uploadedVideoUrl = await uploadVerificationVideoMultipart(videoFile);
+      let uploadedVideoUrl = "";
+      try {
+        uploadedVideoUrl = await uploadVerificationVideoMultipart(videoFile);
+      } catch (error) {
+        throw new Error(error?.message || "Video upload failed. Please try again.");
+      }
       const result = await apiRequest("/auth/complete-profile", {
         method: "POST",
         body: JSON.stringify({
@@ -3427,7 +3431,7 @@ function bindAuth() {
       render();
       toast("Submitted for admin review");
     } catch (error) {
-      toast(error.message || "Video upload failed. Please try again.");
+      toast(error.message || "Verification submission failed. Please try again.");
     } finally {
       setAuthInFlight(false);
     }
@@ -4697,6 +4701,22 @@ function fileFingerprint(file) {
   return `${file.name}::${file.size}::${file.lastModified}::${file.type}`;
 }
 
+const VIDEO_FILE_EXTENSIONS = new Set(["mp4", "mov", "m4v", "webm", "avi", "mkv"]);
+
+function hasLikelyVideoExtension(fileName = "") {
+  const normalized = String(fileName || "").trim().toLowerCase();
+  if (!normalized.includes(".")) return false;
+  const extension = normalized.split(".").pop() || "";
+  return VIDEO_FILE_EXTENSIONS.has(extension);
+}
+
+function isLikelyVideoFile(file) {
+  const type = String(file?.type || "").trim().toLowerCase();
+  if (type.startsWith("video/")) return true;
+  if (type) return false;
+  return hasLikelyVideoExtension(file?.name || "");
+}
+
 function mergeUniqueFiles(existingFiles = [], incomingFiles = []) {
   const seen = new Set(existingFiles.map(fileFingerprint));
   const merged = [...existingFiles];
@@ -4710,9 +4730,28 @@ function mergeUniqueFiles(existingFiles = [], incomingFiles = []) {
 }
 
 function setInputFiles(input, files = []) {
-  const dt = new DataTransfer();
-  files.forEach((file) => dt.items.add(file));
-  input.files = dt.files;
+  if (!input) return false;
+  if (typeof DataTransfer !== "function") {
+    if (!files.length) input.value = "";
+    return false;
+  }
+  try {
+    const dt = new DataTransfer();
+    files.forEach((file) => dt.items.add(file));
+    input.files = dt.files;
+    return true;
+  } catch {
+    if (!files.length) input.value = "";
+    return false;
+  }
+}
+
+function getSelectedInputFiles(inputId) {
+  const input = document.querySelector(`#${inputId}`);
+  if (!input) return [];
+  const nativeFiles = [...(input.files || [])];
+  const storedFiles = inputFileStore[inputId] || [];
+  return storedFiles.length ? storedFiles : nativeFiles;
 }
 
 function appendFilesToInput(inputId, files = [], multiple = true) {
