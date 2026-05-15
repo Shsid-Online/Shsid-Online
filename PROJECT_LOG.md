@@ -1214,3 +1214,11 @@
   - Live worker: `shsid-online-api`.
   - Current Version ID: `35164613-76e3-4f9a-b7fa-1b78f72fe9bc`.
   - Trigger routes confirmed: `www.shsid.online/api/*` and `shsid.online/api/*`.
+- 2026-05-15: Hardened `/api/auth/complete-profile` against lost draft state causing 400.
+  - Worker + Node server now derive fallback values when profile payload is incomplete:
+    - `englishName`: request value -> existing user value -> email-local fallback.
+    - `grade/classNo`: request value -> existing user value -> defaults (`10`/`1`).
+    - `chineseName` remains optional and falls back to existing value.
+  - Frontend video-submit now also uses email-local fallback for `englishName` before submit.
+  - Worker redeployed after this patch.
+  - Live worker version: `e92d45a8-d458-4549-b46e-01e0d003392e`.

@@ -482,10 +482,23 @@ async function handleApi(request, env, url, route) {
 
   if (method === "POST" && route === "/auth/complete-profile") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
-    const englishName = String(body.englishName || "").trim().slice(0, MAX_NAME_LEN);
-    const chineseName = String(body.chineseName || "").trim().slice(0, MAX_NAME_LEN);
-    const grade = Number(body.grade);
-    const classNo = Number(body.classNo);
+    const emailLocal = String(authUser.email || "").split("@")[0] || "";
+    const fallbackEnglishName = emailLocal ? emailLocal.replace(/[._-]+/g, " ").trim().slice(0, MAX_NAME_LEN) : "";
+    const englishName = String(body.englishName || "").trim().slice(0, MAX_NAME_LEN)
+      || String(authUser.english_name || "").trim().slice(0, MAX_NAME_LEN)
+      || fallbackEnglishName;
+    const chineseName = String(body.chineseName || "").trim().slice(0, MAX_NAME_LEN)
+      || String(authUser.chinese_name || "").trim().slice(0, MAX_NAME_LEN);
+    const providedGrade = Number(body.grade);
+    const providedClassNo = Number(body.classNo);
+    const existingGrade = Number(authUser.grade);
+    const existingClassNo = Number(authUser.class_no);
+    const grade = Number.isInteger(providedGrade) && providedGrade >= 1 && providedGrade <= 12
+      ? providedGrade
+      : (Number.isInteger(existingGrade) && existingGrade >= 1 && existingGrade <= 12 ? existingGrade : 10);
+    const classNo = Number.isInteger(providedClassNo) && providedClassNo >= 1 && providedClassNo <= 13
+      ? providedClassNo
+      : (Number.isInteger(existingClassNo) && existingClassNo >= 1 && existingClassNo <= 13 ? existingClassNo : 1);
     if (!englishName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
       return json({ error: "Name, grade 1-12, and class 1-13 are required" }, 400);
     }

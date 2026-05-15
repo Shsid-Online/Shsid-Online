@@ -3415,7 +3415,9 @@ function bindAuth() {
       if (!videoFile) return toast("Upload a verification video");
       if (!isLikelyVideoFile(videoFile)) return toast("Please upload a valid video file.");
       const user = currentUser() || {};
-      const englishName = String(state.pendingEnglishName || user.englishName || "").trim();
+      const emailLocal = String(state.pendingEmail || user.email || "").split("@")[0] || "";
+      const fallbackEnglishName = emailLocal ? emailLocal.replace(/[._-]+/g, " ").trim() : "";
+      const englishName = String(state.pendingEnglishName || user.englishName || fallbackEnglishName || "").trim();
       const chineseName = String(state.pendingChineseName || user.chineseName || "").trim();
       const grade = Number(state.pendingGrade || user.grade);
       const classNo = Number(state.pendingClassNo || user.classNo);

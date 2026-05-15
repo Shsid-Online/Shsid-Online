@@ -805,10 +805,21 @@ async function handleApi(req, res, url) {
   if (method === "POST" && url.pathname === "/api/auth/complete-profile") {
     const user = requireAuth(req, res);
     if (!user) return;
-    const englishName = String(body.englishName || "").trim().slice(0, MAX_NAME_LEN);
-    const chineseName = String(body.chineseName || "").trim().slice(0, MAX_NAME_LEN);
-    const grade = Number(body.grade);
-    const classNo = Number(body.classNo);
+    const emailLocal = String(user.email || "").split("@")[0] || "";
+    const fallbackEnglishName = emailLocal ? emailLocal.replace(/[._-]+/g, " ").trim().slice(0, MAX_NAME_LEN) : "";
+    const englishName = String(body.englishName || "").trim().slice(0, MAX_NAME_LEN)
+      || String(user.englishName || "").trim().slice(0, MAX_NAME_LEN)
+      || fallbackEnglishName;
+    const chineseName = String(body.chineseName || "").trim().slice(0, MAX_NAME_LEN)
+      || String(user.chineseName || "").trim().slice(0, MAX_NAME_LEN);
+    const providedGrade = Number(body.grade);
+    const providedClassNo = Number(body.classNo);
+    const grade = Number.isInteger(providedGrade) && providedGrade >= 1 && providedGrade <= 12
+      ? providedGrade
+      : (Number.isInteger(Number(user.grade)) && Number(user.grade) >= 1 && Number(user.grade) <= 12 ? Number(user.grade) : 10);
+    const classNo = Number.isInteger(providedClassNo) && providedClassNo >= 1 && providedClassNo <= 13
+      ? providedClassNo
+      : (Number.isInteger(Number(user.classNo)) && Number(user.classNo) >= 1 && Number(user.classNo) <= 13 ? Number(user.classNo) : 1);
     if (!englishName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
       return sendJson(res, 400, { error: "Name, grade 1-12, and class 1-13 are required" }, req);
     }
