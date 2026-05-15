@@ -1163,3 +1163,4 @@
     - Worker responses use snake_case (`target_type`), but client only mapped camelCase (`targetType`).
     - Fix: `type` now maps `targetType || target_type || type` so moderation table labels and target resolution are correct.
   - Validation: `npm run check` passed.
+  - Cleanup: removed temporary live test artifacts after validation (2 test reports, 2 test posts, related moderator test notifications, related moderator test audit rows) from `shsid-social-db`.
