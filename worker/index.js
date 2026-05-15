@@ -47,6 +47,7 @@ const LOGIN_FAIL_MAX = 6;
 const LOGIN_FAIL_LOCK_SECONDS = 20 * 60;
 const authRateMap = new Map();
 let authRateLastSweepAt = 0;
+const DEFAULT_REPORT_MODERATOR_EMAILS = ["admin-2@shsid.online"];
 
 export default {
   async fetch(request, env) {
@@ -1301,8 +1302,10 @@ async function handleApi(request, env, url, route) {
   }
 
   if (method === "GET" && route === "/admin/reports") {
-    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
-    const rows = await env.DB.prepare("select * from reports order by created_at desc").all();
+    if (!authUser || !canViewFlaggedReports(authUser, env)) return json({ error: "Moderator access required" }, 403);
+    const rows = authUser.role === "admin"
+      ? await env.DB.prepare("select * from reports order by created_at desc").all()
+      : await env.DB.prepare("select * from reports where target_type='post' order by created_at desc").all();
     return json({ reports: rows.results || [], pagination: { limit: 100, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
   }
 
@@ -1593,12 +1596,28 @@ async function getUserById(env, idValue) {
   return env.DB.prepare("select * from users where id = ? limit 1").bind(idValue).first();
 }
 
+function moderatorEmails(env) {
+  const raw = String(env.MODERATOR_EMAILS || "").trim().toLowerCase();
+  const list = raw
+    ? raw.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean)
+    : DEFAULT_REPORT_MODERATOR_EMAILS;
+  return new Set(list);
+}
+
+function canViewFlaggedReports(user, env) {
+  if (!user) return false;
+  if (user.role === "admin") return true;
+  const email = String(user.email || "").trim().toLowerCase();
+  return moderatorEmails(env).has(email);
+}
+
 async function userView(env, target, viewer) {
   if (!target) return null;
   const safe = {
     id: target.id,
     email: target.email,
     role: target.role,
+    canModerateReports: canViewFlaggedReports(target, env),
     status: target.status,
     englishName: target.english_name,
     chineseName: target.chinese_name,

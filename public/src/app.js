@@ -371,6 +371,11 @@ function currentUser() {
   return state.users.find((user) => user.id === state.currentUserId);
 }
 
+function canModerateReports(user = currentUser()) {
+  if (!user) return false;
+  return user.role === "admin" || Boolean(user.canModerateReports);
+}
+
 function clearAuthDraftState() {
   state.pendingEmail = "";
   state.pendingCode = "";
@@ -777,7 +782,7 @@ async function refreshConversations() {
 async function refreshReports() {
   if (!state.apiToken) return;
   const user = currentUser();
-  if (!user || user.role !== "admin") return;
+  if (!user || !canModerateReports(user)) return;
   try {
     const result = await apiRequest("/admin/reports", { cacheTtlMs: API_CACHE_TTL.admin });
     state.reports = (result.reports || []).map((report) => ({
@@ -894,6 +899,7 @@ function mergeApiUsers(apiUsers = []) {
       email: apiUser.email || "",
       password: "",
       role: apiUser.role,
+      canModerateReports: Boolean(apiUser.canModerateReports),
       englishName: apiUser.englishName || "New Student",
       chineseName: apiUser.chineseName || "Pending",
       grade: apiUser.grade || 12,
@@ -937,6 +943,8 @@ async function bootstrapSession() {
       await refreshAdminVerifications();
       await refreshReports();
       await refreshAuditLogs();
+    } else if (canModerateReports(result.user)) {
+      await refreshReports();
     }
     state.authStep = nextAuthStepForUser(result.user);
     saveState();
@@ -1610,7 +1618,7 @@ function doRender() {
   }
   stopVerificationQueueLoop();
 
-  const adminVisible = user.role === "admin";
+  const adminVisible = canModerateReports(user);
   const visibleNav = navItems.filter((item) => item[0] !== "admin" || adminVisible);
   const profileIconHtml = user.profilePhoto
     ? `<img src="${escapeHtml(user.profilePhoto)}" alt="${escapeHtml(user.englishName || "Profile")}" class="nav-profile-icon" loading="lazy">`
@@ -1625,7 +1633,7 @@ function doRender() {
         <button class="session session-card-btn" data-action="open-settings">
           <span class="session-name">${escapeHtml(user.englishName)}</span>
           <span class="session-info">${escapeHtml(user.chineseName)} · G${user.grade} C${user.classNo}</span>
-          <span class="session-status">${user.role === "admin" ? "Admin" : user.status}</span>
+          <span class="session-status">${user.role === "admin" ? "Admin" : (canModerateReports(user) ? "Moderator" : user.status)}</span>
         </button>
         <button class="btn small ghost" data-action="logout" style="margin-top:10px;color:#fff;border-color:rgba(255,255,255,.25)">Logout</button>
       </aside>
@@ -2843,7 +2851,9 @@ function renderSettings() {
 }
 
 function renderAdmin() {
-  if (currentUser().role !== "admin") return page("Unavailable", "Admin access required.", "");
+  const me = currentUser();
+  if (!canModerateReports(me)) return page("Unavailable", "Moderator access required.", "");
+  const isAdmin = me.role === "admin";
   const pending = state.adminVerifications || [];
   const pendingReports = (state.reports || []).filter((report) => (report.status || "pending") === "pending");
   const conversations = (state.conversations || []).slice().sort((a, b) => at(b.createdAt) - at(a.createdAt));
@@ -2853,16 +2863,16 @@ function renderAdmin() {
     return true;
   });
   const activeMonitored = filteredConversations.find((conversation) => conversation.id === adminActiveConversationId) || filteredConversations[0];
-  const adminTabs = `
+  const adminTabs = isAdmin ? `
     <div class="row admin-subtabs">
       <button class="btn ${adminTab === "overview" ? "primary" : ""}" data-action="admin-tab" data-id="overview">Overview</button>
       <button class="btn ${adminTab === "chat" ? "primary" : ""}" data-action="admin-tab" data-id="chat">Chat Monitor</button>
     </div>
-  `;
-  return page("Admin", "Manage safety, verification, and moderation tools.", `
+  ` : "";
+  return page(isAdmin ? "Admin" : "Moderation", isAdmin ? "Manage safety, verification, and moderation tools." : "View and track flagged posts.", `
     <section class="admin-grid">
       ${adminTabs}
-      ${adminTab === "chat" ? `
+      ${isAdmin && adminTab === "chat" ? `
       <div class="panel admin-panel">
         <h2>Chat Monitor</h2>
         <div class="row" style="margin-bottom:12px">
@@ -2899,10 +2909,11 @@ function renderAdmin() {
       </div>
       ` : `
       <div class="grid three">
-        <div class="panel"><span class="muted">Pending verification</span><h2>${pending.length}</h2></div>
+        <div class="panel"><span class="muted">${isAdmin ? "Pending verification" : "Flagged posts"}</span><h2>${isAdmin ? pending.length : pendingReports.length}</h2></div>
         <div class="panel"><span class="muted">Open reports</span><h2>${pendingReports.length}</h2></div>
-        <div class="panel"><span class="muted">Audit events</span><h2>${state.audit.length}</h2></div>
+        <div class="panel"><span class="muted">${isAdmin ? "Audit events" : "Handled reports"}</span><h2>${isAdmin ? state.audit.length : Math.max(0, (state.reports || []).length - pendingReports.length)}</h2></div>
       </div>
+      ${isAdmin ? `
       <div class="panel admin-panel">
         <h2>Student Verification Queue</h2>
         <div class="table-wrap">
@@ -2911,8 +2922,9 @@ function renderAdmin() {
           </tbody></table>
         </div>
       </div>
+      ` : ""}
       <div class="panel admin-panel">
-        <h2>Report Queue</h2>
+        <h2>${isAdmin ? "Report Queue" : "Flagged Post Reports"}</h2>
         <div class="table-wrap">
           <table class="table"><thead><tr><th>Reporter</th><th>Reported User</th><th>Reason</th><th>Time</th><th>Status</th><th>Actions</th></tr></thead><tbody>
             ${pendingReports.map((report) => {
@@ -2925,12 +2937,13 @@ function renderAdmin() {
                 <td>${escapeHtml(report.reason || "-")}</td>
                 <td><span class="muted">${new Date(report.createdAt).toLocaleDateString()}</span><br><span class="muted">${timeAgo(report.createdAt)}</span></td>
                 <td><span class="status ${report.status === "resolved" ? "green" : "gold"}">${escapeHtml(report.status)}</span></td>
-                <td><div class="admin-actions"><button class="btn small primary" data-action="handle-report" data-id="${report.id}">Handle</button></div></td>
+                <td>${isAdmin ? `<div class="admin-actions"><button class="btn small primary" data-action="handle-report" data-id="${report.id}">Handle</button></div>` : `<span class="muted">View only</span>`}</td>
               </tr>`;
-            }).join("") || `<tr><td colspan="6" class="muted">No pending reports.</td></tr>`}
+            }).join("") || `<tr><td colspan="6" class="muted">${isAdmin ? "No pending reports." : "No flagged post reports."}</td></tr>`}
           </tbody></table>
         </div>
       </div>
+      ${isAdmin ? `
       <div class="panel admin-panel">
         <h2>Audit Trail</h2>
         <div class="table-wrap">
@@ -2939,6 +2952,7 @@ function renderAdmin() {
           </tbody></table>
         </div>
       </div>
+      ` : ""}
       `}
     </section>
   `);
@@ -3063,9 +3077,9 @@ async function refreshDataForView(targetView, seq) {
     }
     if (targetView === "suggestions") await refreshSuggestions();
     if (targetView === "admin") {
-      await refreshAdminVerifications();
+      if (currentUser()?.role === "admin") await refreshAdminVerifications();
       await refreshReports();
-      await refreshAuditLogs();
+      if (currentUser()?.role === "admin") await refreshAuditLogs();
     }
     if (targetView === "messages") await refreshConversations();
     if (targetView === "feed") {
@@ -3672,7 +3686,7 @@ async function handleAction(action, id) {
     if (!cleanReason) return;
     await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "post", targetId: id, reason: cleanReason }) });
     toast("Report submitted");
-    if (user.role === "admin") await refreshReports();
+    if (canModerateReports(user)) await refreshReports();
   }
   if (action === "share-post") {
     if (!id) return toast("Invalid post");
@@ -3772,13 +3786,13 @@ async function handleAction(action, id) {
     state.selectedProfileId = null;
     const nextView = ["students", "messages", "admin", "feed"].includes(profileBackView) ? profileBackView : "students";
     view = nextView === "profile" ? "students" : nextView;
-    if (view === "admin" && user.role !== "admin") view = "students";
+    if (view === "admin" && !canModerateReports(user)) view = "students";
     if (view === "students") await refreshStudents();
     if (view === "messages") await refreshConversations();
     if (view === "admin") {
-      await refreshAdminVerifications();
+      if (user.role === "admin") await refreshAdminVerifications();
       await refreshReports();
-      await refreshAuditLogs();
+      if (user.role === "admin") await refreshAuditLogs();
     }
     if (view === "feed") await refreshPosts();
   }
@@ -4058,7 +4072,7 @@ async function handleAction(action, id) {
     if (!cleanReason) return;
     await apiRequest("/reports", { method: "POST", body: JSON.stringify({ targetType: "conversation", targetId: id, reason: cleanReason }) });
     toast("Report submitted");
-    if (user.role === "admin") await refreshReports();
+    if (canModerateReports(user)) await refreshReports();
   }
   if (action === "verify-user") {
     if (currentUser()?.role !== "admin") return toast("Admin access required");

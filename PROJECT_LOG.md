@@ -1129,3 +1129,19 @@
   - Worker implementation uses KV (`env.SESSIONS`) keyed by SHA-256 of `email|ip` for login-failure records, so lockout survives process restarts.
   - Node implementation mirrors the same behavior with in-memory maps for local runtime parity.
   - Validation: `npm run check` passed (`public/src/app.js`, `server/server.js`, `server/store.js`, `worker/index.js`).
+- 2026-05-15: Added `Admin-2` moderator account + flagged-post monitor access.
+  - Created account identity: `admin-2@shsid.online` with role `student`, status `verified`, display name `Admin-2`.
+  - Added report-moderator permission model (`worker/index.js`, `server/server.js`):
+    - New helper `canViewFlaggedReports(...)` grants access for admins and configured moderator emails.
+    - Default moderator email list includes `admin-2@shsid.online` (also configurable via `MODERATOR_EMAILS`).
+    - User API now exposes `canModerateReports` in user payload.
+  - Restricted moderator scope:
+    - `/api/admin/reports` now allows moderator access, but moderator receives post reports only (`target_type='post'`).
+    - Full admin-only routes remain admin-only (report handling actions, audit logs, verification queue, bans, etc.).
+  - Frontend moderation wiring (`public/src/app.js`):
+    - Added `canModerateReports(...)` client helper.
+    - Moderator sees Admin/Moderation nav entry and can open a view-only flagged post report queue.
+    - Only admins can handle reports, view chat monitor, verification queue, and audit trail.
+  - Local data updated: `data/dev-db.json` now contains/updates `admin-2@shsid.online` with the requested password.
+  - Live D1 updated via remote SQL (`shsid-social-db`) to upsert `admin-2@shsid.online`.
+  - Validation: `npm run check` passed.

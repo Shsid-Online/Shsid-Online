@@ -1,5 +1,20 @@
 {
-  "users": [],
+  "users": [
+    {
+      "id": "usr_12996ce2-2ca5-45c5-95d3-0b7b5151fb45",
+      "email": "admin-2@shsid.online",
+      "passwordHash": "a4fd6f3a2e5bac4e5fe2f9e587923178:9525a7de1404fef132270ea43d283ab7753a1ca0be24f86bd52cda31c64e6ad01f9c530b3665c49e33f2e0145609b68631ec04af837d7969d314df79163970f7",
+      "role": "student",
+      "status": "verified",
+      "englishName": "Admin-2",
+      "chineseName": "Admin-2",
+      "grade": 12,
+      "classNo": 1,
+      "bio": "Moderator account for flagged posts review",
+      "createdAt": "2026-05-15T12:01:16.774Z",
+      "updatedAt": "2026-05-15T12:01:16.779Z"
+    }
+  ],
   "posts": [],
   "sessions": [],
   "reports": [],

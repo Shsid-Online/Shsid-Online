@@ -36,6 +36,7 @@ store.load();
 
 const RATE_LIMIT = { windowMs: 15 * 60 * 1000, maxAuthRequests: 20, maxOtpAttempts: 5 };
 const rateLimitMap = new Map();
+const DEFAULT_REPORT_MODERATOR_EMAILS = ["admin-2@shsid.online"];
 const authStartEmailRateMap = new Map();
 const loginFailureMap = new Map();
 const AUTH_START_EMAIL_WINDOW_MS = 60 * 1000;
@@ -584,9 +585,25 @@ function requireAdmin(req, res) {
   return user;
 }
 
+function moderatorEmails() {
+  const raw = String(process.env.MODERATOR_EMAILS || "").trim().toLowerCase();
+  const list = raw
+    ? raw.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean)
+    : DEFAULT_REPORT_MODERATOR_EMAILS;
+  return new Set(list);
+}
+
+function canViewFlaggedReports(user) {
+  if (!user) return false;
+  if (user.role === "admin") return true;
+  const email = String(user.email || "").trim().toLowerCase();
+  return moderatorEmails().has(email);
+}
+
 function userView(target, viewer) {
   const safe = publicUser(target);
   if (!safe) return null;
+  safe.canModerateReports = canViewFlaggedReports(target);
   const canSeePrivate = viewer?.role === "admin" || viewer?.id === target.id;
   if (!canSeePrivate) {
     delete safe.email;
@@ -1488,9 +1505,13 @@ async function handleApi(req, res, url) {
   }
 
   if (method === "GET" && url.pathname === "/api/admin/reports") {
-    const admin = requireAdmin(req, res);
-    if (!admin) return;
-    const { items, pagination } = paginate(store.data.reports, url, { limit: 50, maxLimit: 100 });
+    const user = requireAuth(req, res);
+    if (!user) return;
+    if (!canViewFlaggedReports(user)) return sendJson(res, 403, { error: "Moderator access required" }, req);
+    const reportSource = user.role === "admin"
+      ? store.data.reports
+      : store.data.reports.filter((item) => item.targetType === "post");
+    const { items, pagination } = paginate(reportSource, url, { limit: 50, maxLimit: 100 });
     return sendJson(res, 200, { reports: items, pagination });
   }
 
