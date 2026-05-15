@@ -1209,3 +1209,8 @@
     - Worker: removed mandatory Chinese-name check in `PATCH /me/profile` and `POST /auth/complete-profile`.
     - Node server: removed mandatory Chinese-name check in `POST /api/auth/complete-profile`.
   - Validation: `npm run check` passed.
+- 2026-05-15: Deployed API Worker after verification-submit 400 fixes.
+  - Deployment command: `npx wrangler deploy worker/index.js` (Node 22 environment).
+  - Live worker: `shsid-online-api`.
+  - Current Version ID: `35164613-76e3-4f9a-b7fa-1b78f72fe9bc`.
+  - Trigger routes confirmed: `www.shsid.online/api/*` and `shsid.online/api/*`.
