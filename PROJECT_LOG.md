@@ -1164,3 +1164,28 @@
     - Fix: `type` now maps `targetType || target_type || type` so moderation table labels and target resolution are correct.
   - Validation: `npm run check` passed.
   - Cleanup: removed temporary live test artifacts after validation (2 test reports, 2 test posts, related moderator test notifications, related moderator test audit rows) from `shsid-social-db`.
+- 2026-05-15: "10 more bugs" sweep for moderator/report system (Worker + Node + client).
+  - Fixed report-target validation parity in Worker (`worker/index.js`):
+    - Added missing `comment` target existence check in `POST /reports`.
+    - Added missing `user` target existence + self-report block in `POST /reports`.
+  - Fixed moderator action safety/consistency (`worker/index.js`, `server/server.js`):
+    - Added legacy report key compatibility (`targetType/target_type`, `targetId/target_id`) in moderation path.
+    - Blocked moderation on deleted/missing target posts.
+    - Blocked moderator self-moderation via report actions.
+    - Prevented duplicate deletion-request spam (same note now returns `409`).
+  - Fixed admin report update behavior parity (`worker/index.js`, `server/server.js`):
+    - `adminNotes` now supports explicit clear/update (no forced fallback).
+    - `resolvedAt`/`resolved_at` now stays `null` when status is set to `pending`.
+  - Fixed Node moderator report feed compatibility (`server/server.js`):
+    - Moderator filtering now supports legacy report rows (`target_type`) using normalized report type helper.
+  - Fixed client moderation UI race/data issues (`public/src/app.js`):
+    - Added `moderatorReportActionInFlight` lock to prevent double-submit race clicks.
+    - Guarded moderator actions to post-type reports only.
+    - Normalized report `status` to lowercase and sorted report list by `createdAt`.
+    - Stabilized date rendering with `at(report.createdAt)` to avoid invalid-date rendering edge cases.
+  - Validation:
+    - `npm run check` passed.
+    - Deployed Worker version: `b45f7f00-7a98-4a3d-8c29-d8b9d90782a9`.
+    - Live e2e checks passed: request-delete (including duplicate `409`), warning action transition to `actioned`, handled-report guard, self-user-report block, and invalid-comment-target block.
+  - Cleanup:
+    - Removed all temporary live bug-test artifacts from D1 (test user, test posts, test reports, related notifications and audit entries).

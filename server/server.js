@@ -607,6 +607,19 @@ function appendReportNote(existing, next) {
   return prev ? `${prev}\n${add}` : add;
 }
 
+function reportHasNote(existing, needle) {
+  const text = String(existing || "");
+  return Boolean(needle) && text.includes(needle);
+}
+
+function reportTypeOf(report) {
+  return String(report?.targetType || report?.target_type || report?.type || "").trim().toLowerCase();
+}
+
+function reportTargetIdOf(report) {
+  return String(report?.targetId || report?.target_id || "").trim();
+}
+
 function userView(target, viewer) {
   const safe = publicUser(target);
   if (!safe) return null;
@@ -1517,7 +1530,7 @@ async function handleApi(req, res, url) {
     if (!canViewFlaggedReports(user)) return sendJson(res, 403, { error: "Moderator access required" }, req);
     const reportSource = user.role === "admin"
       ? store.data.reports
-      : store.data.reports.filter((item) => item.targetType === "post");
+      : store.data.reports.filter((item) => reportTypeOf(item) === "post");
     const { items, pagination } = paginate(reportSource, url, { limit: 50, maxLimit: 100 });
     return sendJson(res, 200, { reports: items, pagination });
   }
@@ -1529,18 +1542,21 @@ async function handleApi(req, res, url) {
     if (!canViewFlaggedReports(actor)) return sendJson(res, 403, { error: "Moderator access required" }, req);
     const report = store.data.reports.find((item) => item.id === moderatorReportMatch[1]);
     if (!report) return notFound(res);
-    if (String(report.targetType || "") !== "post") return sendJson(res, 400, { error: "Only post reports can be moderated here" }, req);
+    const reportType = reportTypeOf(report);
+    const reportTargetId = reportTargetIdOf(report);
+    if (reportType !== "post") return sendJson(res, 400, { error: "Only post reports can be moderated here" }, req);
     if (String(report.status || "pending") !== "pending") return sendJson(res, 400, { error: "Report already handled" }, req);
     const action = String(body.action || "").trim().toLowerCase();
     const reason = String(body.reason || "").trim().slice(0, MAX_REASON_LEN);
     if (!["warn", "request_delete"].includes(action)) return sendJson(res, 400, { error: "Invalid moderator action" }, req);
     if (!reason) return sendJson(res, 400, { error: "Reason is required" }, req);
 
-    const targetPost = store.data.posts.find((item) => item.id === report.targetId);
+    const targetPost = store.data.posts.find((item) => item.id === reportTargetId && !item.deletedAt);
     if (!targetPost?.authorId) return sendJson(res, 404, { error: "Report target post not found" }, req);
     const targetUser = store.findUserById(targetPost.authorId);
     if (!targetUser) return sendJson(res, 404, { error: "Report target user not found" }, req);
     if (targetUser.role === "admin") return sendJson(res, 400, { error: "Cannot moderate admin account" }, req);
+    if (targetUser.id === actor.id) return sendJson(res, 400, { error: "Cannot moderate yourself via report actions" }, req);
 
     const actorName = String(actor.englishName || actor.email || "Moderator");
     if (action === "warn") {
@@ -1557,19 +1573,21 @@ async function handleApi(req, res, url) {
       report.resolvedAt = now();
       store.audit(actor.id, "moderator_warning_sent", { reportId: report.id, targetUserId: targetUser.id });
     } else {
-      report.adminNotes = appendReportNote(report.adminNotes, `[Deletion Request] ${actorName}: ${reason}`);
+      const deleteNoteLine = `[Deletion Request] ${actorName}: ${reason}`;
+      if (reportHasNote(report.adminNotes, deleteNoteLine)) return sendJson(res, 409, { error: "Duplicate deletion request already recorded" }, req);
+      report.adminNotes = appendReportNote(report.adminNotes, deleteNoteLine);
       const admins = store.data.users.filter((item) => item.role === "admin");
       for (const admin of admins) {
         store.data.notifications.push({
           id: id("ntf"),
           userId: admin.id,
           type: "moderation",
-          body: `Deletion request on flagged post ${report.targetId} by ${actorName}: ${reason}`,
+          body: `Deletion request on flagged post ${reportTargetId} by ${actorName}: ${reason}`,
           readAt: null,
           createdAt: now()
         });
       }
-      store.audit(actor.id, "moderator_delete_requested", { reportId: report.id, targetPostId: report.targetId });
+      store.audit(actor.id, "moderator_delete_requested", { reportId: report.id, targetPostId: reportTargetId });
     }
     store.save();
     return sendJson(res, 200, { report }, req);
@@ -1585,8 +1603,10 @@ async function handleApi(req, res, url) {
     const nextStatus = String(body.status || "resolved").trim().toLowerCase();
     if (!REPORT_STATUSES.has(nextStatus)) return sendJson(res, 400, { error: "Invalid report status" });
     report.status = nextStatus;
-    report.adminNotes = body.adminNotes || report.adminNotes;
-    report.resolvedAt = now();
+    if (Object.prototype.hasOwnProperty.call(body, "adminNotes")) {
+      report.adminNotes = String(body.adminNotes || "").trim().slice(0, MAX_REASON_LEN);
+    }
+    report.resolvedAt = nextStatus === "pending" ? null : now();
     store.audit(admin.id, "report_reviewed", { reportId: report.id, status: report.status });
     store.save();
     return sendJson(res, 200, { report });

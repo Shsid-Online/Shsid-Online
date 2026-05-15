@@ -758,6 +758,15 @@ async function handleApi(request, env, url, route) {
       const targetPost = await env.DB.prepare("select id from posts where id=? and deleted_at is null").bind(targetId).first();
       if (!targetPost) return json({ error: "Report target not found" }, 404);
     }
+    if (targetType === "comment") {
+      const targetComment = await env.DB.prepare("select id from comments where id=? and deleted_at is null").bind(targetId).first();
+      if (!targetComment) return json({ error: "Report target not found" }, 404);
+    }
+    if (targetType === "user") {
+      const targetUser = await env.DB.prepare("select id from users where id=?").bind(targetId).first();
+      if (!targetUser) return json({ error: "Report target not found" }, 404);
+      if (targetUser.id === authUser.id) return json({ error: "Cannot report yourself" }, 400);
+    }
     if (targetType === "conversation") {
       const targetConversation = await env.DB.prepare("select id from conversations where id=?").bind(targetId).first();
       if (!targetConversation) return json({ error: "Report target not found" }, 404);
@@ -1314,7 +1323,9 @@ async function handleApi(request, env, url, route) {
     if (!authUser || !canViewFlaggedReports(authUser, env)) return json({ error: "Moderator access required" }, 403);
     const report = await env.DB.prepare("select * from reports where id=?").bind(moderatorReportMatch[1]).first();
     if (!report) return json({ error: "Not found" }, 404);
-    if (String(report.target_type || "") !== "post") return json({ error: "Only post reports can be moderated here" }, 400);
+    const reportType = String(report.target_type || report.targetType || "").trim().toLowerCase();
+    const reportTargetId = String(report.target_id || report.targetId || "").trim();
+    if (reportType !== "post") return json({ error: "Only post reports can be moderated here" }, 400);
     if (String(report.status || "pending") !== "pending") return json({ error: "Report already handled" }, 400);
 
     const action = String(body.action || "").trim().toLowerCase();
@@ -1322,11 +1333,12 @@ async function handleApi(request, env, url, route) {
     if (!["warn", "request_delete"].includes(action)) return json({ error: "Invalid moderator action" }, 400);
     if (!reason) return json({ error: "Reason is required" }, 400);
 
-    const post = await env.DB.prepare("select id, author_id from posts where id=?").bind(report.target_id).first();
+    const post = await env.DB.prepare("select id, author_id from posts where id=? and deleted_at is null").bind(reportTargetId).first();
     if (!post?.author_id) return json({ error: "Report target post not found" }, 404);
     const targetUser = await getUserById(env, post.author_id);
     if (!targetUser) return json({ error: "Report target user not found" }, 404);
     if (targetUser.role === "admin") return json({ error: "Cannot moderate admin account" }, 400);
+    if (targetUser.id === authUser.id) return json({ error: "Cannot moderate yourself via report actions" }, 400);
 
     const actorName = String(authUser.english_name || authUser.email || "Moderator");
     if (action === "warn") {
@@ -1339,16 +1351,18 @@ async function handleApi(request, env, url, route) {
         .run();
       await audit(env, authUser.id, "moderator_warning_sent", { reportId: report.id, targetUserId: targetUser.id }, request);
     } else {
-      const requestNote = appendReportNote(report.admin_notes, `[Deletion Request] ${actorName}: ${reason}`);
+      const deleteNoteLine = `[Deletion Request] ${actorName}: ${reason}`;
+      if (reportHasNote(report.admin_notes, deleteNoteLine)) return json({ error: "Duplicate deletion request already recorded" }, 409);
+      const requestNote = appendReportNote(report.admin_notes, deleteNoteLine);
       await env.DB.prepare("update reports set admin_notes=? where id=?").bind(requestNote, report.id).run();
       const adminRows = await env.DB.prepare("select id from users where role='admin'").all();
       for (const adminRow of (adminRows.results || [])) {
         if (!adminRow?.id) continue;
         await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
-          .bind(id("ntf"), adminRow.id, "moderation", `Deletion request on flagged post ${report.target_id} by ${actorName}: ${reason}`, null, now())
+          .bind(id("ntf"), adminRow.id, "moderation", `Deletion request on flagged post ${reportTargetId} by ${actorName}: ${reason}`, null, now())
           .run();
       }
-      await audit(env, authUser.id, "moderator_delete_requested", { reportId: report.id, targetPostId: report.target_id }, request);
+      await audit(env, authUser.id, "moderator_delete_requested", { reportId: report.id, targetPostId: reportTargetId }, request);
     }
 
     const updated = await env.DB.prepare("select * from reports where id=?").bind(report.id).first();
@@ -1363,8 +1377,11 @@ async function handleApi(request, env, url, route) {
     if (report.status && report.status !== "pending") return json({ error: "Report already handled" }, 400);
     const status = String(body.status || "resolved").trim().toLowerCase();
     if (!REPORT_STATUSES.has(status)) return json({ error: "Invalid report status" }, 400);
-    const adminNotes = String(body.adminNotes || report.admin_notes || "");
-    const resolvedAt = now();
+    const hasAdminNotes = Object.prototype.hasOwnProperty.call(body, "adminNotes");
+    const adminNotes = hasAdminNotes
+      ? String(body.adminNotes || "").trim().slice(0, MAX_REASON_LEN)
+      : String(report.admin_notes || "");
+    const resolvedAt = status === "pending" ? null : now();
     await env.DB.prepare("update reports set status=?, admin_notes=?, resolved_at=? where id=?").bind(status, adminNotes, resolvedAt, report.id).run();
     report.status = status;
     report.admin_notes = adminNotes;
@@ -1662,6 +1679,11 @@ function appendReportNote(existing, next) {
   const add = String(next || "").trim();
   if (!add) return prev;
   return prev ? `${prev}\n${add}` : add;
+}
+
+function reportHasNote(existing, needle) {
+  const text = String(existing || "");
+  return Boolean(needle) && text.includes(needle);
 }
 
 async function userView(env, target, viewer) {

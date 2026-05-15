@@ -101,6 +101,7 @@ let verifyUserInFlight = false;
 let rejectUserInFlight = false;
 let banUserInFlight = false;
 let handleReportInFlight = false;
+let moderatorReportActionInFlight = false;
 let modalLockedScrollY = 0;
 const postMediaIndexByPostId = {};
 let feedVideoObserver = null;
@@ -792,8 +793,9 @@ async function refreshReports() {
       targetId: report.targetId || report.target_id,
       adminNotes: report.adminNotes || report.admin_notes || "",
       createdAt: report.createdAt || report.created_at || "",
-      resolvedAt: report.resolvedAt || report.resolved_at || ""
-    }));
+      resolvedAt: report.resolvedAt || report.resolved_at || "",
+      status: String(report.status || "pending").trim().toLowerCase()
+    })).sort((a, b) => at(b.createdAt) - at(a.createdAt));
     saveState();
   } catch (error) {
     console.error("refreshReports failed", error);
@@ -2939,11 +2941,13 @@ function renderAdmin() {
                 <td>${reportedUser ? `<strong>${escapeHtml(reportedUser.englishName || "Unknown")}</strong><br><span class="muted">${escapeHtml(reportedUser.chineseName || "")} · G${reportedUser.grade} C${reportedUser.classNo}</span>` : `<span class="muted">${escapeHtml(reportTargetHumanLabel(report))}</span><br><span class="muted">${escapeHtml(preview)}</span>`}</td>
                 <td>${escapeHtml(report.reason || "-")}</td>
                 <td>${report.adminNotes ? `<span class="muted">${escapeHtml(report.adminNotes).replaceAll("\n", "<br>")}</span>` : `<span class="muted">-</span>`}</td>
-                <td><span class="muted">${new Date(report.createdAt).toLocaleDateString()}</span><br><span class="muted">${timeAgo(report.createdAt)}</span></td>
+                <td><span class="muted">${new Date(at(report.createdAt)).toLocaleDateString()}</span><br><span class="muted">${timeAgo(report.createdAt)}</span></td>
                 <td><span class="status ${report.status === "resolved" ? "green" : "gold"}">${escapeHtml(report.status)}</span></td>
                 <td>${isAdmin
                   ? `<div class="admin-actions"><button class="btn small primary" data-action="handle-report" data-id="${report.id}">Handle</button></div>`
-                  : `<div class="admin-actions"><button class="btn small" data-action="moderator-warn-report" data-id="${report.id}">Warn</button><button class="btn small primary" data-action="moderator-request-delete" data-id="${report.id}">Request Delete</button></div>`
+                  : report.type === "post"
+                    ? `<div class="admin-actions"><button class="btn small" data-action="moderator-warn-report" data-id="${report.id}">Warn</button><button class="btn small primary" data-action="moderator-request-delete" data-id="${report.id}">Request Delete</button></div>`
+                    : `<span class="muted">View only</span>`
                 }</td>
               </tr>`;
             }).join("") || `<tr><td colspan="7" class="muted">${isAdmin ? "No pending reports." : "No flagged post reports."}</td></tr>`}
@@ -4189,32 +4193,46 @@ async function handleAction(action, id) {
   }
   if (action === "moderator-warn-report") {
     if (!canModerateReports(currentUser())) return toast("Moderator access required");
+    if (moderatorReportActionInFlight) return;
     const report = state.reports.find((r) => r.id === id);
     if (!report) return toast("Report not found");
+    if (String(report.type || "").trim().toLowerCase() !== "post") return toast("Only post reports support this action");
     if ((report.status || "pending") !== "pending") return toast("Report already handled");
     const reason = await askTextPopup("Send Warning", "Warning reason", "Describe why this content violates guidelines");
     const clean = String(reason || "").trim();
     if (!clean) return;
-    await apiRequest(`/admin/reports/${id}/moderate`, { method: "POST", body: JSON.stringify({ action: "warn", reason: clean }) });
-    toast("Warning sent");
-    await refreshReports();
-    await refreshNotifications();
-    render();
+    moderatorReportActionInFlight = true;
+    try {
+      await apiRequest(`/admin/reports/${id}/moderate`, { method: "POST", body: JSON.stringify({ action: "warn", reason: clean }) });
+      toast("Warning sent");
+      await refreshReports();
+      await refreshNotifications();
+      render();
+    } finally {
+      moderatorReportActionInFlight = false;
+    }
     return;
   }
   if (action === "moderator-request-delete") {
     if (!canModerateReports(currentUser())) return toast("Moderator access required");
+    if (moderatorReportActionInFlight) return;
     const report = state.reports.find((r) => r.id === id);
     if (!report) return toast("Report not found");
+    if (String(report.type || "").trim().toLowerCase() !== "post") return toast("Only post reports support this action");
     if ((report.status || "pending") !== "pending") return toast("Report already handled");
     const reason = await askTextPopup("Request Post Deletion", "Request reason", "Why should admin delete this post?");
     const clean = String(reason || "").trim();
     if (!clean) return;
-    await apiRequest(`/admin/reports/${id}/moderate`, { method: "POST", body: JSON.stringify({ action: "request_delete", reason: clean }) });
-    toast("Deletion request sent to admin");
-    await refreshReports();
-    await refreshNotifications();
-    render();
+    moderatorReportActionInFlight = true;
+    try {
+      await apiRequest(`/admin/reports/${id}/moderate`, { method: "POST", body: JSON.stringify({ action: "request_delete", reason: clean }) });
+      toast("Deletion request sent to admin");
+      await refreshReports();
+      await refreshNotifications();
+      render();
+    } finally {
+      moderatorReportActionInFlight = false;
+    }
     return;
   }
   if (action === "handle-report") {
