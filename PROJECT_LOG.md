@@ -1230,3 +1230,20 @@
     - Waiting screen now shows rejected-specific messaging and a `Resubmit verification` action.
     - Added `data-auth="resubmit-verification"` handler to prefill profile context and return to the video step.
   - Validation: `npm run check` passed.
+- 2026-05-16: Investigated "stuck verification" queue entries with blank names/class/video and fixed review filtering.
+  - Live D1 inspection for the 4 queue rows showed they were incomplete signups, not submitted verification packets:
+    - all had `status='pending_verification'` but empty `english_name/chinese_name`, `grade/class_no = null`, and empty `verification_video`.
+    - audit logs showed only `auth_register` (or none), and no `profile_completed`, confirming they never reached a successful verification submit.
+  - Root cause:
+    - Admin verification list and verification queue counters were filtering only by `status='pending_verification'`, so incomplete accounts appeared as if verification had failed.
+  - Fix applied:
+    - Worker (`worker/index.js`):
+      - `/admin/verifications` now includes only reviewable submissions (student role + non-empty name + valid grade/class + non-empty video and not `pending-upload`).
+      - `/me/verification-queue` count/ahead queries now use the same reviewable-submission criteria.
+      - `/admin/verifications/:id` now rejects moderation on incomplete submissions with `Verification submission is incomplete`.
+    - Node parity (`server/server.js`): same filtering and guard for `/api/admin/verifications` routes.
+  - Deploy + validation:
+    - Deployed Worker version: `af62bb89-cf13-48ac-b94f-30551f45b792`.
+    - Live DB check after deploy:
+      - `pending_all = 4` (incomplete signup rows still exist in DB)
+      - `pending_reviewable = 0` (none should appear in admin verification queue now)

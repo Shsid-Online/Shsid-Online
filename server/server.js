@@ -620,6 +620,18 @@ function reportTargetIdOf(report) {
   return String(report?.targetId || report?.target_id || "").trim();
 }
 
+function hasReviewableVerificationSubmission(user) {
+  const englishName = String(user?.englishName || "").trim();
+  const grade = Number(user?.grade);
+  const classNo = Number(user?.classNo);
+  const verificationVideo = String(user?.verificationVideo || "").trim();
+  if (!englishName) return false;
+  if (!Number.isInteger(grade) || grade < 1 || grade > 12) return false;
+  if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return false;
+  if (!verificationVideo || verificationVideo === "pending-upload") return false;
+  return true;
+}
+
 function userView(target, viewer) {
   const safe = publicUser(target);
   if (!safe) return null;
@@ -1511,7 +1523,11 @@ async function handleApi(req, res, url) {
   if (method === "GET" && url.pathname === "/api/admin/verifications") {
     const admin = requireAdmin(req, res);
     if (!admin) return;
-    const { items, pagination } = paginate(store.data.users.filter((user) => user.status === "pending_verification"), url, { limit: 50, maxLimit: 100 });
+    const { items, pagination } = paginate(
+      store.data.users.filter((user) => user.status === "pending_verification" && user.role === "student" && hasReviewableVerificationSubmission(user)),
+      url,
+      { limit: 50, maxLimit: 100 }
+    );
     return sendJson(res, 200, { students: items.map((item) => userView(item, admin)), pagination });
   }
 
@@ -1524,6 +1540,7 @@ async function handleApi(req, res, url) {
     if (user.role !== "student") return sendJson(res, 400, { error: "Only student accounts can be verified" });
     if (user.role === "admin") return sendJson(res, 400, { error: "Cannot verify admin account" });
     if (user.status !== "pending_verification") return sendJson(res, 400, { error: "User is not pending verification" });
+    if (!hasReviewableVerificationSubmission(user)) return sendJson(res, 400, { error: "Verification submission is incomplete" });
     const requestedDecision = String(body.decision || "").trim().toLowerCase();
     if (!VERIFICATION_DECISIONS.has(requestedDecision)) return sendJson(res, 400, { error: "Invalid verification decision" });
     const decision = requestedDecision === "approve" ? "verified" : "rejected";

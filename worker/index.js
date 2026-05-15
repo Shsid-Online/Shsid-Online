@@ -446,10 +446,31 @@ async function handleApi(request, env, url, route) {
     if (authUser.role === "admin" || authUser.status === "verified") {
       return json({ pendingTotal: 0, ahead: 0, position: 0 }, 200);
     }
-    const totalRow = await env.DB.prepare("select count(*) as count from users where role='student' and status='pending_verification'").first();
+    const totalRow = await env.DB.prepare(`
+      select count(*) as count
+      from users
+      where role='student'
+        and status='pending_verification'
+        and trim(coalesce(english_name, '')) != ''
+        and grade between 1 and 12
+        and class_no between 1 and 13
+        and trim(coalesce(verification_video, '')) != ''
+        and trim(coalesce(verification_video, '')) != 'pending-upload'
+    `).first();
     const meRow = await env.DB.prepare("select created_at from users where id=? limit 1").bind(authUser.id).first();
     if (!meRow?.created_at) return json({ pendingTotal: Number(totalRow?.count || 0), ahead: 0, position: 0 }, 200);
-    const aheadRow = await env.DB.prepare("select count(*) as count from users where role='student' and status='pending_verification' and created_at < ?").bind(meRow.created_at).first();
+    const aheadRow = await env.DB.prepare(`
+      select count(*) as count
+      from users
+      where role='student'
+        and status='pending_verification'
+        and trim(coalesce(english_name, '')) != ''
+        and grade between 1 and 12
+        and class_no between 1 and 13
+        and trim(coalesce(verification_video, '')) != ''
+        and trim(coalesce(verification_video, '')) != 'pending-upload'
+        and created_at < ?
+    `).bind(meRow.created_at).first();
     const ahead = Number(aheadRow?.count || 0);
     const pendingTotal = Number(totalRow?.count || 0);
     return json({ pendingTotal, ahead, position: ahead + 1 }, 200);
@@ -1284,7 +1305,18 @@ async function handleApi(request, env, url, route) {
 
   if (method === "GET" && route === "/admin/verifications") {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
-    const rows = await env.DB.prepare("select * from users where status='pending_verification' order by created_at desc").all();
+    const rows = await env.DB.prepare(`
+      select *
+      from users
+      where status='pending_verification'
+        and role='student'
+        and trim(coalesce(english_name, '')) != ''
+        and grade between 1 and 12
+        and class_no between 1 and 13
+        and trim(coalesce(verification_video, '')) != ''
+        and trim(coalesce(verification_video, '')) != 'pending-upload'
+      order by created_at desc
+    `).all();
     return json({ students: await Promise.all((rows.results || []).map((u) => userView(env, u, authUser))), pagination: { limit: 100, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
   }
 
@@ -1296,6 +1328,7 @@ async function handleApi(request, env, url, route) {
     if (user.role !== "student") return json({ error: "Only student accounts can be verified" }, 400);
     if (user.role === "admin") return json({ error: "Cannot verify admin account" }, 400);
     if (user.status !== "pending_verification") return json({ error: "User is not pending verification" }, 400);
+    if (!hasReviewableVerificationSubmission(user)) return json({ error: "Verification submission is incomplete" }, 400);
     const requestedDecision = String(body.decision || "").trim().toLowerCase();
     if (!VERIFICATION_DECISIONS.has(requestedDecision)) return json({ error: "Invalid verification decision" }, 400);
     const decision = requestedDecision === "approve" ? "verified" : "rejected";
@@ -1697,6 +1730,18 @@ function appendReportNote(existing, next) {
 function reportHasNote(existing, needle) {
   const text = String(existing || "");
   return Boolean(needle) && text.includes(needle);
+}
+
+function hasReviewableVerificationSubmission(user) {
+  const englishName = String(user?.english_name ?? user?.englishName ?? "").trim();
+  const grade = Number(user?.grade);
+  const classNo = Number(user?.class_no ?? user?.classNo);
+  const verificationVideo = String(user?.verification_video ?? user?.verificationVideo ?? "").trim();
+  if (!englishName) return false;
+  if (!Number.isInteger(grade) || grade < 1 || grade > 12) return false;
+  if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return false;
+  if (!verificationVideo || verificationVideo === "pending-upload") return false;
+  return true;
 }
 
 async function userView(env, target, viewer) {
