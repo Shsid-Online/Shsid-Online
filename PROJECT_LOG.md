@@ -1145,3 +1145,11 @@
   - Local data updated: `data/dev-db.json` now contains/updates `admin-2@shsid.online` with the requested password.
   - Live D1 updated via remote SQL (`shsid-social-db`) to upsert `admin-2@shsid.online`.
   - Validation: `npm run check` passed.
+- 2026-05-15: Expanded moderator powers for `Admin-2`.
+  - Added moderator action endpoint (`POST /admin/reports/:id/moderate`) in both Worker and Node backends.
+    - `action=warn`: sends moderation warning notification to the reported post author, marks report `actioned`, records audit event.
+    - `action=request_delete`: appends deletion request into report notes (`admin_notes`/`adminNotes`), keeps report pending, notifies admin accounts, records audit event.
+  - Added report-note support in client normalization (`public/src/app.js`) and surfaced moderator notes in the report queue table.
+  - Updated moderator UI actions in report queue (`public/src/app.js`): `Warn` and `Request Delete` buttons for moderator users.
+  - Admin queue now shows moderator notes so deletion requests are visible before admin handling.
+  - Validation: `npm run check` passed.

@@ -1309,6 +1309,52 @@ async function handleApi(request, env, url, route) {
     return json({ reports: rows.results || [], pagination: { limit: 100, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
   }
 
+  const moderatorReportMatch = route.match(/^\/admin\/reports\/([^/]+)\/moderate$/);
+  if (method === "POST" && moderatorReportMatch) {
+    if (!authUser || !canViewFlaggedReports(authUser, env)) return json({ error: "Moderator access required" }, 403);
+    const report = await env.DB.prepare("select * from reports where id=?").bind(moderatorReportMatch[1]).first();
+    if (!report) return json({ error: "Not found" }, 404);
+    if (String(report.target_type || "") !== "post") return json({ error: "Only post reports can be moderated here" }, 400);
+    if (String(report.status || "pending") !== "pending") return json({ error: "Report already handled" }, 400);
+
+    const action = String(body.action || "").trim().toLowerCase();
+    const reason = String(body.reason || "").trim().slice(0, MAX_REASON_LEN);
+    if (!["warn", "request_delete"].includes(action)) return json({ error: "Invalid moderator action" }, 400);
+    if (!reason) return json({ error: "Reason is required" }, 400);
+
+    const post = await env.DB.prepare("select id, author_id from posts where id=?").bind(report.target_id).first();
+    if (!post?.author_id) return json({ error: "Report target post not found" }, 404);
+    const targetUser = await getUserById(env, post.author_id);
+    if (!targetUser) return json({ error: "Report target user not found" }, 404);
+    if (targetUser.role === "admin") return json({ error: "Cannot moderate admin account" }, 400);
+
+    const actorName = String(authUser.english_name || authUser.email || "Moderator");
+    if (action === "warn") {
+      await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
+        .bind(id("ntf"), targetUser.id, "moderation", `Moderator warning from ${actorName}: ${reason}`, null, now())
+        .run();
+      const warningNote = appendReportNote(report.admin_notes, `[Moderator Warning] ${actorName}: ${reason}`);
+      await env.DB.prepare("update reports set status=?, admin_notes=?, resolved_at=? where id=?")
+        .bind("actioned", warningNote, now(), report.id)
+        .run();
+      await audit(env, authUser.id, "moderator_warning_sent", { reportId: report.id, targetUserId: targetUser.id }, request);
+    } else {
+      const requestNote = appendReportNote(report.admin_notes, `[Deletion Request] ${actorName}: ${reason}`);
+      await env.DB.prepare("update reports set admin_notes=? where id=?").bind(requestNote, report.id).run();
+      const adminRows = await env.DB.prepare("select id from users where role='admin'").all();
+      for (const adminRow of (adminRows.results || [])) {
+        if (!adminRow?.id) continue;
+        await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
+          .bind(id("ntf"), adminRow.id, "moderation", `Deletion request on flagged post ${report.target_id} by ${actorName}: ${reason}`, null, now())
+          .run();
+      }
+      await audit(env, authUser.id, "moderator_delete_requested", { reportId: report.id, targetPostId: report.target_id }, request);
+    }
+
+    const updated = await env.DB.prepare("select * from reports where id=?").bind(report.id).first();
+    return json({ report: updated }, 200);
+  }
+
   const adminReportMatch = route.match(/^\/admin\/reports\/([^/]+)$/);
   if (method === "POST" && adminReportMatch) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
@@ -1609,6 +1655,13 @@ function canViewFlaggedReports(user, env) {
   if (user.role === "admin") return true;
   const email = String(user.email || "").trim().toLowerCase();
   return moderatorEmails(env).has(email);
+}
+
+function appendReportNote(existing, next) {
+  const prev = String(existing || "").trim();
+  const add = String(next || "").trim();
+  if (!add) return prev;
+  return prev ? `${prev}\n${add}` : add;
 }
 
 async function userView(env, target, viewer) {

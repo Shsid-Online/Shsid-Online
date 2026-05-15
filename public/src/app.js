@@ -789,7 +789,10 @@ async function refreshReports() {
       ...report,
       reporterId: report.reporterId || report.reporter_id,
       type: report.targetType || report.type,
-      targetId: report.targetId || report.target_id
+      targetId: report.targetId || report.target_id,
+      adminNotes: report.adminNotes || report.admin_notes || "",
+      createdAt: report.createdAt || report.created_at || "",
+      resolvedAt: report.resolvedAt || report.resolved_at || ""
     }));
     saveState();
   } catch (error) {
@@ -2926,7 +2929,7 @@ function renderAdmin() {
       <div class="panel admin-panel">
         <h2>${isAdmin ? "Report Queue" : "Flagged Post Reports"}</h2>
         <div class="table-wrap">
-          <table class="table"><thead><tr><th>Reporter</th><th>Reported User</th><th>Reason</th><th>Time</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+          <table class="table"><thead><tr><th>Reporter</th><th>Reported User</th><th>Reason</th><th>Moderator Notes</th><th>Time</th><th>Status</th><th>Actions</th></tr></thead><tbody>
             ${pendingReports.map((report) => {
               const post = report.type === "post" ? state.posts.find((p) => p.id === report.targetId) : null;
               const reportedUser = post ? state.users.find((u) => u.id === post.authorId) : null;
@@ -2935,11 +2938,15 @@ function renderAdmin() {
                 <td><strong>${escapeHtml(userName(report.reporterId))}</strong><br><span class="muted">${report.reporterId ? state.users.find((u) => u.id === report.reporterId)?.englishName || "Unknown" : "Unknown"}</span></td>
                 <td>${reportedUser ? `<strong>${escapeHtml(reportedUser.englishName || "Unknown")}</strong><br><span class="muted">${escapeHtml(reportedUser.chineseName || "")} · G${reportedUser.grade} C${reportedUser.classNo}</span>` : `<span class="muted">${escapeHtml(reportTargetHumanLabel(report))}</span><br><span class="muted">${escapeHtml(preview)}</span>`}</td>
                 <td>${escapeHtml(report.reason || "-")}</td>
+                <td>${report.adminNotes ? `<span class="muted">${escapeHtml(report.adminNotes).replaceAll("\n", "<br>")}</span>` : `<span class="muted">-</span>`}</td>
                 <td><span class="muted">${new Date(report.createdAt).toLocaleDateString()}</span><br><span class="muted">${timeAgo(report.createdAt)}</span></td>
                 <td><span class="status ${report.status === "resolved" ? "green" : "gold"}">${escapeHtml(report.status)}</span></td>
-                <td>${isAdmin ? `<div class="admin-actions"><button class="btn small primary" data-action="handle-report" data-id="${report.id}">Handle</button></div>` : `<span class="muted">View only</span>`}</td>
+                <td>${isAdmin
+                  ? `<div class="admin-actions"><button class="btn small primary" data-action="handle-report" data-id="${report.id}">Handle</button></div>`
+                  : `<div class="admin-actions"><button class="btn small" data-action="moderator-warn-report" data-id="${report.id}">Warn</button><button class="btn small primary" data-action="moderator-request-delete" data-id="${report.id}">Request Delete</button></div>`
+                }</td>
               </tr>`;
-            }).join("") || `<tr><td colspan="6" class="muted">${isAdmin ? "No pending reports." : "No flagged post reports."}</td></tr>`}
+            }).join("") || `<tr><td colspan="7" class="muted">${isAdmin ? "No pending reports." : "No flagged post reports."}</td></tr>`}
           </tbody></table>
         </div>
       </div>
@@ -4178,6 +4185,36 @@ async function handleAction(action, id) {
         banUserInFlight = false;
       }
     });
+    return;
+  }
+  if (action === "moderator-warn-report") {
+    if (!canModerateReports(currentUser())) return toast("Moderator access required");
+    const report = state.reports.find((r) => r.id === id);
+    if (!report) return toast("Report not found");
+    if ((report.status || "pending") !== "pending") return toast("Report already handled");
+    const reason = await askTextPopup("Send Warning", "Warning reason", "Describe why this content violates guidelines");
+    const clean = String(reason || "").trim();
+    if (!clean) return;
+    await apiRequest(`/admin/reports/${id}/moderate`, { method: "POST", body: JSON.stringify({ action: "warn", reason: clean }) });
+    toast("Warning sent");
+    await refreshReports();
+    await refreshNotifications();
+    render();
+    return;
+  }
+  if (action === "moderator-request-delete") {
+    if (!canModerateReports(currentUser())) return toast("Moderator access required");
+    const report = state.reports.find((r) => r.id === id);
+    if (!report) return toast("Report not found");
+    if ((report.status || "pending") !== "pending") return toast("Report already handled");
+    const reason = await askTextPopup("Request Post Deletion", "Request reason", "Why should admin delete this post?");
+    const clean = String(reason || "").trim();
+    if (!clean) return;
+    await apiRequest(`/admin/reports/${id}/moderate`, { method: "POST", body: JSON.stringify({ action: "request_delete", reason: clean }) });
+    toast("Deletion request sent to admin");
+    await refreshReports();
+    await refreshNotifications();
+    render();
     return;
   }
   if (action === "handle-report") {
