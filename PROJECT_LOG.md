@@ -1198,3 +1198,14 @@
     - `setInputFiles(...)` now safely handles missing `DataTransfer` support instead of throwing.
     - Added `getSelectedInputFiles(...)` helper to prefer stored selections when native input file lists are unavailable.
   - Validation: `npm run check` passed.
+- 2026-05-15: Fixed verification submission blockers from user console errors.
+  - Frontend (`public/src/app.js`):
+    - Removed hidden `required` constraint on `#reg-video` to stop browser error `An invalid form control ... is not focusable`.
+    - In auth video submit, added fallback to existing user profile values (`currentUser`) when pending draft fields are missing, preventing `/api/auth/complete-profile` 400 from empty profile payload.
+    - Added smoother upload overlay behavior so percent no longer appears frozen at 0 while upload is active.
+    - Added inferred video MIME support (`videoContentTypeForUpload`) for files where browser reports empty `file.type`.
+    - Chinese name is now treated as optional in local auth-step gating and local user merge defaults.
+  - Backend validation parity:
+    - Worker: removed mandatory Chinese-name check in `PATCH /me/profile` and `POST /auth/complete-profile`.
+    - Node server: removed mandatory Chinese-name check in `POST /api/auth/complete-profile`.
+  - Validation: `npm run check` passed.

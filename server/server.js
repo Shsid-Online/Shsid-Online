@@ -809,7 +809,7 @@ async function handleApi(req, res, url) {
     const chineseName = String(body.chineseName || "").trim().slice(0, MAX_NAME_LEN);
     const grade = Number(body.grade);
     const classNo = Number(body.classNo);
-    if (!englishName || !chineseName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
+    if (!englishName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
       return sendJson(res, 400, { error: "Name, grade 1-12, and class 1-13 are required" }, req);
     }
     const duplicate = store.data.users.find((item) => item.id !== user.id && item.englishName === englishName && item.chineseName === chineseName);

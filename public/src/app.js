@@ -341,7 +341,7 @@ function hydrateAuthFromUrl() {
 
 function nextAuthStepForUser(user) {
   if (user.role === "admin") return "app";
-  if (!user.englishName || !user.chineseName || !user.grade || !user.classNo) return "profile";
+  if (!user.englishName || !user.grade || !user.classNo) return "profile";
   if (!user.verificationVideo) return "video";
   if (user.status !== "verified" && user.role !== "admin") return "waiting";
   return "app";
@@ -906,7 +906,7 @@ function mergeApiUsers(apiUsers = []) {
       role: apiUser.role,
       canModerateReports: Boolean(apiUser.canModerateReports),
       englishName: apiUser.englishName || "New Student",
-      chineseName: apiUser.chineseName || "Pending",
+      chineseName: apiUser.chineseName || "",
       grade: apiUser.grade || 12,
       classNo: apiUser.classNo || 1,
       status: apiUser.status,
@@ -1919,6 +1919,13 @@ function startUploadProgressTicker() {
         uploadCompleting = false;
         stopUploadProgressTicker();
         syncUploadOverlayDom();
+        return;
+      }
+      if (!uploadCompleting && current < 90) {
+        const next = Math.min(90, current + 1);
+        uploadTargetPercent = Math.max(uploadTargetPercent, next);
+        uploadUi = { ...uploadUi, percent: next };
+        syncUploadOverlayDom();
       }
       return;
     }
@@ -2143,7 +2150,7 @@ function renderAuth() {
       <div class="field">
         <label>Verification video</label>
         <div id="verify-dropzone" class="dropzone">Drag and drop verification video here, or click to pick file.</div>
-        <input id="reg-video" type="file" accept="video/*" required>
+        <input id="reg-video" type="file" accept="video/*">
         <div id="verify-file-chips" class="file-chips"></div>
       </div>
       <p class="muted">${state.pendingVideoName ? `Selected: ${escapeHtml(state.pendingVideoName)}` : "Please upload your verification video."}</p>
@@ -3407,6 +3414,14 @@ function bindAuth() {
       const videoFile = getSelectedInputFiles("reg-video")[0];
       if (!videoFile) return toast("Upload a verification video");
       if (!isLikelyVideoFile(videoFile)) return toast("Please upload a valid video file.");
+      const user = currentUser() || {};
+      const englishName = String(state.pendingEnglishName || user.englishName || "").trim();
+      const chineseName = String(state.pendingChineseName || user.chineseName || "").trim();
+      const grade = Number(state.pendingGrade || user.grade);
+      const classNo = Number(state.pendingClassNo || user.classNo);
+      if (!englishName) return toast("Enter your first and last name before submitting video");
+      if (!Number.isInteger(grade) || grade < 1 || grade > 12) return toast("Year must be 1-12");
+      if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return toast("Class must be 1-13");
       state.pendingVideoName = videoFile.name;
       let uploadedVideoUrl = "";
       try {
@@ -3417,10 +3432,10 @@ function bindAuth() {
       const result = await apiRequest("/auth/complete-profile", {
         method: "POST",
         body: JSON.stringify({
-          englishName: state.pendingEnglishName,
-          chineseName: state.pendingChineseName,
-          grade: Number(state.pendingGrade),
-          classNo: Number(state.pendingClassNo),
+          englishName,
+          chineseName,
+          grade,
+          classNo,
           profilePhoto: String(state.pendingProfilePhoto || ""),
           verificationVideo: uploadedVideoUrl || videoFile.name
         })
@@ -4701,7 +4716,15 @@ function fileFingerprint(file) {
   return `${file.name}::${file.size}::${file.lastModified}::${file.type}`;
 }
 
-const VIDEO_FILE_EXTENSIONS = new Set(["mp4", "mov", "m4v", "webm", "avi", "mkv"]);
+const VIDEO_MIME_BY_EXTENSION = {
+  mp4: "video/mp4",
+  mov: "video/quicktime",
+  m4v: "video/mp4",
+  webm: "video/webm",
+  avi: "video/x-msvideo",
+  mkv: "video/x-matroska"
+};
+const VIDEO_FILE_EXTENSIONS = new Set(Object.keys(VIDEO_MIME_BY_EXTENSION));
 
 function hasLikelyVideoExtension(fileName = "") {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -4715,6 +4738,14 @@ function isLikelyVideoFile(file) {
   if (type.startsWith("video/")) return true;
   if (type) return false;
   return hasLikelyVideoExtension(file?.name || "");
+}
+
+function videoContentTypeForUpload(file) {
+  const explicitType = String(file?.type || "").trim().toLowerCase();
+  if (explicitType.startsWith("video/")) return explicitType;
+  const normalized = String(file?.name || "").trim().toLowerCase();
+  const extension = normalized.includes(".") ? (normalized.split(".").pop() || "") : "";
+  return VIDEO_MIME_BY_EXTENSION[extension] || "video/mp4";
 }
 
 function mergeUniqueFiles(existingFiles = [], incomingFiles = []) {
@@ -4992,20 +5023,23 @@ async function uploadFileMultipart(file, purpose = "media") {
 }
 
 async function uploadVerificationVideoMultipart(file) {
-  setUploadProgress("Uploading verification video", 0);
+  setUploadProgress("Uploading verification video", 2);
   let uploadDone = false;
   try {
+    const resolvedVideoContentType = videoContentTypeForUpload(file);
     const init = await apiRequest("/verification-upload/init", {
       method: "POST",
       body: JSON.stringify({
         fileName: file.name,
-        contentType: file.type || "application/octet-stream"
+        contentType: resolvedVideoContentType
       })
     });
+    setUploadProgress("Uploading verification video", 8);
 
     const chunkSize = Number(init.chunkSize || 8 * 1024 * 1024);
     const parts = await uploadMultipartPartsInParallel({
       file,
+      contentType: resolvedVideoContentType,
       chunkSize,
       endpointPrefix: "/verification-upload",
       uploadId: init.uploadId,
@@ -5024,7 +5058,7 @@ async function uploadVerificationVideoMultipart(file) {
   }
 }
 
-async function uploadMultipartPartsInParallel({ file, chunkSize, endpointPrefix, uploadId, key, onProgress = null }) {
+async function uploadMultipartPartsInParallel({ file, contentType = "", chunkSize, endpointPrefix, uploadId, key, onProgress = null }) {
   const totalParts = Math.ceil(file.size / chunkSize);
   // Use sequential chunk uploads for browser/runtime compatibility and to avoid
   // stream-reader lock issues reported on some environments.
@@ -5042,7 +5076,7 @@ async function uploadMultipartPartsInParallel({ file, chunkSize, endpointPrefix,
       const response = await fetch(`${API_BASE}${endpointPrefix}/${encodeURIComponent(uploadId)}/${partNumber}?key=${encodeURIComponent(key)}`, {
         method: "PUT",
         headers: {
-          "content-type": file.type || "application/octet-stream",
+          "content-type": contentType || file.type || "application/octet-stream",
           ...(state.apiToken ? { authorization: `Bearer ${state.apiToken}` } : {})
         },
         body: chunk

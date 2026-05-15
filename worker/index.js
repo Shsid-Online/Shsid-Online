@@ -463,7 +463,7 @@ async function handleApi(request, env, url, route) {
     const classNo = Number(body.classNo);
     const bio = String(body.bio || "").trim().slice(0, MAX_TEXT_LEN);
     const profilePhoto = String(body.profilePhoto || "").trim().slice(0, 2000);
-    if (!englishName || !chineseName || !Number.isInteger(grade) || grade < 1 || grade > 12 || !Number.isInteger(classNo) || classNo < 1 || classNo > 13) {
+    if (!englishName || !Number.isInteger(grade) || grade < 1 || grade > 12 || !Number.isInteger(classNo) || classNo < 1 || classNo > 13) {
       return json({ error: "Name, grade 1-12, and class 1-13 are required" }, 400);
     }
     if (await hasUsersProfilePhotoColumn(env)) {
@@ -486,7 +486,7 @@ async function handleApi(request, env, url, route) {
     const chineseName = String(body.chineseName || "").trim().slice(0, MAX_NAME_LEN);
     const grade = Number(body.grade);
     const classNo = Number(body.classNo);
-    if (!englishName || !chineseName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
+    if (!englishName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
       return json({ error: "Name, grade 1-12, and class 1-13 are required" }, 400);
     }
 
