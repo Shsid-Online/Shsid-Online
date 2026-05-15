@@ -36,6 +36,13 @@ store.load();
 
 const RATE_LIMIT = { windowMs: 15 * 60 * 1000, maxAuthRequests: 20, maxOtpAttempts: 5 };
 const rateLimitMap = new Map();
+const authStartEmailRateMap = new Map();
+const loginFailureMap = new Map();
+const AUTH_START_EMAIL_WINDOW_MS = 60 * 1000;
+const AUTH_START_EMAIL_MAX = Number(process.env.AUTH_START_EMAIL_MAX || 4);
+const LOGIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_FAIL_MAX = Number(process.env.LOGIN_FAIL_MAX || 6);
+const LOGIN_FAIL_LOCK_MS = 20 * 60 * 1000;
 const OTP_LENGTH = 6;
 const MAX_TEXT_LEN = 10000;
 const MAX_NAME_LEN = 100;
@@ -149,6 +156,68 @@ function checkRateLimit(ip, action) {
   if (entry.count >= max) return false;
   rateLimitMap.set(key, { count: entry.count + 1, windowStart: entry.windowStart });
   return true;
+}
+
+function checkAuthStartEmailRateLimit(email) {
+  const nowMs = Date.now();
+  for (const [key, row] of authStartEmailRateMap.entries()) {
+    if (nowMs - Number(row?.windowStart || 0) > AUTH_START_EMAIL_WINDOW_MS) authStartEmailRateMap.delete(key);
+  }
+  const key = String(email || "").trim().toLowerCase();
+  const row = authStartEmailRateMap.get(key) || { count: 0, windowStart: nowMs };
+  if (nowMs - Number(row.windowStart || 0) > AUTH_START_EMAIL_WINDOW_MS) {
+    authStartEmailRateMap.set(key, { count: 1, windowStart: nowMs });
+    return { limited: false, retryAfterSeconds: 0 };
+  }
+  row.count += 1;
+  authStartEmailRateMap.set(key, row);
+  if (row.count <= AUTH_START_EMAIL_MAX) return { limited: false, retryAfterSeconds: 0 };
+  const retryAfterSeconds = Math.max(1, Math.ceil((AUTH_START_EMAIL_WINDOW_MS - (nowMs - row.windowStart)) / 1000));
+  return { limited: true, retryAfterSeconds };
+}
+
+function loginFailureKey(ip, email) {
+  return `${String(ip || "unknown").trim().toLowerCase()}|${String(email || "").trim().toLowerCase()}`;
+}
+
+function sweepLoginFailures(nowMs = Date.now()) {
+  for (const [key, row] of loginFailureMap.entries()) {
+    const windowStart = Number(row?.windowStart || 0);
+    const lockedUntil = Number(row?.lockedUntil || 0);
+    if (nowMs - windowStart > LOGIN_FAIL_WINDOW_MS && lockedUntil <= nowMs) loginFailureMap.delete(key);
+  }
+}
+
+function getLoginFailureStatus(ip, email) {
+  const nowMs = Date.now();
+  sweepLoginFailures(nowMs);
+  const key = loginFailureKey(ip, email);
+  let row = loginFailureMap.get(key) || { failures: 0, windowStart: nowMs, lockedUntil: 0 };
+  if (nowMs - Number(row.windowStart || 0) > LOGIN_FAIL_WINDOW_MS) {
+    row = { failures: 0, windowStart: nowMs, lockedUntil: 0 };
+    loginFailureMap.set(key, row);
+  }
+  if (Number(row.lockedUntil || 0) <= nowMs) return { locked: false, retryAfterSeconds: 0 };
+  return { locked: true, retryAfterSeconds: Math.max(1, Math.ceil((Number(row.lockedUntil) - nowMs) / 1000)) };
+}
+
+function recordFailedLogin(ip, email) {
+  const nowMs = Date.now();
+  sweepLoginFailures(nowMs);
+  const key = loginFailureKey(ip, email);
+  let row = loginFailureMap.get(key) || { failures: 0, windowStart: nowMs, lockedUntil: 0 };
+  if (nowMs - Number(row.windowStart || 0) > LOGIN_FAIL_WINDOW_MS) {
+    row = { failures: 0, windowStart: nowMs, lockedUntil: 0 };
+  }
+  row.failures = Number(row.failures || 0) + 1;
+  if (row.failures >= LOGIN_FAIL_MAX) {
+    row.lockedUntil = nowMs + LOGIN_FAIL_LOCK_MS;
+  }
+  loginFailureMap.set(key, row);
+}
+
+function clearFailedLogin(ip, email) {
+  loginFailureMap.delete(loginFailureKey(ip, email));
 }
 
 function getClientIp(req) {
@@ -572,6 +641,8 @@ async function handleApi(req, res, url) {
     if (!checkRateLimit(ip, "auth")) return sendJson(res, 429, { error: "Too many requests, please try again later" }, req);
     const email = String(body.email || "").trim().toLowerCase();
     if (!isEmailAddress(email)) return sendJson(res, 400, { error: "Enter a valid email address" }, req);
+    const emailThrottle = checkAuthStartEmailRateLimit(email);
+    if (emailThrottle.limited) return sendJson(res, 429, { error: `Too many code requests for this email. Try again in ${emailThrottle.retryAfterSeconds}s.` }, req);
     const dispEmail = email.replace(/(.{2}).*(@.{3})/, "$1***$2");
     let user = store.findUserByEmail(email);
     if (!user) {
@@ -670,10 +741,15 @@ async function handleApi(req, res, url) {
     const ip = getClientIp(req);
     if (!checkRateLimit(ip, "auth")) return sendJson(res, 429, { error: "Too many requests, please try again later" }, req);
     const email = String(body.email || "").trim().toLowerCase();
+    if (!isEmailAddress(email)) return sendJson(res, 400, { error: "Enter a valid email address" }, req);
+    const loginStatus = getLoginFailureStatus(ip, email);
+    if (loginStatus.locked) return sendJson(res, 429, { error: `Too many failed login attempts. Try again in ${loginStatus.retryAfterSeconds}s.` }, req);
     const user = store.findUserByEmail(email);
     if (!user || !user.passwordHash || !verifyPassword(String(body.password || ""), user.passwordHash)) {
+      recordFailedLogin(ip, email);
       return sendJson(res, 401, { error: "Invalid email or password" }, req);
     }
+    clearFailedLogin(ip, email);
     const session = store.createSession(user, SESSION_TTL_HOURS);
     return sendJson(res, 200, { user: userView(user, user), session }, req);
   }
@@ -925,6 +1001,17 @@ async function handleApi(req, res, url) {
     if (targetType === "post") {
       const targetPost = store.data.posts.find((item) => item.id === targetId && !item.deletedAt);
       if (!targetPost) return sendJson(res, 404, { error: "Report target not found" }, req);
+    }
+    if (targetType === "comment") {
+      const targetComment = store.data.posts
+        .flatMap((item) => item.comments || [])
+        .find((item) => item.id === targetId && !item.deletedAt);
+      if (!targetComment) return sendJson(res, 404, { error: "Report target not found" }, req);
+    }
+    if (targetType === "user") {
+      const targetUser = store.findUserById(targetId);
+      if (!targetUser) return sendJson(res, 404, { error: "Report target not found" }, req);
+      if (targetUser.id === user.id) return sendJson(res, 400, { error: "Cannot report yourself" }, req);
     }
     if (targetType === "conversation") {
       const targetConversation = store.data.conversations.find((item) => item.id === targetId);

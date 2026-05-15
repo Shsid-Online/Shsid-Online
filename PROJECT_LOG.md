@@ -1123,3 +1123,9 @@
   - Fix: added pruning in `refreshStudents()` to drop local non-admin users that are not present in the latest remote student ID set before merge.
   - Result: deleted smoke/student accounts no longer persist in Students UI after refresh/reload.
   - Validation: `npm run check` passed.
+- 2026-05-15: Login-spam hardening (Worker + Node auth backends).
+  - Added auth-start email throttling (`worker/index.js`, `server/server.js`): max 4 code-start attempts per 60 seconds per email; returns 429 with retry seconds when exceeded.
+  - Added targeted login brute-force protection (`worker/index.js`, `server/server.js`): tracks failed `/auth/login` attempts per email+IP, locks after 6 failures for 20 minutes, and clears lock state after successful login.
+  - Worker implementation uses KV (`env.SESSIONS`) keyed by SHA-256 of `email|ip` for login-failure records, so lockout survives process restarts.
+  - Node implementation mirrors the same behavior with in-memory maps for local runtime parity.
+  - Validation: `npm run check` passed (`public/src/app.js`, `server/server.js`, `server/store.js`, `worker/index.js`).

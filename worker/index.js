@@ -40,6 +40,11 @@ const SECURITY_HEADERS = {
 };
 const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_RATE_MAX = 25;
+const AUTH_START_EMAIL_WINDOW_SECONDS = 60;
+const AUTH_START_EMAIL_MAX = 4;
+const LOGIN_FAIL_WINDOW_SECONDS = 15 * 60;
+const LOGIN_FAIL_MAX = 6;
+const LOGIN_FAIL_LOCK_SECONDS = 20 * 60;
 const authRateMap = new Map();
 let authRateLastSweepAt = 0;
 
@@ -282,6 +287,8 @@ async function handleApi(request, env, url, route) {
     const email = String(body.email || "").trim().toLowerCase();
     if (email.length > 254) return json({ error: "Email address too long" }, 400);
     if (!isEmailAddress(email)) return json({ error: "Enter a valid email address" }, 400);
+    const emailThrottle = await trackAuthStartEmailThrottle(env, email);
+    if (emailThrottle.limited) return json({ error: `Too many code requests for this email. Try again in ${emailThrottle.retryAfterSeconds}s.` }, 429);
 
     let user = await getUserByEmail(env, email);
     if (!user) {
@@ -398,12 +405,21 @@ async function handleApi(request, env, url, route) {
     const password = String(body.password || "");
     if (email.length > 254) return json({ error: "Email address too long" }, 400);
     if (!isEmailAddress(email)) return json({ error: "Enter a valid email address" }, 400);
+    const loginLock = await getLoginFailureLockState(env, request, email);
+    if (loginLock.locked) return json({ error: `Too many failed login attempts. Try again in ${loginLock.retryAfterSeconds}s.` }, 429);
     if (password.length > 256) return json({ error: "Password too long" }, 400);
     const user = await getUserByEmail(env, email);
-    if (!user || !user.password_hash) return json({ error: "Invalid email or password" }, 401);
+    if (!user || !user.password_hash) {
+      await recordFailedLoginAttempt(env, request, email);
+      return json({ error: "Invalid email or password" }, 401);
+    }
     const ok = await verifyPassword(password, user.password_hash);
-    if (!ok) return json({ error: "Invalid email or password" }, 401);
+    if (!ok) {
+      await recordFailedLoginAttempt(env, request, email);
+      return json({ error: "Invalid email or password" }, 401);
+    }
 
+    await clearFailedLoginAttempts(env, request, email);
     const session = await createSession(env, user.id);
     await audit(env, user.id, "auth_login", { email: user.email }, request);
     return json({ user: await userView(env, user, user), session }, 200);
@@ -1725,6 +1741,86 @@ function getClientIp(request) {
   const xff = String(request.headers.get("x-forwarded-for") || "").trim();
   if (!xff) return "unknown";
   return xff.split(",")[0].trim() || "unknown";
+}
+
+function safeAuthKeyPart(value, maxLen = 180) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9@._:-]/g, "_")
+    .slice(0, maxLen) || "unknown";
+}
+
+async function trackAuthStartEmailThrottle(env, email) {
+  const key = `auth_start_email:${safeAuthKeyPart(email)}`;
+  const nowMs = Date.now();
+  let record = { count: 0, windowStart: nowMs };
+  const raw = await env.SESSIONS.get(key);
+  if (raw) {
+    try {
+      record = JSON.parse(raw) || record;
+    } catch {
+      record = { count: 0, windowStart: nowMs };
+    }
+  }
+
+  if (nowMs - Number(record.windowStart || 0) > AUTH_START_EMAIL_WINDOW_SECONDS * 1000) {
+    record = { count: 0, windowStart: nowMs };
+  }
+  record.count = Number(record.count || 0) + 1;
+  await env.SESSIONS.put(key, JSON.stringify(record), { expirationTtl: AUTH_START_EMAIL_WINDOW_SECONDS });
+
+  if (record.count <= AUTH_START_EMAIL_MAX) return { limited: false, retryAfterSeconds: 0 };
+  const elapsedMs = Math.max(0, nowMs - Number(record.windowStart || nowMs));
+  const retryAfterSeconds = Math.max(1, AUTH_START_EMAIL_WINDOW_SECONDS - Math.floor(elapsedMs / 1000));
+  return { limited: true, retryAfterSeconds };
+}
+
+async function loginFailureKey(request, email) {
+  const ip = safeAuthKeyPart(getClientIp(request), 80);
+  const digest = await sha256Hex(`${String(email || "").toLowerCase()}|${ip}`);
+  return `auth_login_fail:${digest}`;
+}
+
+async function loadLoginFailureRecord(env, key) {
+  const nowMs = Date.now();
+  let record = { failures: 0, windowStart: nowMs, lockedUntil: 0 };
+  const raw = await env.SESSIONS.get(key);
+  if (raw) {
+    try {
+      record = JSON.parse(raw) || record;
+    } catch {
+      record = { failures: 0, windowStart: nowMs, lockedUntil: 0 };
+    }
+  }
+  if (nowMs - Number(record.windowStart || 0) > LOGIN_FAIL_WINDOW_SECONDS * 1000) {
+    record = { failures: 0, windowStart: nowMs, lockedUntil: 0 };
+  }
+  return { nowMs, record };
+}
+
+async function getLoginFailureLockState(env, request, email) {
+  const key = await loginFailureKey(request, email);
+  const { nowMs, record } = await loadLoginFailureRecord(env, key);
+  const lockedUntil = Number(record.lockedUntil || 0);
+  if (lockedUntil <= nowMs) return { locked: false, retryAfterSeconds: 0 };
+  return { locked: true, retryAfterSeconds: Math.max(1, Math.ceil((lockedUntil - nowMs) / 1000)) };
+}
+
+async function recordFailedLoginAttempt(env, request, email) {
+  const key = await loginFailureKey(request, email);
+  const { nowMs, record } = await loadLoginFailureRecord(env, key);
+  record.failures = Number(record.failures || 0) + 1;
+  if (record.failures >= LOGIN_FAIL_MAX) {
+    record.lockedUntil = nowMs + LOGIN_FAIL_LOCK_SECONDS * 1000;
+  }
+  const ttl = Math.max(LOGIN_FAIL_WINDOW_SECONDS, LOGIN_FAIL_LOCK_SECONDS) + 60;
+  await env.SESSIONS.put(key, JSON.stringify(record), { expirationTtl: ttl });
+}
+
+async function clearFailedLoginAttempts(env, request, email) {
+  const key = await loginFailureKey(request, email);
+  await env.SESSIONS.delete(key);
 }
 
 function isAuthRateLimited(request, scope = "auth") {
