@@ -815,10 +815,11 @@ async function refreshAuditLogs() {
     const result = await apiRequest("/admin/audit-logs", { cacheTtlMs: API_CACHE_TTL.admin });
     state.audit = (result.auditLogs || []).map((entry) => ({
       ...entry,
-      userId: entry.actorId || entry.userId,
+      userId: entry.actorId || entry.actor_id || entry.userId,
       metadata: parseJsonObject(entry.metadata),
-      createdAt: at(entry.createdAt)
-    }));
+      ip: entry.ip || entry.ip_address || "",
+      createdAt: at(entry.createdAt || entry.created_at || "")
+    })).sort((a, b) => at(b.createdAt) - at(a.createdAt));
     saveState();
   } catch (error) {
     console.error("refreshAuditLogs failed", error);
