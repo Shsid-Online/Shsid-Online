@@ -1646,7 +1646,7 @@ function doRender() {
           <span class="session-info">${escapeHtml(user.chineseName)} · G${user.grade} C${user.classNo}</span>
           <span class="session-status">${user.role === "admin" ? "Admin" : (canModerateReports(user) ? "Moderator" : user.status)}</span>
         </button>
-        <button class="btn small ghost" data-action="logout" style="margin-top:10px;color:#fff;border-color:rgba(255,255,255,.25)">Logout</button>
+        <button class="btn small ghost sidebar-logout" data-action="logout">Logout</button>
       </aside>
       <main class="main">${renderView()}</main>
       <aside class="rightbar">${renderRightbar()}</aside>
@@ -2217,12 +2217,18 @@ function renderAuth() {
 function page(title, subtitle, content, actions = "") {
   const topBanner = renderAdCard("top_banner", "Top banner ad", { showPlaceholder: false });
   return `
-    <div class="topbar">
-      <div><h1>${title}</h1><p>${subtitle}</p></div>
-      <div class="row">${actions}</div>
-    </div>
-    ${topBanner}
-    ${content}
+    <section class="page-shell">
+      <div class="topbar">
+        <div class="topbar-copy">
+          <span class="eyebrow">SHSID Social</span>
+          <h1>${title}</h1>
+          <p>${subtitle}</p>
+        </div>
+        <div class="row page-actions">${actions}</div>
+      </div>
+      ${topBanner ? `<div class="page-banner">${topBanner}</div>` : ""}
+      <div class="page-content">${content}</div>
+    </section>
   `;
 }
 
@@ -2318,10 +2324,29 @@ function renderFeed() {
   const postsHtml = filtered.length
     ? `${followingSection}${categorySections}`
     : `<div class="empty-state">${engagementFilter === "following" ? "No posts from people you follow yet." : "No posts yet. Share something positive or helpful to get the feed started."}</div>`;
+  const storyUsers = state.users
+    .filter((item) => item.role !== "admin" && item.status === "verified")
+    .slice(0, 10);
   return page("Feed", "Catch up with what students are sharing right now.", `
-    <div class="grid two" style="margin-bottom:16px">
+    <section class="story-strip panel">
+      <div class="section-head">
+        <div>
+          <h3>People</h3>
+          <p>Quick access to your school community.</p>
+        </div>
+      </div>
+      <div class="story-row">
+        ${storyUsers.length ? storyUsers.map((user) => `
+          <button class="story-pill" data-action="view-profile" data-id="${user.id}">
+            <span class="story-avatar">${renderAvatar(user)}</span>
+            <span class="story-name">${escapeHtml(user.englishName)}</span>
+          </button>
+        `).join("") : `<div class="empty-inline">No verified students yet.</div>`}
+      </div>
+    </section>
+    <section class="feed-toolbar panel">
       <div class="field" style="margin:0">
-        <input id="feed-search" type="text" placeholder="Search posts..." style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd" />
+        <input id="feed-search" type="text" placeholder="Search posts, topics, or categories..." value="${escapeHtml(state.feedSearchQuery || "")}" />
       </div>
       <div class="field" style="margin:0">
         <select id="feed-engagement-filter">
@@ -2332,9 +2357,9 @@ function renderFeed() {
           <option value="saved" ${engagementFilter === "saved" ? "selected" : ""}>Saved posts</option>
         </select>
       </div>
-    </div>
-    <section class="grid" id="feed-posts">${postsHtml}</section>
-    ${postsNextOffset != null ? `<div id="load-more-container" class="row" style="justify-content:center"><button class="btn" data-action="load-more-posts">Load more posts</button></div>` : ""}
+    </section>
+    <section class="grid feed-posts" id="feed-posts">${postsHtml}</section>
+    ${postsNextOffset != null ? `<div id="load-more-container" class="row feed-load-more"><button class="btn" data-action="load-more-posts">Load more posts</button></div>` : ""}
   `);
 }
 
@@ -2396,16 +2421,16 @@ function renderPost(post) {
     <article class="card" data-post-id="${post.id}">
       <div class="post-head">
         ${post.anonymous ? `<div class="avatar">AN</div>` : renderAvatar(author, author?.role === "admin" ? "admin" : "")}
-        <div style="min-width:0">
+        <div class="post-author-copy">
           <div class="between">
             <strong>${escapeHtml(userName(post.authorId, post.anonymous))}</strong>
             ${post.sticky ? `<span class="status gold">Sticky</span>` : ""}
           </div>
-          <div class="muted">${post.category} · ${timeAgo(post.createdAt)} · ${authorFollowerCount} follower${authorFollowerCount === 1 ? "" : "s"} ${currentUser().role === "admin" && post.anonymous ? `· Admin sees ${escapeHtml(userName(post.authorId))}` : ""}</div>
+          <div class="post-meta-line">${post.category} · ${timeAgo(post.createdAt)} · ${authorFollowerCount} follower${authorFollowerCount === 1 ? "" : "s"} ${currentUser().role === "admin" && post.anonymous ? `· Admin sees ${escapeHtml(userName(post.authorId))}` : ""}</div>
         </div>
       </div>
-      <div class="post-text">${escapeHtml(post.text || "")}</div>
       ${post.title ? `<div class="post-title">${escapeHtml(post.title)}</div>` : ""}
+      <div class="post-text">${escapeHtml(post.text || "")}</div>
       ${media.length ? `
         <div class="media-carousel">
           ${media.length > 1 && mediaIndex > 0 ? `<button class="media-nav prev" type="button" data-action="media-prev" data-id="${post.id}">&#8249;</button>` : ""}
@@ -2418,6 +2443,14 @@ function renderPost(post) {
           ${media.length > 1 ? `<div class="media-dots">${media.map((_, idx) => `<span class="media-dot ${idx === mediaIndex ? "active" : ""}"></span>`).join("")}</div>` : ""}
         </div>
       ` : ""}
+      <div class="post-stats">
+        <strong>${hearts.length + likes.length}</strong>
+        <span>reactions</span>
+        <span class="post-stat-dot">•</span>
+        <span>${comments.length} comments</span>
+        <span class="post-stat-dot">•</span>
+        <span>${saves.length} saves</span>
+      </div>
       ${commentsOpen ? `
         <div class="comment-thread">
           ${rootComments.length
@@ -2471,21 +2504,26 @@ function renderStudents() {
   const myFollowing = Array.isArray(currentUser()?.following) ? currentUser().following : [];
   const followedUsers = students.filter((student) => myFollowing.includes(student.id));
   return page("Students", "Meet verified classmates and start conversations.", `
-    <section class="panel" style="margin-bottom:12px">
-      <h3 style="margin:0 0 8px">Following (${followedUsers.length})</h3>
+    <section class="panel section-stack">
+      <div class="section-head">
+        <div>
+          <h3>Following</h3>
+          <p>${followedUsers.length} people you already keep up with.</p>
+        </div>
+      </div>
       ${followedUsers.length
         ? `<div class="row">${followedUsers.map((followed) => `<button class="btn small" data-action="view-profile" data-id="${followed.id}">${escapeHtml(followed.englishName)}</button>`).join("")}</div>`
         : `<p class="muted" style="margin:0">You are not following anyone yet.</p>`
       }
     </section>
-    <section class="grid two">${students.map((user, idx) => `
+    <section class="grid two student-grid">${students.map((user, idx) => `
       ${idx > 0 && idx % 20 === 0 ? renderAdCard("students_inline", "Student section sponsor") : ""}
-      <article class="panel" data-action="view-profile" data-id="${user.id}" style="cursor:pointer">
+      <article class="panel student-card" data-action="view-profile" data-id="${user.id}" style="cursor:pointer">
         <div class="between">
           <div class="row">${renderAvatar(user)}<div><strong>${escapeHtml(user.englishName)}</strong><div class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</div><div class="muted">${Number(user.followerCount || 0)} follower${Number(user.followerCount || 0) === 1 ? "" : "s"}</div></div></div>
         </div>
         <p>${escapeHtml(user.bio)}</p>
-        <div class="row">
+        <div class="row student-card-actions">
           <button class="btn small" data-action="follow" data-id="${user.id}">${myFollowing.includes(user.id) ? "Following" : "Follow"}</button>
           <button class="btn small" data-action="start-chat" data-id="${user.id}">Message</button>
           <button class="btn small" data-action="ask-qna" data-id="${user.id}">Ask</button>
@@ -2509,13 +2547,18 @@ function renderMessages() {
   const isReceiverPending = requestView && active && !accepted && firstAuthorId && firstAuthorId !== currentUser().id;
   const canSendInCurrentThread = Boolean(active?.id) && !isReceiverPending;
   return page("Messages", "Chat with classmates in direct or group conversations.", `
-    <section class="chat-layout">
+    <section class="chat-layout instagram-chat-layout">
       <div class="panel chat-panel chat-panel-list">
-        <div class="chat-section" style="margin-bottom:12px">
-          <strong>Conversations</strong>
-          <div class="row chat-action-row" style="margin-top:8px"><button class="btn small chat-cta-btn" data-action="open-start-direct">Direct Messaging</button><button class="btn small chat-cta-btn" data-action="open-create-convo">Create Group Chat</button></div>
+        <div class="chat-section">
+          <div class="section-head">
+            <div>
+              <h3>Inbox</h3>
+              <p>Direct chats, requests, and group threads.</p>
+            </div>
+          </div>
+          <div class="row chat-action-row"><button class="btn small chat-cta-btn" data-action="open-start-direct">Direct Message</button><button class="btn small chat-cta-btn" data-action="open-create-convo">Create Group</button></div>
         </div>
-        <div class="chat-section chat-tab-section row" style="margin-bottom:12px">
+        <div class="chat-section chat-tab-section row">
           <button class="btn chat-tab-btn ${conversationTab === "inbox" ? "primary" : ""}" data-action="chat-tab-inbox">Inbox (${inbox.length})</button>
           <button class="btn chat-tab-btn ${conversationTab === "requests" ? "primary" : ""}" data-action="chat-tab-requests">Requests (${requests.length})</button>
           <button class="btn chat-tab-btn ${conversationTab === "sent" ? "primary" : ""}" data-action="chat-tab-sent">Sent (${requestsSent.length})</button>
@@ -2691,27 +2734,38 @@ function renderProfile() {
   const followingUsers = isOwnProfile ? state.users.filter((item) => (user.following || []).includes(item.id)) : [];
   return page("Profile", "Your profile, updates, and question box.", `
     ${!isOwnProfile ? `<div class="row" style="margin-bottom:10px"><button class="btn small" data-action="profile-back">Back</button></div>` : ""}
-    <section class="grid two">
-      <div class="panel">
-        <div class="row">${renderAvatar(user, user.role === "admin" ? "admin" : "")}<div><h2>${escapeHtml(user.englishName)}</h2><p class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</p></div></div>
-        <div style="margin-top:10px">
-          <strong>Bio</strong>
-          <p style="margin:6px 0 0">${escapeHtml(user.bio || "No bio added yet.")}</p>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <span class="chip">${followerCount} follower${followerCount === 1 ? "" : "s"}</span>
-          <span class="chip">${followingCount} following</span>
-        </div>
-        <span class="status ${user.status === "verified" ? "green" : "gold"}">${user.status}</span>
-        ${!isOwnProfile ? `
-          <div class="row" style="margin-top:12px">
-            <button class="btn" data-action="start-chat" data-id="${user.id}">Message</button>
+    <section class="panel profile-hero">
+      <div class="profile-hero-main">
+        <div class="profile-hero-avatar">${renderAvatar(user, user.role === "admin" ? "admin" : "")}</div>
+        <div class="profile-hero-copy">
+          <div class="between">
+            <div>
+              <h2>${escapeHtml(user.englishName)}</h2>
+              <p class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</p>
+            </div>
+            <span class="status ${user.status === "verified" ? "green" : "gold"}">${user.status}</span>
           </div>
-        ` : ""}
+          <p class="profile-bio">${escapeHtml(user.bio || "No bio added yet.")}</p>
+          <div class="profile-metrics">
+            <span><strong>${userPosts.length}</strong> posts</span>
+            <span><strong>${followerCount}</strong> followers</span>
+            <span><strong>${followingCount}</strong> following</span>
+          </div>
+          ${!isOwnProfile ? `
+            <div class="row">
+              <button class="btn" data-action="start-chat" data-id="${user.id}">Message</button>
+            </div>
+          ` : ""}
+        </div>
       </div>
-      <div class="panel" style="min-height:200px">
-        <div class="between" style="margin-bottom:10px">
-          <h3 style="margin:0">Question Box</h3>
+    </section>
+    <section class="grid two profile-grid">
+      <div class="panel profile-qna-panel">
+        <div class="section-head">
+          <div>
+            <h3>Question Box</h3>
+            <p>Quick prompts and replies for this profile.</p>
+          </div>
         </div>
         <div class="question-box-grid">
           ${!isOwnProfile ? `
@@ -2728,18 +2782,33 @@ function renderProfile() {
           `).join("") : `<p class="muted">No questions yet.</p>`}
         </div>
       </div>
-    </section>
-    ${isOwnProfile ? `
-      <section class="panel" style="margin-top:16px">
-        <h3 style="margin-top:0">People You Follow</h3>
-        ${followingUsers.length
-          ? `<div class="row">${followingUsers.map((item) => `<button class="btn small" data-action="view-profile" data-id="${item.id}">${escapeHtml(item.englishName)}</button>`).join("")}</div>`
-          : `<p class="muted">You are not following anyone yet.</p>`
+      <div class="panel profile-summary-panel">
+        <div class="section-head">
+          <div>
+            <h3>${isOwnProfile ? "Following" : "Snapshot"}</h3>
+            <p>${isOwnProfile ? "People you keep in your circle." : "Quick profile details."}</p>
+          </div>
+        </div>
+        ${isOwnProfile
+          ? (followingUsers.length
+            ? `<div class="row">${followingUsers.map((item) => `<button class="btn small" data-action="view-profile" data-id="${item.id}">${escapeHtml(item.englishName)}</button>`).join("")}</div>`
+            : `<p class="muted">You are not following anyone yet.</p>`)
+          : `<div class="grid">
+              <div class="chip">Grade ${user.grade}</div>
+              <div class="chip">Class ${user.classNo}</div>
+              <div class="chip">${followerCount} followers</div>
+              <div class="chip">${followingCount} following</div>
+            </div>`
         }
-      </section>
-    ` : ""}
-    <section class="panel" style="margin-top:16px">
-      <h3 style="margin-top:0">Posts</h3>
+      </div>
+    </section>
+    <section class="panel profile-posts-panel">
+      <div class="section-head">
+        <div>
+          <h3>Posts</h3>
+          <p>${isOwnProfile ? "Your recent posts and shared updates." : "Posts from this student."}</p>
+        </div>
+      </div>
       ${userPosts.length
         ? `<div class="grid">${userPosts.map(renderPost).join("")}</div>`
         : `<p class="muted">This user has no posts.</p>`
@@ -2755,7 +2824,12 @@ function renderSuggestions() {
   if (user.role === "admin") {
     return page("Suggestions", "Review student ideas and reply directly.", `
       <section class="panel">
-        <h2 style="margin-top:0">Student Suggestions</h2>
+        <div class="section-head">
+          <div>
+            <h2>Student Suggestions</h2>
+            <p>Read incoming ideas and respond without leaving the dashboard.</p>
+          </div>
+        </div>
         <div class="grid">
           ${rows.length ? rows.map((item) => {
             const parsed = parseSuggestionStatus(item.status);
@@ -2779,8 +2853,13 @@ function renderSuggestions() {
     `);
   }
   return page("Suggestions", "Share ideas and track replies from admins.", `
-    <section class="panel" style="margin-bottom:14px">
-      <h2 style="margin-top:0">Send a Suggestion</h2>
+    <section class="panel section-stack">
+      <div class="section-head">
+        <div>
+          <h2>Send a Suggestion</h2>
+          <p>Share product ideas, bug reports, or quality feedback.</p>
+        </div>
+      </div>
       <div class="field">
         <label>Your suggestion</label>
         <textarea id="suggestion-text" placeholder="Share a platform idea, bug report, or improvement..."></textarea>
@@ -2790,7 +2869,12 @@ function renderSuggestions() {
       </div>
     </section>
     <section class="panel">
-      <h2 style="margin-top:0">Your Suggestion History</h2>
+      <div class="section-head">
+        <div>
+          <h2>Your Suggestion History</h2>
+          <p>Track what you sent and whether the team replied.</p>
+        </div>
+      </div>
       <div class="grid">
         ${rows.length ? rows.map((item) => {
           const parsed = parseSuggestionStatus(item.status);
@@ -2811,9 +2895,14 @@ function renderSettings() {
   const user = currentUser();
   if (!user) return page("Settings", "Loading settings...", `<section class="panel"><p class="muted">Please wait.</p></section>`);
   return page("Settings", "Update your profile and preferences.", `
-    <section class="grid two">
+    <section class="grid two settings-grid">
       <form class="panel grid" id="settings-profile-form">
-        <h3 style="margin:0">Profile Settings</h3>
+        <div class="section-head">
+          <div>
+            <h3>Profile Settings</h3>
+            <p>Keep your name, class, photo, and bio current.</p>
+          </div>
+        </div>
         <div class="field"><label>English name</label><input id="settings-en" value="${escapeHtml(user.englishName || "")}" required></div>
         <div class="field"><label>Chinese name</label><input id="settings-cn" value="${escapeHtml(user.chineseName || "")}" required></div>
         <div class="grid two">
@@ -2830,7 +2919,12 @@ function renderSettings() {
         <div class="row"><button class="btn primary" type="submit">Save Settings</button></div>
       </form>
       <section class="panel">
-        <h3 style="margin-top:0">Rules & Functions</h3>
+        <div class="section-head">
+          <div>
+            <h3>Rules & Functions</h3>
+            <p>What this account can do and how moderation works.</p>
+          </div>
+        </div>
         <p style="margin:0 0 12px"><strong>Profile Access:</strong> Once your profile is filled out, you can use the normal student features.</p>
         <p style="margin:0 0 12px"><strong>Anonymous Functions:</strong> Anonymous posts, comments, messages, and Q&A need a verification video on file.</p>
         <p style="margin:0 0 12px"><strong>Direct Messages:</strong> Send public or anonymous messages to other students.</p>
@@ -2839,7 +2933,12 @@ function renderSettings() {
         <p style="margin:0"><strong>Q&A Box:</strong> Other students can ask you questions on your profile.</p>
       </section>
       <form class="panel grid" id="settings-anon-verification-form">
-        <h3 style="margin:0">Anonymous Access</h3>
+        <div class="section-head">
+          <div>
+            <h3>Anonymous Access</h3>
+            <p>Verification is only needed if you want to use anonymous features.</p>
+          </div>
+        </div>
         <p class="muted" style="margin:0">
           ${hasAnonymousFeatureAccess(user)
             ? "Your verification video is already on file. You can use anonymous features."
@@ -3017,7 +3116,13 @@ function renderRightbar() {
   return `
     <div class="grid">
       <section class="panel">
-        <div class="between"><strong>Notifications</strong><button class="btn small" data-action="mark-read">Read</button></div>
+        <div class="between">
+          <div>
+            <strong>Notifications</strong>
+            <p class="panel-kicker">Unread activity and updates.</p>
+          </div>
+          <button class="btn small" data-action="mark-read">Read</button>
+        </div>
         ${unread.length ? unread.map((n) => {
           const expanded = expandedNotificationId === n.id;
           return `
@@ -3034,7 +3139,12 @@ function renderRightbar() {
         }).join("") : `<p class="muted">No unread notifications.</p>`}
       </section>
       <section class="panel">
-        <strong>Post of the Day</strong>
+        <div class="section-head">
+          <div>
+            <strong>Post of the Day</strong>
+            <p>Most liked posts in your orbit.</p>
+          </div>
+        </div>
         ${leaders.map((post) => `<button class="comment post-day-item" style="margin:10px 0 0;text-align:left;width:100%" data-action="open-post-day" data-id="${post.id}">${escapeHtml(post.category)} · ${post.likes.length} likes<br>${escapeHtml(post.text.slice(0, 80))}</button>`).join("")}
       </section>
       ${isAdmin ? `<section class="panel">
