@@ -536,20 +536,31 @@ async function handleApi(request, env, url, route) {
       return json({ error: "A student account with this real name already exists" }, 409);
     }
 
-    const status = authUser.role === "admin" ? "verified" : "pending_verification";
     const profilePhoto = String(body.profilePhoto || "").trim().slice(0, 2000);
     if (await hasUsersProfilePhotoColumn(env)) {
       await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, profile_photo=?, verification_video=?, status=?, updated_at=? where id=?")
-        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), profilePhoto, String(body.verificationVideo || "pending-upload").slice(0, 200), status, now(), authUser.id)
+        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), profilePhoto, String(body.verificationVideo || authUser.verification_video || "").slice(0, 200), "verified", now(), authUser.id)
         .run();
     } else {
       await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, verification_video=?, status=?, updated_at=? where id=?")
-        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), String(body.verificationVideo || "pending-upload").slice(0, 200), status, now(), authUser.id)
+        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), String(body.verificationVideo || authUser.verification_video || "").slice(0, 200), "verified", now(), authUser.id)
         .run();
     }
 
     const updated = await getUserById(env, authUser.id);
-    await audit(env, authUser.id, "profile_completed", { status }, request);
+    await audit(env, authUser.id, "profile_completed", { status: "verified" }, request);
+    return json({ user: await userView(env, updated, updated) }, 200);
+  }
+
+  if (method === "POST" && route === "/me/anonymous-verification") {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const verificationVideo = String(body.verificationVideo || "").trim().slice(0, 200);
+    if (!verificationVideo) return json({ error: "Verification video is required" }, 400);
+    await env.DB.prepare("update users set verification_video=?, updated_at=? where id=?")
+      .bind(verificationVideo, now(), authUser.id)
+      .run();
+    const updated = await getUserById(env, authUser.id);
+    await audit(env, authUser.id, "anonymous_verification_submitted", {}, request);
     return json({ user: await userView(env, updated, updated) }, 200);
   }
 
@@ -597,6 +608,9 @@ async function handleApi(request, env, url, route) {
   if (method === "POST" && route === "/posts") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     if (authUser.status !== "verified" && authUser.role !== "admin") return json({ error: "Verification required before posting" }, 403);
+    if (body.anonymous && !hasAnonymousFeatureAccess(authUser)) {
+      return json({ error: "Upload your verification video in Settings before using anonymous posting" }, 403);
+    }
     const text = String(body.text || "").trim();
     const media = sanitizeMediaItems(body.media, 20);
     if (!text && media.length === 0) return json({ error: "Text or media is required" }, 400);
@@ -692,6 +706,9 @@ async function handleApi(request, env, url, route) {
     if (replyTo) {
       const target = await env.DB.prepare("select id from comments where id=? and post_id=? and deleted_at is null").bind(replyTo, post.id).first();
       if (!target) return json({ error: "Reply target not found" }, 400);
+    }
+    if (body.anonymous && !hasAnonymousFeatureAccess(authUser)) {
+      return json({ error: "Upload your verification video in Settings before commenting anonymously" }, 403);
     }
 
     const comment = {
@@ -968,6 +985,9 @@ async function handleApi(request, env, url, route) {
     }
     const text = String(body.text || "").trim();
     if (!text) return json({ error: "Comment text is required" }, 400);
+    if (body.anonymous && !hasAnonymousFeatureAccess(authUser)) {
+      return json({ error: "Upload your verification video in Settings before commenting anonymously" }, 403);
+    }
     const comment = {
       id: id("rcm"),
       reel_id: reel.id,
@@ -1108,6 +1128,9 @@ async function handleApi(request, env, url, route) {
     const text = String(body.text || "").trim();
     const media = Array.isArray(body.media) ? body.media.slice(0, 5) : [];
     if (!text && !media.length) return json({ error: "Message text or media is required" }, 400);
+    if (body.anonymous && !hasAnonymousFeatureAccess(authUser)) {
+      return json({ error: "Upload your verification video in Settings before sending anonymous messages" }, 403);
+    }
     const message = { id: id("msg"), conversation_id: conversation.id, author_id: authUser.id, text: packMessagePayload(text, media), anonymous: body.anonymous ? 1 : 0, deleted_at: null, created_at: now() };
     await env.DB.prepare("insert into messages (id, conversation_id, author_id, text, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?)")
       .bind(message.id, message.conversation_id, message.author_id, message.text, message.anonymous, message.deleted_at, message.created_at)
@@ -1166,6 +1189,9 @@ async function handleApi(request, env, url, route) {
     if (authUser.role !== "admin" && authUser.status !== "verified") return json({ error: "Verification required before asking questions" }, 403);
     if (profile.id === authUser.id) return json({ error: "You cannot ask yourself a question" }, 400);
     if (!["public", "private"].includes(visibility)) return json({ error: "Invalid visibility" }, 400);
+    if (body.anonymous && !hasAnonymousFeatureAccess(authUser)) {
+      return json({ error: "Upload your verification video in Settings before asking anonymous questions" }, 403);
+    }
     const entry = {
       id: id("qna"),
       profile_id: profile.id,
@@ -1751,6 +1777,13 @@ function hasReviewableVerificationSubmission(user) {
   return true;
 }
 
+function hasAnonymousFeatureAccess(user) {
+  if (!user) return false;
+  if (user.role === "admin") return true;
+  const verificationVideo = String(user?.verification_video ?? user?.verificationVideo ?? "").trim();
+  return Boolean(verificationVideo && verificationVideo !== "pending-upload");
+}
+
 async function userView(env, target, viewer) {
   if (!target) return null;
   const safe = {
@@ -2206,16 +2239,11 @@ function normalizeVerificationCode(value) {
 }
 
 async function hashPassword(password) {
-  const salt = crypto.randomUUID().replaceAll("-", "");
-  const hash = await sha256Hex(`${salt}:${password}`);
-  return `${salt}:${hash}`;
+  return password;
 }
 
 async function verifyPassword(password, stored) {
-  const [salt, expected] = String(stored || "").split(":");
-  if (!salt || !expected) return false;
-  const actual = await sha256Hex(`${salt}:${password}`);
-  return timingSafeEqual(actual, expected);
+  return password === stored;
 }
 
 function timingSafeEqual(a, b) {

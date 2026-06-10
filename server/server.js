@@ -632,6 +632,13 @@ function hasReviewableVerificationSubmission(user) {
   return true;
 }
 
+function hasAnonymousFeatureAccess(user) {
+  if (!user) return false;
+  if (user.role === "admin") return true;
+  const verificationVideo = String(user.verificationVideo || "").trim();
+  return Boolean(verificationVideo && verificationVideo !== "pending-upload");
+}
+
 function userView(target, viewer) {
   const safe = publicUser(target);
   if (!safe) return null;
@@ -848,12 +855,24 @@ async function handleApi(req, res, url) {
       chineseName,
       grade,
       classNo,
-      verificationVideo: String(body.verificationVideo || "pending-upload").slice(0, 200),
+      verificationVideo: String(body.verificationVideo || user.verificationVideo || "").slice(0, 200),
       bio: String(body.bio || "").trim().slice(0, MAX_TEXT_LEN),
-      status: user.role === "admin" ? "verified" : "pending_verification",
+      status: "verified",
       updatedAt: now()
     });
     store.audit(user.id, "profile_completed");
+    store.save();
+    return sendJson(res, 200, { user: userView(user, user) }, req);
+  }
+
+  if (method === "POST" && url.pathname === "/api/me/anonymous-verification") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const verificationVideo = String(body.verificationVideo || "").trim().slice(0, 200);
+    if (!verificationVideo) return sendJson(res, 400, { error: "Verification video is required" }, req);
+    user.verificationVideo = verificationVideo;
+    user.updatedAt = now();
+    store.audit(user.id, "anonymous_verification_submitted");
     store.save();
     return sendJson(res, 200, { user: userView(user, user) }, req);
   }
@@ -893,6 +912,9 @@ async function handleApi(req, res, url) {
     const user = requireAuth(req, res);
     if (!user) return;
     if (user.status !== "verified" && user.role !== "admin") return sendJson(res, 403, { error: "Verification required before posting" }, req);
+    if (body.anonymous && !hasAnonymousFeatureAccess(user)) {
+      return sendJson(res, 403, { error: "Upload your verification video in Settings before using anonymous posting" }, req);
+    }
     const text = String(body.text || "").trim();
     if (!text && !(body.media || []).length) return sendJson(res, 400, { error: "Text or media is required" }, req);
     const sanitizedText = text.slice(0, MAX_TEXT_LEN);
@@ -977,6 +999,9 @@ async function handleApi(req, res, url) {
     const replyTo = String(body.replyTo || "").trim();
     if (replyTo && !post.comments.some((item) => item.id === replyTo && !item.deletedAt)) {
       return sendJson(res, 400, { error: "Reply target not found" }, req);
+    }
+    if (body.anonymous && !hasAnonymousFeatureAccess(user)) {
+      return sendJson(res, 403, { error: "Upload your verification video in Settings before commenting anonymously" }, req);
     }
     const comment = {
       id: id("cmt"),
@@ -1188,6 +1213,9 @@ async function handleApi(req, res, url) {
     const text = String(body.text || "").trim();
     const media = sanitizeMediaItems(body.media, 5);
     if (!text && !media.length) return sendJson(res, 400, { error: "Message text or media is required" }, req);
+    if (body.anonymous && !hasAnonymousFeatureAccess(user)) {
+      return sendJson(res, 403, { error: "Upload your verification video in Settings before sending anonymous messages" }, req);
+    }
     const message = {
       id: id("msg"),
       authorId: user.id,
@@ -1375,6 +1403,9 @@ async function handleApi(req, res, url) {
     if (user.role !== "admin" && user.status !== "verified") return sendJson(res, 403, { error: "Verification required before asking questions" });
     if (profileId === user.id) return sendJson(res, 400, { error: "You cannot ask yourself a question" });
     if (!["public", "private"].includes(visibility)) return sendJson(res, 400, { error: "Invalid visibility" });
+    if (body.anonymous && !hasAnonymousFeatureAccess(user)) {
+      return sendJson(res, 403, { error: "Upload your verification video in Settings before asking anonymous questions" }, req);
+    }
     const entry = {
       id: id("qna"),
       profileId,

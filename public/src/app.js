@@ -342,10 +342,14 @@ function hydrateAuthFromUrl() {
 function nextAuthStepForUser(user) {
   if (user.role === "admin") return "app";
   if (!user.englishName || !user.grade || !user.classNo) return "profile";
-  if (user.status === "rejected") return "video";
-  if (!user.verificationVideo) return "video";
-  if (user.status !== "verified" && user.role !== "admin") return "waiting";
   return "app";
+}
+
+function hasAnonymousFeatureAccess(user) {
+  if (!user) return false;
+  if (user.role === "admin") return true;
+  const verificationVideo = String(user.verificationVideo || "").trim();
+  return Boolean(verificationVideo && verificationVideo !== "pending-upload");
 }
 
 function uid(prefix) {
@@ -2223,9 +2227,6 @@ function page(title, subtitle, content, actions = "") {
 
 function renderView() {
   const user = currentUser();
-  if (user.status !== "verified" && user.role !== "admin" && !["profile", "settings", "suggestions"].includes(view)) {
-    return page("Verification pending", "Your account is active. Full access unlocks after admin approval.", renderProfile());
-  }
   const routes = {
     feed: renderFeed,
     "single-post": renderSinglePost,
@@ -2829,13 +2830,31 @@ function renderSettings() {
       </form>
       <section class="panel">
         <h3 style="margin-top:0">Rules & Functions</h3>
-        <p style="margin:0 0 12px"><strong>Verification:</strong> Only verified SHSID students can post and message.</p>
-        <p style="margin:0 0 12px"><strong>Anonymous Posting:</strong> Choose anonymous when posting to hide your identity.</p>
+        <p style="margin:0 0 12px"><strong>Profile Access:</strong> Once your profile is filled out, you can use the normal student features.</p>
+        <p style="margin:0 0 12px"><strong>Anonymous Functions:</strong> Anonymous posts, comments, messages, and Q&A need a verification video on file.</p>
         <p style="margin:0 0 12px"><strong>Direct Messages:</strong> Send public or anonymous messages to other students.</p>
         <p style="margin:0 0 12px"><strong>Reports:</strong> Report inappropriate content. Admins will review within 24 hours.</p>
         <p style="margin:0 0 12px"><strong>Suggestions:</strong> Submit feedback and track admin responses.</p>
         <p style="margin:0"><strong>Q&A Box:</strong> Other students can ask you questions on your profile.</p>
       </section>
+      <form class="panel grid" id="settings-anon-verification-form">
+        <h3 style="margin:0">Anonymous Access</h3>
+        <p class="muted" style="margin:0">
+          ${hasAnonymousFeatureAccess(user)
+            ? "Your verification video is already on file. You can use anonymous features."
+            : "Upload a verification video once if you want to unlock anonymous posting, comments, messages, and Q&A."}
+        </p>
+        <div class="field">
+          <label>Verification video</label>
+          <div id="settings-verify-dropzone" class="dropzone">Drag and drop verification video here, or click to pick file.</div>
+          <input id="settings-verify-video" type="file" accept="video/*">
+          <div id="settings-verify-file-chips" class="file-chips"></div>
+        </div>
+        <p class="muted" style="margin:0">
+          ${user.verificationVideo ? `Current file: ${escapeHtml(user.verificationVideo)}` : "No verification video on file yet."}
+        </p>
+        <div class="row"><button class="btn primary" type="submit">Save verification video</button></div>
+      </form>
       ${user.role === "admin" ? `
       <section class="panel">
         <h3 style="margin-top:0">Ad Manager</h3>
@@ -3404,30 +3423,46 @@ function bindAuth() {
 
   document.querySelector("#auth-profile-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const firstName = document.querySelector("#reg-first")?.value.trim() || "";
-    const middleName = document.querySelector("#reg-middle")?.value.trim() || "";
-    const lastName = document.querySelector("#reg-last")?.value.trim() || "";
-    const chineseName = document.querySelector("#reg-cn")?.value.trim() || "";
-    const grade = Number(document.querySelector("#reg-grade")?.value);
-    const classNo = Number(document.querySelector("#reg-class")?.value);
-    const photoFile = document.querySelector("#reg-photo")?.files?.[0];
-    if (!firstName || !lastName) return toast("Enter your first and last name");
-    if (!Number.isInteger(grade) || grade < 1 || grade > 12) return toast("Year must be 1-12");
-    if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return toast("Class must be 1-13");
-    const englishName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
-    state.pendingEnglishName = englishName;
-    state.pendingChineseName = chineseName;
-    state.pendingGrade = grade;
-    state.pendingClassNo = classNo;
-    state.pendingProfilePhoto = "";
-    if (photoFile && (photoFile.type || "").startsWith("image/")) {
-      const [uploadedPhoto] = await uploadFiles([photoFile]);
-      state.pendingProfilePhoto = uploadedPhoto?.url || "";
+    try {
+      const firstName = document.querySelector("#reg-first")?.value.trim() || "";
+      const middleName = document.querySelector("#reg-middle")?.value.trim() || "";
+      const lastName = document.querySelector("#reg-last")?.value.trim() || "";
+      const chineseName = document.querySelector("#reg-cn")?.value.trim() || "";
+      const grade = Number(document.querySelector("#reg-grade")?.value);
+      const classNo = Number(document.querySelector("#reg-class")?.value);
+      const photoFile = document.querySelector("#reg-photo")?.files?.[0];
+      if (!firstName || !lastName) return toast("Enter your first and last name");
+      if (!Number.isInteger(grade) || grade < 1 || grade > 12) return toast("Year must be 1-12");
+      if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return toast("Class must be 1-13");
+      const englishName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
+      state.pendingEnglishName = englishName;
+      state.pendingChineseName = chineseName;
+      state.pendingGrade = grade;
+      state.pendingClassNo = classNo;
+      state.pendingProfilePhoto = "";
+      if (photoFile && (photoFile.type || "").startsWith("image/")) {
+        const [uploadedPhoto] = await uploadFiles([photoFile]);
+        state.pendingProfilePhoto = uploadedPhoto?.url || "";
+      }
+      const result = await apiRequest("/auth/complete-profile", {
+        method: "POST",
+        body: JSON.stringify({
+          englishName,
+          chineseName,
+          grade,
+          classNo,
+          profilePhoto: String(state.pendingProfilePhoto || "")
+        })
+      });
+      mergeApiUser(result.user);
+      state.authStep = nextAuthStepForUser(result.user);
+      if (state.authStep === "app") view = "feed";
+      saveState();
+      render();
+      toast("Profile saved");
+    } catch (error) {
+      toast(error.message || "Could not save your profile");
     }
-    state.pendingVerificationWords = generateVerificationWords(10);
-    state.authStep = "video";
-    saveState();
-    render();
   });
 
   document.querySelector("#auth-video-form")?.addEventListener("submit", async (event) => {
@@ -3483,6 +3518,8 @@ function bindAuth() {
   bindFileChips("reg-photo", "reg-photo-chips");
   setupDropzone("settings-photo-dropzone", "settings-photo", false);
   bindFileChips("settings-photo", "settings-photo-chips");
+  setupDropzone("settings-verify-dropzone", "settings-verify-video", false);
+  bindFileChips("settings-verify-video", "settings-verify-file-chips");
 
   document.querySelector("#settings-profile-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -3509,6 +3546,26 @@ function bindAuth() {
     saveState();
     toast("Settings saved");
     render();
+  });
+
+  document.querySelector("#settings-anon-verification-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const videoFile = document.querySelector("#settings-verify-video")?.files?.[0];
+    if (!videoFile) return toast("Choose a verification video");
+    if (!isLikelyVideoFile(videoFile)) return toast("Please upload a valid video file.");
+    try {
+      const uploadedVideoUrl = await uploadVerificationVideoMultipart(videoFile);
+      const result = await apiRequest("/me/anonymous-verification", {
+        method: "POST",
+        body: JSON.stringify({ verificationVideo: uploadedVideoUrl || videoFile.name })
+      });
+      mergeApiUser(result.user);
+      saveState();
+      toast("Anonymous access unlocked");
+      render();
+    } catch (error) {
+      toast(error.message || "Could not save verification video");
+    }
   });
 
 }

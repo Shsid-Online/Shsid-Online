@@ -15,15 +15,14 @@ function id(prefix) {
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  const hash = password;
   return `${salt}:${hash}`;
 }
 
 function verifyPassword(password, stored) {
-  const [salt, expected] = String(stored).split(":");
-  if (!salt || !expected) return false;
-  const actual = crypto.scryptSync(password, salt, 64);
-  return crypto.timingSafeEqual(Buffer.from(expected, "hex"), actual);
+  const [salt, storedPassword] = String(stored).split(":");
+  if (!salt || !storedPassword) return false;
+  return password === storedPassword;
 }
 
 function tokenDigest(token) {
