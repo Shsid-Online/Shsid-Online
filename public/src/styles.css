@@ -1,9 +1,9 @@
 :root {
   color-scheme: light;
   --font-ui: "SF Pro Text", "SF Pro Display", "Helvetica Neue", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-brand: "Snell Roundhand", "Brush Script MT", cursive;
-  --bg: #fafafa;
-  --bg-muted: #f4f4f5;
+  --font-brand: var(--font-ui);
+  --bg: #f7f7f8;
+  --bg-muted: #f1f1f3;
   --bg-soft: #ffffff;
   --bg-tint: #fff7f8;
   --ink: #121217;
@@ -23,9 +23,9 @@
   --warning-soft: #fff7ed;
   --danger: #be123c;
   --danger-soft: #fff1f2;
-  --shadow-sm: 0 1px 2px rgba(18, 18, 23, 0.05);
-  --shadow-md: 0 10px 30px rgba(18, 18, 23, 0.08);
-  --shadow-lg: 0 24px 60px rgba(18, 18, 23, 0.12);
+  --shadow-sm: 0 1px 2px rgba(18, 18, 23, 0.04);
+  --shadow-md: 0 8px 24px rgba(18, 18, 23, 0.06);
+  --shadow-lg: 0 20px 46px rgba(18, 18, 23, 0.1);
   --radius-sm: 12px;
   --radius-md: 20px;
   --radius-lg: 28px;
@@ -47,10 +47,7 @@ body {
   min-height: 100vh;
   font-family: var(--font-ui);
   color: var(--ink);
-  background:
-    radial-gradient(circle at top left, rgba(255, 45, 85, 0.08), transparent 24%),
-    radial-gradient(circle at top right, rgba(255, 138, 0, 0.08), transparent 24%),
-    linear-gradient(180deg, #ffffff, #fafafa 32%, #f6f6f8 100%);
+  background: linear-gradient(180deg, #fbfbfc, #f6f6f8 100%);
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -84,9 +81,9 @@ a {
   display: grid;
   grid-template-columns: 260px minmax(0, 720px) minmax(280px, 360px);
   justify-content: center;
-  gap: 24px;
+  gap: 40px;
   min-height: 100vh;
-  padding: 24px;
+  padding: 32px 28px 48px;
 }
 
 .app.app-admin,
@@ -105,28 +102,30 @@ a {
   align-self: start;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 28px;
   min-height: calc(100vh - 48px);
-  padding: 24px 18px;
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  border-radius: 30px;
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(22px);
-  box-shadow: var(--shadow-md);
+  padding: 16px 8px 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 4px 8px 10px;
+  padding: 6px 12px 14px;
   color: var(--ink);
 }
 
 .brand span:last-child {
   font-family: var(--font-brand);
-  font-size: 2rem;
-  line-height: 1;
+  font-size: 1.2rem;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .brand-mark {
@@ -134,16 +133,16 @@ a {
   place-items: center;
   width: 44px;
   height: 44px;
-  border-radius: 16px;
-  background: linear-gradient(135deg, var(--brand), var(--brand-warm) 52%, var(--brand-violet));
+  border-radius: 14px;
+  background: linear-gradient(135deg, #ff4d6d, #ff7a59);
   color: #fff;
   font-weight: 800;
-  box-shadow: 0 12px 30px rgba(225, 29, 72, 0.25);
+  box-shadow: 0 8px 18px rgba(225, 29, 72, 0.18);
 }
 
 .nav {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .nav button,
@@ -162,9 +161,9 @@ a {
   display: flex;
   align-items: center;
   gap: 14px;
-  min-height: 56px;
-  padding: 12px 16px;
-  border-radius: 18px;
+  min-height: 52px;
+  padding: 12px 14px;
+  border-radius: 16px;
   text-align: left;
   color: var(--ink-soft);
   font-size: 1rem;
@@ -172,15 +171,15 @@ a {
 }
 
 .nav button:hover {
-  background: rgba(255, 45, 85, 0.05);
+  background: rgba(18, 18, 23, 0.04);
   color: var(--ink);
-  transform: translateX(2px);
+  transform: none;
 }
 
 .nav button.active {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 244, 246, 0.94));
+  background: #ffffff;
   color: var(--ink);
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 1px 0 rgba(18, 18, 23, 0.04), 0 8px 18px rgba(18, 18, 23, 0.05);
 }
 
 .nav-ico {
@@ -190,16 +189,16 @@ a {
   height: 38px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: #fff;
+  background: #f4f4f5;
   border: 1px solid rgba(18, 18, 23, 0.06);
   color: var(--ink);
   font-size: 0.95rem;
-  box-shadow: 0 8px 18px rgba(18, 18, 23, 0.04);
+  box-shadow: none;
 }
 
 .nav button.active .nav-ico,
 .nav button:hover .nav-ico {
-  background: linear-gradient(135deg, var(--brand-soft), #fff1d6);
+  background: #ffe8ee;
   color: var(--brand-strong);
 }
 
@@ -217,11 +216,11 @@ a {
 
 .session {
   margin-top: auto;
-  padding: 16px;
+  padding: 18px;
   border: 1px solid var(--line);
-  border-radius: 22px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 250, 251, 0.98));
-  box-shadow: var(--shadow-sm);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: none;
 }
 
 .session-card-btn {
@@ -279,17 +278,17 @@ a {
   position: sticky;
   top: 24px;
   align-self: start;
-  padding-top: 4px;
+  padding-top: 8px;
 }
 
 .page-shell {
   display: grid;
-  gap: 20px;
+  gap: 28px;
 }
 
 .page-content {
   display: grid;
-  gap: 20px;
+  gap: 24px;
 }
 
 .page-banner:empty {
@@ -300,13 +299,13 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 20px;
-  padding: 8px 6px 0;
+  gap: 24px;
+  padding: 12px 0 4px;
 }
 
 .topbar-copy {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .eyebrow {
@@ -322,18 +321,18 @@ a {
 
 .topbar h1 {
   margin: 0;
-  font-size: clamp(2rem, 3vw, 2.8rem);
-  line-height: 0.95;
+  font-size: clamp(2.1rem, 3vw, 3rem);
+  line-height: 1;
   letter-spacing: -0.05em;
   font-weight: 760;
 }
 
 .topbar p {
   margin: 0;
-  max-width: 54ch;
+  max-width: 60ch;
   color: var(--muted);
-  font-size: 1rem;
-  line-height: 1.65;
+  font-size: 1.02rem;
+  line-height: 1.75;
 }
 
 .page-actions {
@@ -362,8 +361,8 @@ h3 {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
+  gap: 18px;
+  margin-bottom: 18px;
 }
 
 .section-head p,
@@ -381,7 +380,7 @@ h3 {
 
 .grid {
   display: grid;
-  gap: 20px;
+  gap: 24px;
 }
 
 .grid.two {
@@ -398,8 +397,8 @@ h3 {
 .auth-card,
 .modal {
   border: 1px solid rgba(231, 231, 236, 0.9);
-  border-radius: 26px;
-  background: rgba(255, 255, 255, 0.96);
+  border-radius: 22px;
+  background: #fff;
   box-shadow: var(--shadow-sm);
 }
 
@@ -407,13 +406,13 @@ h3 {
 .composer,
 .auth-card,
 .modal {
-  padding: 24px;
+  padding: 28px;
 }
 
 .panel:hover,
 .card:hover,
 .composer:hover {
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
 }
 
 .card {
@@ -438,7 +437,7 @@ h3 {
   font-size: 0.94rem;
   font-weight: 650;
   line-height: 1;
-  box-shadow: 0 8px 16px rgba(18, 18, 23, 0.04);
+  box-shadow: none;
   transition:
     transform var(--transition-fast),
     box-shadow var(--transition-fast),
@@ -448,9 +447,9 @@ h3 {
 }
 
 .btn:hover {
-  transform: translateY(-1px);
-  border-color: rgba(225, 29, 72, 0.2);
-  box-shadow: 0 12px 24px rgba(18, 18, 23, 0.08);
+  transform: none;
+  border-color: rgba(18, 18, 23, 0.16);
+  box-shadow: none;
 }
 
 .btn:active {
@@ -467,14 +466,14 @@ h3 {
 
 .btn.primary {
   border-color: rgba(225, 29, 72, 0.12);
-  background: linear-gradient(135deg, var(--brand), var(--brand-warm) 72%);
+  background: var(--brand);
   color: #fff;
-  box-shadow: 0 14px 28px rgba(225, 29, 72, 0.22);
+  box-shadow: none;
 }
 
 .btn.primary:hover {
   border-color: rgba(225, 29, 72, 0.22);
-  box-shadow: 0 16px 34px rgba(225, 29, 72, 0.28);
+  background: var(--brand-strong);
 }
 
 .btn.danger {
@@ -528,7 +527,7 @@ h3 {
 .field {
   display: grid;
   gap: 8px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .field label {
@@ -661,7 +660,7 @@ h3 {
 }
 
 .story-strip {
-  padding: 18px 20px;
+  padding: 24px 24px 20px;
 }
 
 .story-row {
@@ -726,12 +725,12 @@ h3 {
 .feed-toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(210px, 0.8fr);
-  gap: 16px;
+  gap: 18px;
   align-items: end;
 }
 
 .feed-posts {
-  gap: 20px;
+  gap: 28px;
 }
 
 .feed-posts > .panel,
@@ -747,8 +746,8 @@ h3 {
 
 .feed-category-block {
   display: grid;
-  gap: 18px;
-  padding: 20px;
+  gap: 22px;
+  padding: 24px;
 }
 
 .feed-category-head {
@@ -759,7 +758,7 @@ h3 {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 18px 18px 12px;
+  padding: 22px 22px 14px;
 }
 
 .post-author-copy {
@@ -775,24 +774,24 @@ h3 {
 }
 
 .post-title {
-  padding: 0 18px 8px;
+  padding: 0 22px 10px;
   font-size: 1rem;
   font-weight: 700;
   line-height: 1.45;
 }
 
 .post-text {
-  padding: 0 18px;
+  padding: 0 22px;
   color: var(--ink-soft);
   font-size: 0.95rem;
-  line-height: 1.7;
+  line-height: 1.8;
 }
 
 .post-stats {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 18px 0;
+  padding: 18px 22px 0;
   color: var(--muted);
   font-size: 0.83rem;
 }
@@ -809,7 +808,7 @@ h3 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  padding: 16px 18px 0;
+  padding: 18px 22px 0;
 }
 
 .media-tile {
@@ -849,7 +848,7 @@ h3 {
 
 .media-carousel {
   position: relative;
-  padding: 16px 18px 0;
+  padding: 18px 22px 0;
 }
 
 .media-stage .media-tile {
@@ -942,8 +941,8 @@ h3 {
 .post-actions {
   display: flex;
   gap: 10px;
-  padding: 16px 18px 18px;
-  margin-top: 14px;
+  padding: 18px 22px 22px;
+  margin-top: 18px;
   border-top: 1px solid var(--line);
   flex-wrap: wrap;
 }
@@ -956,10 +955,10 @@ h3 {
 }
 
 .comment {
-  margin: 0 18px 10px;
-  padding: 13px 14px;
+  margin: 0 22px 12px;
+  padding: 15px 16px;
   border-radius: 18px;
-  background: linear-gradient(180deg, #fbfbfc, #f6f6f8);
+  background: #fafafb;
   border: 1px solid rgba(231, 231, 236, 0.85);
   font-size: 0.875rem;
   line-height: 1.6;
@@ -981,11 +980,11 @@ h3 {
 }
 
 .comment-composer {
-  margin: 12px 18px 0;
-  padding: 14px;
+  margin: 14px 22px 0;
+  padding: 16px;
   border: 1px solid var(--line);
-  border-radius: 20px;
-  background: #fbfbfc;
+  border-radius: 18px;
+  background: #fafafb;
 }
 
 .comment-composer textarea {
@@ -1075,7 +1074,7 @@ h3 {
 .admin-chat-layout {
   display: grid;
   grid-template-columns: minmax(300px, 0.95fr) minmax(0, 1.7fr);
-  gap: 20px;
+  gap: 24px;
   align-items: start;
 }
 
@@ -1093,18 +1092,18 @@ h3 {
 }
 
 .chat-panel-list {
-  padding: 18px;
+  padding: 22px;
 }
 
 .chat-panel-thread {
-  padding: 18px;
+  padding: 22px;
 }
 
 .chat-section {
   border: 1px solid var(--line);
-  border-radius: 20px;
-  background: linear-gradient(180deg, #fcfcfd, #f8f8fa);
-  padding: 14px;
+  border-radius: 18px;
+  background: #fafafb;
+  padding: 16px;
 }
 
 .chat-tab-section {
@@ -1130,7 +1129,7 @@ h3 {
 }
 
 .conv-selected {
-  background: linear-gradient(180deg, #fff7fa, #ffffff);
+  background: #fff6f8;
   border-color: rgba(225, 29, 72, 0.16);
 }
 
@@ -1223,9 +1222,9 @@ h3 {
   text-align: left;
   cursor: pointer;
   border: 1px solid var(--line);
-  border-radius: 20px;
-  background: linear-gradient(180deg, #fff, #fbfbfc);
-  padding: 18px;
+  border-radius: 18px;
+  background: #fff;
+  padding: 20px;
   box-shadow: var(--shadow-sm);
 }
 
@@ -1247,17 +1246,17 @@ h3 {
 
 .question-box-compose {
   border-style: dashed;
-  background: linear-gradient(180deg, #fff7fa, #fff);
+  background: #fff8fa;
 }
 
 .profile-hero {
-  padding: 28px;
+  padding: 34px;
 }
 
 .profile-hero-main {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 24px;
+  gap: 28px;
   align-items: start;
 }
 
@@ -1303,8 +1302,8 @@ h3 {
   margin-top: 12px;
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 20px;
-  background: linear-gradient(180deg, #fff, #fcfcfd);
+  border-radius: 18px;
+  background: #fff;
   text-align: left;
   padding: 15px 16px;
   cursor: pointer;
@@ -1476,10 +1475,7 @@ h3 {
   min-height: 100vh;
   display: grid;
   grid-template-columns: minmax(360px, 520px) minmax(0, 1fr);
-  background:
-    radial-gradient(circle at top left, rgba(255, 45, 85, 0.12), transparent 24%),
-    radial-gradient(circle at bottom right, rgba(255, 138, 0, 0.12), transparent 28%),
-    #fafafa;
+  background: #f7f7f8;
 }
 
 .auth-card {
@@ -1492,9 +1488,7 @@ h3 {
   display: grid;
   align-content: end;
   padding: 56px;
-  background:
-    radial-gradient(circle at top right, rgba(255, 255, 255, 0.18), transparent 20%),
-    linear-gradient(160deg, #1f1020, #7c2d92 38%, #e11d48 72%, #fb923c);
+  background: linear-gradient(180deg, #2a2a31, #1f1f25);
   color: #fff;
 }
 
@@ -1662,8 +1656,8 @@ body.modal-open {
 
 @media (max-width: 980px) {
   .app {
-    padding: 18px;
-    gap: 18px;
+    padding: 20px;
+    gap: 24px;
   }
 
   .sidebar {
@@ -1703,7 +1697,7 @@ body.modal-open {
 @media (max-width: 760px) {
   .app {
     display: block;
-    padding: 14px 14px 92px;
+    padding: 18px 18px 100px;
   }
 
   .sidebar {
@@ -1722,14 +1716,14 @@ body.modal-open {
   .composer,
   .auth-card,
   .modal {
-    padding: 20px;
-    border-radius: 24px;
+    padding: 22px;
+    border-radius: 20px;
   }
 
   .story-strip,
   .feed-toolbar,
   .feed-category-block {
-    padding: 18px;
+    padding: 20px;
   }
 
   .post-head,
@@ -1739,15 +1733,15 @@ body.modal-open {
   .media-carousel,
   .post-stats,
   .post-actions {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: 18px;
+    padding-right: 18px;
   }
 
   .comment,
   .comment-empty,
   .comment-composer {
-    margin-left: 16px;
-    margin-right: 16px;
+    margin-left: 18px;
+    margin-right: 18px;
   }
 
   .comment-composer-inline {
@@ -1764,24 +1758,24 @@ body.modal-open {
 
   .mobile-nav {
     position: fixed;
-    left: 12px;
-    right: 12px;
-    bottom: 12px;
+    left: 0;
+    right: 0;
+    bottom: 0;
     z-index: 25;
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    gap: 6px;
-    padding: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.72);
-    border-radius: 24px;
-    background: rgba(255, 255, 255, 0.92);
-    backdrop-filter: blur(24px);
-    box-shadow: var(--shadow-lg);
+    gap: 2px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 -8px 24px rgba(18, 18, 23, 0.06);
   }
 
   .mobile-nav button {
-    min-height: 58px;
-    border-radius: 16px;
+    min-height: 54px;
+    border-radius: 12px;
     color: var(--muted);
     text-align: center;
     font-size: 0.73rem;
@@ -1789,7 +1783,7 @@ body.modal-open {
   }
 
   .mobile-nav button.active {
-    background: linear-gradient(180deg, #fff6f8, #fff);
+    background: #f5f5f7;
     color: var(--ink);
   }
 
