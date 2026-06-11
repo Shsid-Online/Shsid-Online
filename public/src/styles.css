@@ -88,7 +88,7 @@ a {
 
 .app.app-admin,
 .app.app-messages {
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 260px minmax(980px, 1fr);
 }
 
 .app.app-admin .rightbar,
@@ -284,6 +284,7 @@ a {
 .page-shell {
   display: grid;
   gap: 28px;
+  max-width: 1240px;
 }
 
 .page-content {
@@ -1073,15 +1074,15 @@ h3 {
 .chat-layout,
 .admin-chat-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 0.95fr) minmax(0, 1.7fr);
-  gap: 24px;
+  grid-template-columns: minmax(380px, 440px) minmax(0, 1fr);
+  gap: 28px;
   align-items: start;
 }
 
 .chat-panel {
   min-width: 0;
   min-height: 0;
-  height: min(74vh, 820px);
+  height: min(76vh, 860px);
   display: flex;
   flex-direction: column;
 }
@@ -1092,33 +1093,35 @@ h3 {
 }
 
 .chat-panel-list {
-  padding: 22px;
+  padding: 26px;
 }
 
 .chat-panel-thread {
-  padding: 22px;
+  padding: 28px;
 }
 
 .chat-section {
   border: 1px solid var(--line);
   border-radius: 18px;
   background: #fafafb;
-  padding: 16px;
+  padding: 22px;
 }
 
 .chat-tab-section {
-  gap: 8px;
-  margin: 12px 0;
+  gap: 10px;
+  margin: 16px 0;
 }
 
 .chat-action-row {
-  gap: 8px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  gap: 12px;
+  flex-wrap: wrap;
+  overflow: visible;
 }
 
 .chat-cta-btn {
-  white-space: nowrap;
+  min-height: 42px;
+  padding-inline: 18px;
+  white-space: normal;
   background: var(--brand-soft);
   color: var(--brand-strong);
   border-color: rgba(225, 29, 72, 0.1);
@@ -1126,6 +1129,7 @@ h3 {
 
 .chat-tab-btn {
   font-weight: 700;
+  min-width: 0;
 }
 
 .conv-selected {
@@ -1137,22 +1141,27 @@ h3 {
   flex: 1;
   overflow-y: auto;
   align-content: start;
+  gap: 12px;
 }
 
 .chat-list-scroll .btn {
   width: 100%;
+  min-height: 46px;
   justify-content: flex-start;
   text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.45;
+  padding: 12px 16px;
 }
 
 .chat-messages-scroll {
   flex: 1;
   overflow-y: auto;
   align-content: start;
-  padding-right: 4px;
+  padding-right: 6px;
+  gap: 14px;
 }
 
 .chat-toolbar {
@@ -1171,16 +1180,16 @@ h3 {
 }
 
 .chat-message-field {
-  margin-bottom: 10px;
+  margin-bottom: 14px;
 }
 
 .chat-message-input {
-  min-height: 92px;
+  min-height: 110px;
 }
 
 .chat-compose-row {
-  margin-bottom: 8px;
-  gap: 10px;
+  margin-bottom: 12px;
+  gap: 12px;
 }
 
 .chat-attach-strip {
@@ -1397,6 +1406,19 @@ h3 {
 
 .admin-chat-layout .chat-panel {
   height: min(58vh, 620px);
+}
+
+.instagram-chat-layout .section-head {
+  margin-bottom: 16px;
+}
+
+.instagram-chat-layout .section-head p {
+  max-width: 28ch;
+}
+
+.instagram-chat-layout .chat-panel-thread .between {
+  align-items: flex-start;
+  margin-bottom: 12px;
 }
 
 .admin-chat-message {
