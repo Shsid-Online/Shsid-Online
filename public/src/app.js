@@ -142,9 +142,20 @@ const API_CACHE_TTL = {
 const apiResponseCache = new Map();
 const API_CACHE_MAX_SIZE = 100;
 let saveStateTimer = null;
+let usersByIdCache = new Map();
 
 function clearApiCache() {
   apiResponseCache.clear();
+}
+
+function rebuildUsersByIdCache() {
+  usersByIdCache = new Map((state.users || []).map((user) => [user.id, user]));
+}
+
+function getUserById(userId) {
+  if (!userId) return null;
+  if (!usersByIdCache.size && Array.isArray(state.users) && state.users.length) rebuildUsersByIdCache();
+  return usersByIdCache.get(userId) || null;
 }
 
 function evictApiCache() {
@@ -156,6 +167,7 @@ function evictApiCache() {
 }
 
 hydrateAuthFromUrl();
+rebuildUsersByIdCache();
 
 const navItems = [
   ["feed", "&#128247;", "Feed"],
@@ -374,7 +386,7 @@ function generateVerificationWords(count = 10) {
 }
 
 function currentUser() {
-  return state.users.find((user) => user.id === state.currentUserId);
+  return getUserById(state.currentUserId);
 }
 
 function canModerateReports(user = currentUser()) {
@@ -402,6 +414,7 @@ function resetClientSessionState() {
   state.acceptedRequests = {};
   state.rejectedRequests = {};
   state.users = [];
+  rebuildUsersByIdCache();
   state.posts = [];
   state.conversations = [];
   state.notifications = [];
@@ -904,7 +917,7 @@ function mergeApiUser(apiUser) {
 
 function mergeApiUsers(apiUsers = []) {
   for (const apiUser of apiUsers) {
-    const existing = state.users.find((user) => user.id === apiUser.id);
+    const existing = getUserById(apiUser.id);
     const localUser = {
       id: apiUser.id,
       email: apiUser.email || "",
@@ -924,9 +937,12 @@ function mergeApiUsers(apiUsers = []) {
       followingCount: Number.isFinite(Number(apiUser.followingCount)) ? Number(apiUser.followingCount) : Number(existing?.followingCount || 0),
       online: true
     };
-    const index = state.users.findIndex((user) => user.id === localUser.id);
-    if (index >= 0) state.users[index] = { ...state.users[index], ...localUser };
-    else state.users.push(localUser);
+    if (existing) Object.assign(existing, localUser);
+    else {
+      state.users.push(localUser);
+      usersByIdCache.set(localUser.id, localUser);
+    }
+    if (existing) usersByIdCache.set(localUser.id, existing);
   }
 }
 
@@ -942,21 +958,22 @@ async function bootstrapSession() {
     const result = await apiRequest("/me");
     mergeApiUser(result.user);
     warmCachedLoginMedia(result.user?.id);
-    await refreshStudents();
-    await refreshPosts();
-    await ensureDeepLinkedPostLoaded();
-    await refreshConversations();
-    await refreshNotifications();
-    await refreshAds();
-    await refreshSuggestions();
-    await refreshVerificationQueue();
+    const bootTasks = [
+      refreshStudents(),
+      refreshPosts(),
+      refreshConversations(),
+      refreshNotifications(),
+      refreshAds(),
+      refreshSuggestions(),
+      refreshVerificationQueue()
+    ];
     if (result.user.role === "admin") {
-      await refreshAdminVerifications();
-      await refreshReports();
-      await refreshAuditLogs();
+      bootTasks.push(refreshAdminVerifications(), refreshReports(), refreshAuditLogs());
     } else if (canModerateReports(result.user)) {
-      await refreshReports();
+      bootTasks.push(refreshReports());
     }
+    await Promise.all(bootTasks);
+    await ensureDeepLinkedPostLoaded();
     state.authStep = nextAuthStepForUser(result.user);
     saveState();
   } catch {
@@ -993,6 +1010,7 @@ async function refreshStudents() {
     const remoteStudents = Array.isArray(result.students) ? result.students : [];
     const remoteStudentIds = new Set(remoteStudents.map((item) => item?.id).filter(Boolean));
     state.users = state.users.filter((user) => user.role === "admin" || remoteStudentIds.has(user.id));
+    rebuildUsersByIdCache();
     mergeApiUsers(remoteStudents);
     warmUserAssetCache();
     saveState();
@@ -1003,7 +1021,7 @@ async function refreshStudents() {
 
 function userName(id, anonymous = false) {
   if (anonymous) return "Anonymous";
-  const user = state.users.find((item) => item.id === id);
+  const user = getUserById(id);
   return user ? user.englishName : "Unknown";
 }
 

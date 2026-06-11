@@ -639,7 +639,20 @@ function hasAnonymousFeatureAccess(user) {
   return Boolean(verificationVideo && verificationVideo !== "pending-upload");
 }
 
-function userView(target, viewer) {
+function buildFollowIndexes() {
+  const followingByUser = new Map();
+  const followersByUser = new Map();
+  for (const row of store.data.follows || []) {
+    if (!row?.followerId || !row?.followingId) continue;
+    if (!followingByUser.has(row.followerId)) followingByUser.set(row.followerId, []);
+    if (!followersByUser.has(row.followingId)) followersByUser.set(row.followingId, []);
+    followingByUser.get(row.followerId).push(row.followingId);
+    followersByUser.get(row.followingId).push(row.followerId);
+  }
+  return { followingByUser, followersByUser };
+}
+
+function userView(target, viewer, followIndexes = null) {
   const safe = publicUser(target);
   if (!safe) return null;
   safe.canModerateReports = canViewFlaggedReports(target);
@@ -648,12 +661,14 @@ function userView(target, viewer) {
     delete safe.email;
     delete safe.verificationVideo;
   }
-  safe.followingCount = store.data.follows.filter((row) => row.followerId === target.id).length;
-  safe.followerCount = store.data.follows.filter((row) => row.followingId === target.id).length;
+  const following = followIndexes?.followingByUser?.get(target.id) || [];
+  const followers = followIndexes?.followersByUser?.get(target.id) || [];
+  safe.followingCount = following.length;
+  safe.followerCount = followers.length;
 
   if (viewer?.id === target.id) {
-    safe.following = store.data.follows.filter((row) => row.followerId === target.id).map((row) => row.followingId);
-    safe.followers = store.data.follows.filter((row) => row.followingId === target.id).map((row) => row.followerId);
+    safe.following = following;
+    safe.followers = followers;
   }
   return safe;
 }
@@ -880,20 +895,23 @@ async function handleApi(req, res, url) {
   if (method === "GET" && url.pathname === "/api/me") {
     const user = requireAuth(req, res);
     if (!user) return;
-    return sendJson(res, 200, { user: userView(user, user) });
+    const followIndexes = buildFollowIndexes();
+    return sendJson(res, 200, { user: userView(user, user, followIndexes) });
   }
 
   if (method === "GET" && url.pathname === "/api/students") {
     const user = requireAuth(req, res);
     if (!user) return;
     const { items, pagination } = paginate(store.data.users.filter((item) => item.role === "student"), url, { limit: 50, maxLimit: 100 });
-    return sendJson(res, 200, { students: items.map((item) => userView(item, user)), pagination });
+    const followIndexes = buildFollowIndexes();
+    return sendJson(res, 200, { students: items.map((item) => userView(item, user, followIndexes)), pagination });
   }
 
   if (method === "GET" && url.pathname === "/api/posts") {
     const user = requireAuth(req, res);
     if (!user) return;
     const categoryFilter = String(url.searchParams.get("category") || "").trim().toLowerCase();
+    const followIndexes = buildFollowIndexes();
     const visiblePosts = store.data.posts.filter((post) => {
       if (post.deletedAt) return false;
       if (!categoryFilter) return true;
@@ -902,8 +920,8 @@ async function handleApi(req, res, url) {
     const { items, pagination } = paginate(visiblePosts, url, { limit: 25, maxLimit: 100 });
     const posts = items.map((post) => ({
       ...post,
-      author: post.anonymous && user.role !== "admin" ? null : userView(store.findUserById(post.authorId), user),
-      adminAuthor: user.role === "admin" ? userView(store.findUserById(post.authorId), user) : undefined
+      author: post.anonymous && user.role !== "admin" ? null : userView(store.findUserById(post.authorId), user, followIndexes),
+      adminAuthor: user.role === "admin" ? userView(store.findUserById(post.authorId), user, followIndexes) : undefined
     }));
     return sendJson(res, 200, { posts, pagination });
   }
