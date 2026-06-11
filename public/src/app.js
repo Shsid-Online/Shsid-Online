@@ -1055,6 +1055,19 @@ function renderAvatar(user, extraClass = "") {
   return `<div class="${cls}">${initials(user)}</div>`;
 }
 
+function renderMobileNav(visibleNav) {
+  const primaryIds = ["feed", "post", "students", "messages"];
+  const primary = primaryIds
+    .map((id) => visibleNav.find((item) => item[0] === id))
+    .filter(Boolean);
+  const moreItems = visibleNav.filter((item) => !primary.some((entry) => entry[0] === item[0]));
+  const moreActive = view === "settings" || moreItems.some((item) => item[0] === view);
+  return `
+    ${primary.map(([id, icon, label]) => `<button class="${view === id ? "active" : ""}" data-view="${id}"><strong>${icon}</strong><br>${label}</button>`).join("")}
+    <button class="${moreActive ? "active" : ""}" data-action="open-mobile-more"><strong>&#8942;</strong><br>More</button>
+  `;
+}
+
 function timeAgo(ts) {
   const t = at(ts);
   const minutes = Math.max(1, Math.round((Date.now() - t) / 60000));
@@ -1679,7 +1692,7 @@ function doRender() {
       <main class="main">${renderView()}</main>
       <aside class="rightbar">${renderRightbar()}</aside>
       <nav class="mobile-nav">
-        ${visibleNav.slice(0, 5).map(([id, icon, label]) => `<button class="${view === id ? "active" : ""}" data-view="${id}"><strong>${icon}</strong><br>${label}</button>`).join("")}
+        ${renderMobileNav(visibleNav)}
       </nav>
     </div>
     ${uploadUi.active ? renderUploadOverlay() : ""}
@@ -3740,6 +3753,23 @@ async function handleAction(action, id) {
   }
   if (action === "open-media") return;
   if (action === "open-settings") view = "settings";
+  if (action === "open-mobile-more") {
+    const adminVisible = canModerateReports(user);
+    const visibleNav = navItems.filter((item) => item[0] !== "admin" || adminVisible);
+    const primaryIds = new Set(["feed", "post", "students", "messages"]);
+    const moreItems = visibleNav.filter((item) => !primaryIds.has(item[0]));
+    const popup = showFormPopup("More", `
+      <div class="grid mobile-more-menu">
+        ${moreItems.map(([navId, icon, label]) => `<button class="btn" type="button" data-view="${navId}">${icon} ${label}</button>`).join("")}
+        <button class="btn" type="button" data-action="open-settings">Settings</button>
+        <button class="btn danger" type="button" data-action="logout">Logout</button>
+      </div>
+    `);
+    popup.querySelectorAll("[data-view], [data-action]").forEach((button) => {
+      button.addEventListener("click", () => popup.remove());
+    });
+    return;
+  }
   if (action === "logout") {
     const logoutUserId = state.currentUserId;
     if (logoutUserId) rememberLoginMediaForUser(logoutUserId);

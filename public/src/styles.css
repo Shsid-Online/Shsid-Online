@@ -1968,11 +1968,11 @@ body.modal-open {
     box-shadow: 0 -8px 24px rgba(18, 18, 23, 0.06);
   }
 
-  .mobile-nav button {
-    min-height: 54px;
-    border-radius: 12px;
-    color: var(--muted);
-    text-align: center;
+.mobile-nav button {
+  min-height: 54px;
+  border-radius: 12px;
+  color: var(--muted);
+  text-align: center;
     font-size: 0.73rem;
     font-weight: 650;
     transition: transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
@@ -1986,6 +1986,15 @@ body.modal-open {
 
   .mobile-nav button:hover {
     transform: translateY(-2px);
+  }
+
+  .mobile-more-menu {
+    grid-template-columns: 1fr;
+  }
+
+  .mobile-more-menu .btn {
+    width: 100%;
+    justify-content: center;
   }
 
   .auth-card {
