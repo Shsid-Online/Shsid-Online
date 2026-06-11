@@ -2549,19 +2549,23 @@ function renderMessages() {
   return page("Messages", "Chat with classmates in direct or group conversations.", `
     <section class="chat-layout instagram-chat-layout">
       <div class="panel chat-panel chat-panel-list">
-        <div class="chat-section">
-          <div class="section-head">
+        <div class="chat-section chat-rail-head">
+          <div class="chat-rail-topline">
             <div>
               <h3>Inbox</h3>
               <p>Direct chats, requests, and group threads.</p>
             </div>
+            <div class="chat-rail-metrics">
+              <span class="chip">${inbox.length} inbox</span>
+              <span class="chip">${requests.length} requests</span>
+            </div>
           </div>
           <div class="row chat-action-row"><button class="btn small chat-cta-btn" data-action="open-start-direct">Direct Message</button><button class="btn small chat-cta-btn" data-action="open-create-convo">Create Group</button></div>
-        </div>
-        <div class="chat-section chat-tab-section row">
-          <button class="btn chat-tab-btn ${conversationTab === "inbox" ? "primary" : ""}" data-action="chat-tab-inbox">Inbox (${inbox.length})</button>
-          <button class="btn chat-tab-btn ${conversationTab === "requests" ? "primary" : ""}" data-action="chat-tab-requests">Requests (${requests.length})</button>
-          <button class="btn chat-tab-btn ${conversationTab === "sent" ? "primary" : ""}" data-action="chat-tab-sent">Sent (${requestsSent.length})</button>
+          <div class="chat-tab-section row">
+            <button class="btn chat-tab-btn ${conversationTab === "inbox" ? "primary" : ""}" data-action="chat-tab-inbox">Inbox (${inbox.length})</button>
+            <button class="btn chat-tab-btn ${conversationTab === "requests" ? "primary" : ""}" data-action="chat-tab-requests">Requests (${requests.length})</button>
+            <button class="btn chat-tab-btn ${conversationTab === "sent" ? "primary" : ""}" data-action="chat-tab-sent">Sent (${requestsSent.length})</button>
+          </div>
         </div>
         <div class="grid chat-list-scroll">${list.length
           ? list.map((conv) => `<button class="btn ${active?.id === conv.id ? "conv-selected" : ""}" data-action="open-conv" data-id="${conv.id}">${escapeHtml(conversationDisplayTitle(conv))}</button>`).join("")
