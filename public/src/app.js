@@ -2529,10 +2529,10 @@ function renderComposer() {
 
 function renderStudents() {
   const meId = currentUser()?.id;
-  const students = state.users.filter((u) => u.role !== "admin" && u.status === "verified" && u.id !== meId);
+  const students = state.users.filter((u) => u.role !== "admin" && u.id !== meId);
   const myFollowing = Array.isArray(currentUser()?.following) ? currentUser().following : [];
-  const followedUsers = students.filter((student) => myFollowing.includes(student.id));
-  return page("Students", "Meet verified classmates and start conversations.", `
+  const followedUsers = students.filter((student) => student.status === "verified" && myFollowing.includes(student.id));
+  return page("Students", "See classmates and who is already verified for messaging and Q&A.", `
     <section class="panel section-stack">
       <div class="section-head">
         <div>
@@ -2550,12 +2550,13 @@ function renderStudents() {
       <article class="panel student-card" data-action="view-profile" data-id="${user.id}" style="cursor:pointer">
         <div class="between">
           <div class="row">${renderAvatar(user)}<div><strong>${escapeHtml(user.englishName)}</strong><div class="muted">${escapeHtml(user.chineseName)} · Grade ${user.grade}, Class ${user.classNo}</div><div class="muted">${Number(user.followerCount || 0)} follower${Number(user.followerCount || 0) === 1 ? "" : "s"}</div></div></div>
+          <span class="status ${user.status === "verified" ? "green" : "gold"}">${escapeHtml(user.status || "student")}</span>
         </div>
         <p>${escapeHtml(user.bio)}</p>
         <div class="row student-card-actions">
-          <button class="btn small" data-action="follow" data-id="${user.id}">${myFollowing.includes(user.id) ? "Following" : "Follow"}</button>
-          <button class="btn small" data-action="start-chat" data-id="${user.id}">Message</button>
-          <button class="btn small" data-action="ask-qna" data-id="${user.id}">Ask</button>
+          <button class="btn small" data-action="follow" data-id="${user.id}" ${user.status === "verified" ? "" : "disabled"}>${myFollowing.includes(user.id) ? "Following" : "Follow"}</button>
+          <button class="btn small" data-action="start-chat" data-id="${user.id}" ${user.status === "verified" ? "" : "disabled"}>Message</button>
+          <button class="btn small" data-action="ask-qna" data-id="${user.id}" ${user.status === "verified" ? "" : "disabled"}>Ask</button>
         </div>
       </article>
     `).join("")}</section>
