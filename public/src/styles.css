@@ -48,6 +48,7 @@ body {
   font-family: var(--font-ui);
   color: var(--ink);
   background: linear-gradient(180deg, #fbfbfc, #f6f6f8 100%);
+  overflow-x: hidden;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -79,16 +80,19 @@ a {
 
 .app {
   display: grid;
-  grid-template-columns: 260px minmax(0, 720px) minmax(280px, 360px);
+  grid-template-columns: clamp(220px, 18vw, 260px) minmax(0, 720px) minmax(260px, 340px);
   justify-content: center;
   gap: 40px;
+  width: 100%;
+  max-width: 1680px;
+  margin: 0 auto;
   min-height: 100vh;
   padding: 32px 28px 48px;
 }
 
 .app.app-admin,
 .app.app-messages {
-  grid-template-columns: 260px minmax(980px, 1fr);
+  grid-template-columns: clamp(220px, 18vw, 260px) minmax(0, 1fr);
 }
 
 .app.app-admin .rightbar,
@@ -284,7 +288,8 @@ a {
 .page-shell {
   display: grid;
   gap: 28px;
-  max-width: 1240px;
+  width: 100%;
+  max-width: none;
 }
 
 .page-content {
@@ -1074,7 +1079,7 @@ h3 {
 .chat-layout,
 .admin-chat-layout {
   display: grid;
-  grid-template-columns: minmax(380px, 440px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
   gap: 28px;
   align-items: start;
 }
@@ -1082,14 +1087,14 @@ h3 {
 .chat-panel {
   min-width: 0;
   min-height: 0;
-  height: min(76vh, 860px);
+  height: auto;
   display: flex;
   flex-direction: column;
 }
 
 .chat-panel-list,
 .chat-panel-thread {
-  overflow: hidden;
+  overflow: visible;
 }
 
 .chat-panel-list {
@@ -1157,8 +1162,8 @@ h3 {
 }
 
 .chat-list-scroll {
-  flex: 1;
-  overflow-y: auto;
+  flex: 0 0 auto;
+  overflow: visible;
   align-content: start;
   gap: 12px;
 }
@@ -1176,10 +1181,10 @@ h3 {
 }
 
 .chat-messages-scroll {
-  flex: 1;
-  overflow-y: auto;
+  flex: 0 0 auto;
+  overflow: visible;
   align-content: start;
-  padding-right: 6px;
+  padding-right: 0;
   gap: 14px;
 }
 
@@ -1424,7 +1429,7 @@ h3 {
 }
 
 .admin-chat-layout .chat-panel {
-  height: min(58vh, 620px);
+  height: auto;
 }
 
 .instagram-chat-layout .section-head {
@@ -1732,8 +1737,20 @@ body.modal-open {
     grid-template-columns: 236px minmax(0, 1fr);
   }
 
+  .app.app-admin,
+  .app.app-messages {
+    grid-template-columns: 236px minmax(0, 1fr);
+  }
+
   .rightbar {
     display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .chat-layout,
+  .admin-chat-layout {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1764,7 +1781,7 @@ body.modal-open {
 
   .chat-list-scroll,
   .chat-messages-scroll {
-    max-height: 44vh;
+    max-height: none;
   }
 
   .auth-screen {
