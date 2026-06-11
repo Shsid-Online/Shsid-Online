@@ -26,6 +26,7 @@
   --shadow-sm: 0 1px 2px rgba(18, 18, 23, 0.04);
   --shadow-md: 0 8px 24px rgba(18, 18, 23, 0.06);
   --shadow-lg: 0 20px 46px rgba(18, 18, 23, 0.1);
+  --shadow-interactive: 0 18px 38px rgba(225, 29, 72, 0.14);
   --radius-sm: 12px;
   --radius-md: 20px;
   --radius-lg: 28px;
@@ -47,7 +48,10 @@ body {
   min-height: 100vh;
   font-family: var(--font-ui);
   color: var(--ink);
-  background: linear-gradient(180deg, #fbfbfc, #f6f6f8 100%);
+  background:
+    radial-gradient(circle at top left, rgba(255, 45, 85, 0.08), transparent 28%),
+    radial-gradient(circle at top right, rgba(255, 138, 0, 0.08), transparent 24%),
+    linear-gradient(180deg, #fcfcfd, #f5f5f8 100%);
   overflow-x: hidden;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -172,18 +176,37 @@ a {
   color: var(--ink-soft);
   font-size: 1rem;
   font-weight: 600;
+  position: relative;
 }
 
 .nav button:hover {
-  background: rgba(18, 18, 23, 0.04);
+  background: rgba(255, 255, 255, 0.92);
   color: var(--ink);
-  transform: none;
+  transform: translateX(4px);
+  box-shadow: 0 10px 24px rgba(18, 18, 23, 0.06);
 }
 
 .nav button.active {
-  background: #ffffff;
+  background: linear-gradient(180deg, #ffffff, #fff8fa);
   color: var(--ink);
-  box-shadow: 0 1px 0 rgba(18, 18, 23, 0.04), 0 8px 18px rgba(18, 18, 23, 0.05);
+  box-shadow: 0 1px 0 rgba(18, 18, 23, 0.04), 0 14px 28px rgba(225, 29, 72, 0.1);
+}
+
+.nav button::after {
+  content: "›";
+  margin-left: auto;
+  color: var(--muted-soft);
+  font-size: 1rem;
+  transform: translateX(-2px);
+  transition: transform var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+  opacity: 0.7;
+}
+
+.nav button:hover::after,
+.nav button.active::after {
+  color: var(--brand-strong);
+  transform: translateX(2px);
+  opacity: 1;
 }
 
 .nav-ico {
@@ -223,8 +246,8 @@ a {
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 18px;
-  background: #fff;
-  box-shadow: none;
+  background: linear-gradient(180deg, #fff, #fff7fa);
+  box-shadow: var(--shadow-sm);
 }
 
 .session-card-btn {
@@ -234,10 +257,23 @@ a {
   background: transparent;
   color: inherit;
   text-align: left;
+  position: relative;
+  transition: transform var(--transition-fast), opacity var(--transition-fast);
 }
 
 .session-card-btn:hover {
-  opacity: 0.92;
+  opacity: 1;
+  transform: translateY(-2px);
+}
+
+.session-card-btn::after {
+  content: "Open Settings →";
+  display: inline-block;
+  margin-top: 10px;
+  color: var(--brand-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .session-name {
@@ -404,7 +440,7 @@ h3 {
 .modal {
   border: 1px solid rgba(231, 231, 236, 0.9);
   border-radius: 22px;
-  background: #fff;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.95));
   box-shadow: var(--shadow-sm);
 }
 
@@ -443,7 +479,7 @@ h3 {
   font-size: 0.94rem;
   font-weight: 650;
   line-height: 1;
-  box-shadow: none;
+  box-shadow: 0 6px 14px rgba(18, 18, 23, 0.05);
   transition:
     transform var(--transition-fast),
     box-shadow var(--transition-fast),
@@ -453,9 +489,9 @@ h3 {
 }
 
 .btn:hover {
-  transform: none;
+  transform: translateY(-2px);
   border-color: rgba(18, 18, 23, 0.16);
-  box-shadow: none;
+  box-shadow: 0 12px 24px rgba(18, 18, 23, 0.1);
 }
 
 .btn:active {
@@ -472,21 +508,22 @@ h3 {
 
 .btn.primary {
   border-color: rgba(225, 29, 72, 0.12);
-  background: var(--brand);
+  background: linear-gradient(135deg, var(--brand), #ff5f7d);
   color: #fff;
-  box-shadow: none;
+  box-shadow: 0 14px 24px rgba(225, 29, 72, 0.18);
 }
 
 .btn.primary:hover {
   border-color: rgba(225, 29, 72, 0.22);
-  background: var(--brand-strong);
+  background: linear-gradient(135deg, var(--brand-strong), var(--brand));
+  box-shadow: var(--shadow-interactive);
 }
 
 .btn.danger {
   border-color: rgba(190, 18, 60, 0.12);
   background: var(--danger-soft);
   color: var(--danger);
-  box-shadow: none;
+  box-shadow: 0 10px 18px rgba(190, 18, 60, 0.08);
 }
 
 .btn.danger:hover {
@@ -690,10 +727,16 @@ h3 {
   justify-items: center;
   gap: 8px;
   color: var(--ink-soft);
+  transition: transform var(--transition-fast), color var(--transition-fast);
+}
+
+.story-pill:hover {
+  color: var(--brand-strong);
+  transform: translateY(-3px);
 }
 
 .story-pill:hover .story-avatar {
-  transform: translateY(-2px);
+  transform: translateY(-2px) scale(1.03);
 }
 
 .story-avatar {
@@ -1032,14 +1075,15 @@ h3 {
     border-color var(--transition-fast),
     background var(--transition-fast),
     color var(--transition-fast),
-    transform var(--transition-fast);
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 #post-media,
 #reg-video,
 #reg-photo,
 #settings-photo,
-#settings-verify-video {
+#profile-verify-video {
   display: none;
 }
 
@@ -1049,6 +1093,7 @@ h3 {
   background: linear-gradient(180deg, #fff3f6, #fff8ef);
   color: var(--brand-strong);
   transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgba(225, 29, 72, 0.12);
 }
 
 .file-chips {
@@ -1064,6 +1109,24 @@ h3 {
 .student-card {
   display: grid;
   gap: 14px;
+  position: relative;
+  cursor: pointer;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.student-card::after {
+  content: "View profile →";
+  color: var(--brand-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.student-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(225, 29, 72, 0.22);
+  box-shadow: var(--shadow-interactive);
+  background: linear-gradient(180deg, #fff, #fff8fa);
 }
 
 .student-card p {
@@ -1178,6 +1241,15 @@ h3 {
   text-overflow: clip;
   line-height: 1.45;
   padding: 12px 16px;
+  position: relative;
+}
+
+.chat-list-scroll .btn::after,
+.post-day-item::after {
+  content: "→";
+  margin-left: auto;
+  color: var(--brand-strong);
+  font-weight: 800;
 }
 
 .chat-messages-scroll {
@@ -1259,11 +1331,23 @@ h3 {
   background: #fff;
   padding: 20px;
   box-shadow: var(--shadow-sm);
+  position: relative;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
 }
 
 .question-box-card:hover {
   border-color: rgba(225, 29, 72, 0.18);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-interactive);
+  transform: translateY(-4px);
+  background: linear-gradient(180deg, #fff, #fff8fa);
+}
+
+.question-box-card::after {
+  content: "Tap to open →";
+  color: var(--brand-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .question-box-card strong {
@@ -1341,12 +1425,15 @@ h3 {
   padding: 15px 16px;
   cursor: pointer;
   box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
 }
 
 .notification-card:hover,
 .notification-card.expanded {
   border-color: rgba(225, 29, 72, 0.14);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-interactive);
+  transform: translateY(-3px);
+  background: linear-gradient(180deg, #fff, #fff8fa);
 }
 
 .notification-head {
@@ -1373,8 +1460,9 @@ h3 {
 .notification-expand-hint {
   display: block;
   margin-top: 10px;
-  color: var(--muted);
+  color: var(--brand-strong);
   font-size: 0.75rem;
+  font-weight: 700;
 }
 
 .post-day-item {
@@ -1496,6 +1584,13 @@ h3 {
   display: block;
   text-decoration: none;
   color: inherit;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+
+.ad-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(225, 29, 72, 0.2);
+  box-shadow: var(--shadow-interactive);
 }
 
 .ad-placeholder {
@@ -1880,11 +1975,17 @@ body.modal-open {
     text-align: center;
     font-size: 0.73rem;
     font-weight: 650;
+    transition: transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
   }
 
   .mobile-nav button.active {
-    background: #f5f5f7;
+    background: linear-gradient(180deg, #fff6f8, #fff);
     color: var(--ink);
+    box-shadow: 0 10px 22px rgba(225, 29, 72, 0.12);
+  }
+
+  .mobile-nav button:hover {
+    transform: translateY(-2px);
   }
 
   .auth-card {

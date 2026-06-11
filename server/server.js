@@ -635,6 +635,7 @@ function hasReviewableVerificationSubmission(user) {
 function hasAnonymousFeatureAccess(user) {
   if (!user) return false;
   if (user.role === "admin") return true;
+  if (user.status !== "verified") return false;
   const verificationVideo = String(user.verificationVideo || "").trim();
   return Boolean(verificationVideo && verificationVideo !== "pending-upload");
 }
@@ -865,17 +866,26 @@ async function handleApi(req, res, url) {
       store.save();
       return sendJson(res, 409, { error: "A student account with this real name already exists" }, req);
     }
+    const nextVerificationVideo = String(body.verificationVideo || user.verificationVideo || "").slice(0, 200);
+    const nextStatus = hasReviewableVerificationSubmission({
+      ...user,
+      englishName,
+      chineseName,
+      grade,
+      classNo,
+      verificationVideo: nextVerificationVideo
+    }) ? "pending_verification" : "draft";
     Object.assign(user, {
       englishName,
       chineseName,
       grade,
       classNo,
-      verificationVideo: String(body.verificationVideo || user.verificationVideo || "").slice(0, 200),
+      verificationVideo: nextVerificationVideo,
       bio: String(body.bio || "").trim().slice(0, MAX_TEXT_LEN),
-      status: "verified",
+      status: nextStatus,
       updatedAt: now()
     });
-    store.audit(user.id, "profile_completed");
+    store.audit(user.id, "profile_completed", { status: nextStatus });
     store.save();
     return sendJson(res, 200, { user: userView(user, user) }, req);
   }
@@ -1397,7 +1407,7 @@ async function handleApi(req, res, url) {
       store.audit(user.id, "follow", { targetId });
     }
     store.save();
-    return sendJson(res, 200, { user: userView(user, user), following: store.data.follows.filter((row) => row.followerId === user.id).map((row) => row.followingId) });
+    return sendJson(res, 200, { user: userView(user, user) });
   }
 
   const userQnaMatch = url.pathname.match(/^\/api\/users\/([^/]+)\/qna$/);

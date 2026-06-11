@@ -537,18 +537,27 @@ async function handleApi(request, env, url, route) {
     }
 
     const profilePhoto = String(body.profilePhoto || "").trim().slice(0, 2000);
+    const nextVerificationVideo = String(body.verificationVideo || authUser.verification_video || "").slice(0, 200);
+    const nextStatus = hasReviewableVerificationSubmission({
+      ...authUser,
+      english_name: englishName,
+      chinese_name: chineseName,
+      grade,
+      class_no: classNo,
+      verification_video: nextVerificationVideo
+    }) ? "pending_verification" : "draft";
     if (await hasUsersProfilePhotoColumn(env)) {
       await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, profile_photo=?, verification_video=?, status=?, updated_at=? where id=?")
-        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), profilePhoto, String(body.verificationVideo || authUser.verification_video || "").slice(0, 200), "verified", now(), authUser.id)
+        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), profilePhoto, nextVerificationVideo, nextStatus, now(), authUser.id)
         .run();
     } else {
       await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, verification_video=?, status=?, updated_at=? where id=?")
-        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), String(body.verificationVideo || authUser.verification_video || "").slice(0, 200), "verified", now(), authUser.id)
+        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), nextVerificationVideo, nextStatus, now(), authUser.id)
         .run();
     }
 
     const updated = await getUserById(env, authUser.id);
-    await audit(env, authUser.id, "profile_completed", { status: "verified" }, request);
+    await audit(env, authUser.id, "profile_completed", { status: nextStatus }, request);
     return json({ user: await userView(env, updated, updated) }, 200);
   }
 
@@ -1161,10 +1170,7 @@ async function handleApi(request, env, url, route) {
     if (exists) await env.DB.prepare("delete from follows where follower_id=? and following_id=?").bind(authUser.id, targetId).run();
     else await env.DB.prepare("insert into follows (follower_id, following_id, created_at) values (?, ?, ?)").bind(authUser.id, targetId, now()).run();
     await audit(env, authUser.id, exists ? "unfollow" : "follow", { targetId }, request);
-
-    const followingRows = await env.DB.prepare("select following_id from follows where follower_id=?").bind(authUser.id).all();
-    const following = (followingRows.results || []).map((r) => r.following_id);
-    return json({ user: await userView(env, authUser, authUser), following }, 200);
+    return json({ user: await userView(env, authUser, authUser) }, 200);
   }
 
   const qnaMatch = route.match(/^\/users\/([^/]+)\/qna$/);
@@ -1780,6 +1786,7 @@ function hasReviewableVerificationSubmission(user) {
 function hasAnonymousFeatureAccess(user) {
   if (!user) return false;
   if (user.role === "admin") return true;
+  if (user.status !== "verified") return false;
   const verificationVideo = String(user?.verification_video ?? user?.verificationVideo ?? "").trim();
   return Boolean(verificationVideo && verificationVideo !== "pending-upload");
 }

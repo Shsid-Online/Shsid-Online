@@ -354,12 +354,17 @@ function hydrateAuthFromUrl() {
 function nextAuthStepForUser(user) {
   if (user.role === "admin") return "app";
   if (!user.englishName || !user.grade || !user.classNo) return "profile";
+  if (user.status === "verified") return "app";
+  if (user.status === "pending_verification" && String(user.verificationVideo || "").trim() && user.verificationVideo !== "pending-upload") {
+    return "waiting";
+  }
   return "app";
 }
 
 function hasAnonymousFeatureAccess(user) {
   if (!user) return false;
   if (user.role === "admin") return true;
+  if (user.status !== "verified") return false;
   const verificationVideo = String(user.verificationVideo || "").trim();
   return Boolean(verificationVideo && verificationVideo !== "pending-upload");
 }
@@ -523,14 +528,19 @@ function normalizePost(post) {
   copy.hearts = Array.isArray(copy.hearts) ? copy.hearts : [];
   copy.savedBy = Array.isArray(copy.savedBy) ? copy.savedBy : [];
   copy.media = Array.isArray(copy.media) ? copy.media : [];
-  copy.comments = (copy.comments || []).map((comment) => ({
-    ...comment,
-    createdAt: at(comment.createdAt),
-    likes: Array.isArray(comment.likes) ? comment.likes : []
-  }));
+  copy.comments = (copy.comments || []).map(normalizeComment);
   delete copy.author;
   delete copy.adminAuthor;
   return copy;
+}
+
+function normalizeComment(comment) {
+  if (!comment) return comment;
+  return {
+    ...comment,
+    createdAt: at(comment.createdAt),
+    likes: Array.isArray(comment.likes) ? comment.likes : []
+  };
 }
 
 function nextAdPopupThreshold() {
@@ -2110,7 +2120,7 @@ function renderAuth() {
           : step === "profile"
             ? "Enter your legal names and class information."
             : step === "video"
-              ? "Upload your verification video to submit your account."
+              ? "This is optional. You can skip it now and add or change it later under Profile."
               : (isRejected
                 ? "Your previous verification was rejected. Update and resubmit your verification video."
                 : "Your account is submitted. Please wait for admin approval.");
@@ -2183,6 +2193,7 @@ function renderAuth() {
       <p class="muted">${state.pendingVideoName ? `Selected: ${escapeHtml(state.pendingVideoName)}` : "Please upload your verification video."}</p>
       <div class="row">
         <button class="btn primary" type="submit">Submit verification</button>
+        <button class="btn" type="button" data-auth="skip-verification">Skip for now</button>
       </div>
     </form>
   ` : step === "waiting" ? `
@@ -2781,6 +2792,39 @@ function renderProfile() {
         </div>
       </div>
     </section>
+    ${isOwnProfile ? `
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h3>Anonymous Access</h3>
+          <p>Optional verification for anonymous posts, comments, messages, and Q&A.</p>
+        </div>
+      </div>
+      <p class="muted" style="margin:0 0 12px">
+        ${hasAnonymousFeatureAccess(user)
+          ? "Your verification video is already on file. Anonymous features are unlocked."
+          : "You can skip this for now. When you're ready, upload your verification video here to unlock anonymous features."}
+      </p>
+      ${user.status === "pending_verification"
+        ? `<p class="muted" style="margin:0 0 12px">Your verification is pending admin approval right now.</p>`
+        : ""}
+      ${user.status === "rejected"
+        ? `<p class="muted" style="margin:0 0 12px">Your last verification was rejected. Upload a new video here whenever you're ready.</p>`
+        : ""}
+      <form class="grid" id="profile-anon-verification-form">
+        <div class="field">
+          <label>Verification video</label>
+          <div id="profile-verify-dropzone" class="dropzone">Drag and drop verification video here, or click to pick file.</div>
+          <input id="profile-verify-video" type="file" accept="video/*">
+          <div id="profile-verify-file-chips" class="file-chips"></div>
+        </div>
+        <p class="muted" style="margin:0">
+          ${user.verificationVideo ? `Current file: ${escapeHtml(user.verificationVideo)}` : "No verification video on file yet."}
+        </p>
+        <div class="row"><button class="btn primary" type="submit">${user.verificationVideo ? "Update verification video" : "Save verification video"}</button></div>
+      </form>
+    </section>
+    ` : ""}
     <section class="grid two profile-grid">
       <div class="panel profile-qna-panel">
         <div class="section-head">
@@ -2948,35 +2992,12 @@ function renderSettings() {
           </div>
         </div>
         <p style="margin:0 0 12px"><strong>Profile Access:</strong> Once your profile is filled out, you can use the normal student features.</p>
-        <p style="margin:0 0 12px"><strong>Anonymous Functions:</strong> Anonymous posts, comments, messages, and Q&A need a verification video on file.</p>
+        <p style="margin:0 0 12px"><strong>Anonymous Functions:</strong> Anonymous posts, comments, messages, and Q&A need a verification video on file. You can add or update it from your Profile page.</p>
         <p style="margin:0 0 12px"><strong>Direct Messages:</strong> Send public or anonymous messages to other students.</p>
         <p style="margin:0 0 12px"><strong>Reports:</strong> Report inappropriate content. Admins will review within 24 hours.</p>
         <p style="margin:0 0 12px"><strong>Suggestions:</strong> Submit feedback and track admin responses.</p>
         <p style="margin:0"><strong>Q&A Box:</strong> Other students can ask you questions on your profile.</p>
       </section>
-      <form class="panel grid" id="settings-anon-verification-form">
-        <div class="section-head">
-          <div>
-            <h3>Anonymous Access</h3>
-            <p>Verification is only needed if you want to use anonymous features.</p>
-          </div>
-        </div>
-        <p class="muted" style="margin:0">
-          ${hasAnonymousFeatureAccess(user)
-            ? "Your verification video is already on file. You can use anonymous features."
-            : "Upload a verification video once if you want to unlock anonymous posting, comments, messages, and Q&A."}
-        </p>
-        <div class="field">
-          <label>Verification video</label>
-          <div id="settings-verify-dropzone" class="dropzone">Drag and drop verification video here, or click to pick file.</div>
-          <input id="settings-verify-video" type="file" accept="video/*">
-          <div id="settings-verify-file-chips" class="file-chips"></div>
-        </div>
-        <p class="muted" style="margin:0">
-          ${user.verificationVideo ? `Current file: ${escapeHtml(user.verificationVideo)}` : "No verification video on file yet."}
-        </p>
-        <div class="row"><button class="btn primary" type="submit">Save verification video</button></div>
-      </form>
       ${user.role === "admin" ? `
       <section class="panel">
         <h3 style="margin-top:0">Ad Manager</h3>
@@ -3436,7 +3457,7 @@ function bindAuth() {
     }
   });
 
-  document.querySelectorAll('[data-auth="back"], [data-auth="resend-code"], [data-auth="logout"], [data-auth="resubmit-verification"]').forEach((button) => {
+  document.querySelectorAll('[data-auth="back"], [data-auth="resend-code"], [data-auth="logout"], [data-auth="resubmit-verification"], [data-auth="skip-verification"]').forEach((button) => {
     button.addEventListener("click", async () => {
       const action = button.dataset.auth;
       try {
@@ -3486,6 +3507,13 @@ function bindAuth() {
           state.authStep = "video";
           saveState();
           render();
+        }
+        if (action === "skip-verification") {
+          state.authStep = "app";
+          view = "profile";
+          saveState();
+          render();
+          toast("You can add verification later from Profile");
         }
       } catch (error) {
         setAuthInFlight(false);
@@ -3589,10 +3617,10 @@ function bindAuth() {
       });
       mergeApiUser(result.user);
       state.authStep = nextAuthStepForUser(result.user);
-      if (state.authStep === "app") view = "feed";
+      if (state.authStep === "app") view = result.user.status === "verified" ? "feed" : "profile";
       saveState();
       render();
-      toast("Profile saved");
+      toast(result.user.status === "verified" ? "Profile saved" : "Profile saved. You can add verification later under Profile.");
     } catch (error) {
       toast(error.message || "Could not save your profile");
     }
@@ -3651,8 +3679,8 @@ function bindAuth() {
   bindFileChips("reg-photo", "reg-photo-chips");
   setupDropzone("settings-photo-dropzone", "settings-photo", false);
   bindFileChips("settings-photo", "settings-photo-chips");
-  setupDropzone("settings-verify-dropzone", "settings-verify-video", false);
-  bindFileChips("settings-verify-video", "settings-verify-file-chips");
+  setupDropzone("profile-verify-dropzone", "profile-verify-video", false);
+  bindFileChips("profile-verify-video", "profile-verify-file-chips");
 
   document.querySelector("#settings-profile-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -3681,9 +3709,9 @@ function bindAuth() {
     render();
   });
 
-  document.querySelector("#settings-anon-verification-form")?.addEventListener("submit", async (event) => {
+  document.querySelector("#profile-anon-verification-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const videoFile = document.querySelector("#settings-verify-video")?.files?.[0];
+    const videoFile = document.querySelector("#profile-verify-video")?.files?.[0];
     if (!videoFile) return toast("Choose a verification video");
     if (!isLikelyVideoFile(videoFile)) return toast("Please upload a valid video file.");
     try {
@@ -3881,12 +3909,22 @@ async function handleAction(action, id) {
     if (!id) return toast("Invalid post");
     const post = state.posts.find((item) => item.id === id);
     if (!post) return toast("Post not found");
-    const text = String(document.querySelector(`#comment-text-${id}`)?.value || "").trim();
+    const input = document.querySelector(`#comment-text-${id}`);
+    const text = String(input?.value || "").trim();
     if (!text) return toast("Enter a comment");
-    await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous: false }) });
-    await refreshPosts();
+    const result = await apiRequest(`/posts/${id}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous: false }) });
+    if (input) input.value = "";
+    const idx = state.posts.findIndex((item) => item.id === id);
+    if (idx >= 0 && result?.comment) {
+      const nextPost = { ...state.posts[idx] };
+      nextPost.comments = [...(nextPost.comments || []), normalizeComment(result.comment)];
+      state.posts[idx] = nextPost;
+    }
     saveState();
     rerenderPostCard(id, { preserveVideoPlayback: true });
+    void refreshPosts().then(() => rerenderPostCard(id, { preserveVideoPlayback: true })).catch((error) => {
+      console.error("refreshPosts after submit-comment failed", error);
+    });
     return;
   }
   if (action === "submit-reply") {
@@ -3895,14 +3933,24 @@ async function handleAction(action, id) {
     const post = state.posts.find((item) => item.id === postId);
     if (!post) return toast("Post not found");
     if (!(post.comments || []).some((comment) => comment.id === commentId)) return toast("Comment not found");
-    const text = String(document.querySelector(`#reply-text-${postId}-${commentId}`)?.value || "").trim();
+    const input = document.querySelector(`#reply-text-${postId}-${commentId}`);
+    const text = String(input?.value || "").trim();
     const anonymous = document.querySelector(`#reply-anon-${postId}-${commentId}`)?.value === "true";
     if (!text) return toast("Enter a reply");
-    await apiRequest(`/posts/${postId}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous, replyTo: commentId }) });
+    const result = await apiRequest(`/posts/${postId}/comments`, { method: "POST", body: JSON.stringify({ text, anonymous, replyTo: commentId }) });
+    if (input) input.value = "";
     openReplyCommentKey = null;
-    await refreshPosts();
+    const idx = state.posts.findIndex((item) => item.id === postId);
+    if (idx >= 0 && result?.comment) {
+      const nextPost = { ...state.posts[idx] };
+      nextPost.comments = [...(nextPost.comments || []), normalizeComment(result.comment)];
+      state.posts[idx] = nextPost;
+    }
     saveState();
     rerenderPostCard(postId, { preserveVideoPlayback: true });
+    void refreshPosts().then(() => rerenderPostCard(postId, { preserveVideoPlayback: true })).catch((error) => {
+      console.error("refreshPosts after submit-reply failed", error);
+    });
     return;
   }
   if (action === "like-comment") {
@@ -4002,8 +4050,19 @@ async function handleAction(action, id) {
     const ok = await askConfirmPopup("Delete Comment", "This will remove the comment. Continue?", "Delete");
     if (!ok) return;
     await apiRequest(`/posts/${postId}/comments/${commentId}`, { method: "DELETE" });
-    await refreshPosts();
+    const idx = state.posts.findIndex((item) => item.id === postId);
+    if (idx >= 0) {
+      const nextPost = { ...state.posts[idx] };
+      nextPost.comments = (nextPost.comments || []).filter((comment) => comment.id !== commentId);
+      state.posts[idx] = nextPost;
+    }
+    saveState();
+    rerenderPostCard(postId, { preserveVideoPlayback: true });
+    void refreshPosts().then(() => rerenderPostCard(postId, { preserveVideoPlayback: true })).catch((error) => {
+      console.error("refreshPosts after delete-comment failed", error);
+    });
     toast("Comment deleted");
+    return;
   }
   if (action === "follow") {
     if (!id) return toast("Invalid user");
@@ -4016,30 +4075,56 @@ async function handleAction(action, id) {
     const wasFollowing = Array.isArray(user.following) && user.following.includes(id);
     const result = await apiRequest(`/users/${id}/follow`, { method: "POST", body: JSON.stringify({}) });
     mergeApiUsers([result.user]);
-    await refreshStudents();
+    const targetIdx = state.users.findIndex((item) => item.id === id);
+    if (targetIdx >= 0) {
+      const currentTarget = state.users[targetIdx];
+      state.users[targetIdx] = {
+        ...currentTarget,
+        followerCount: Math.max(0, Number(currentTarget.followerCount || 0) + (wasFollowing ? -1 : 1))
+      };
+    }
     saveState();
     toast(wasFollowing ? "Unfollowed" : "Followed");
+    void refreshStudents().then(() => {
+      if (view === "students" || view === "profile") render();
+    }).catch((error) => {
+      console.error("refreshStudents after follow failed", error);
+    });
+    return;
   }
   if (action === "view-profile") {
     if (!id || !state.users.some((item) => item.id === id)) return toast("Profile not found");
     profileBackView = view || "students";
     state.selectedProfileId = id;
     view = "profile";
-    await refreshQnaForProfile(id);
+    render();
+    void refreshQnaForProfile(id).then(() => {
+      if (view === "profile" && state.selectedProfileId === id) render();
+    }).catch((error) => {
+      console.error("refreshQnaForProfile after view-profile failed", error);
+    });
+    return;
   }
   if (action === "profile-back") {
     state.selectedProfileId = null;
     const nextView = ["students", "messages", "admin", "feed"].includes(profileBackView) ? profileBackView : "students";
     view = nextView === "profile" ? "students" : nextView;
     if (view === "admin" && !canModerateReports(user)) view = "students";
-    if (view === "students") await refreshStudents();
-    if (view === "messages") await refreshConversations();
-    if (view === "admin") {
-      if (user.role === "admin") await refreshAdminVerifications();
-      await refreshReports();
-      if (user.role === "admin") await refreshAuditLogs();
-    }
-    if (view === "feed") await refreshPosts();
+    render();
+    void (async () => {
+      if (view === "students") await refreshStudents();
+      if (view === "messages") await refreshConversations();
+      if (view === "admin") {
+        if (user.role === "admin") await refreshAdminVerifications();
+        await refreshReports();
+        if (user.role === "admin") await refreshAuditLogs();
+      }
+      if (view === "feed") await refreshPosts();
+      render();
+    })().catch((error) => {
+      console.error("profile-back refresh failed", error);
+    });
+    return;
   }
   if (action === "start-chat") {
     if (!id) return toast("Invalid user");
@@ -4083,7 +4168,7 @@ async function handleAction(action, id) {
     if ((!text && !uploadFilesList.length) || !id) return toast("Enter a message or attach media");
     const media = uploadFilesList.length ? await uploadFiles(uploadFilesList) : [];
     const anonymous = getConversationIdentityMode(id) === "anonymous";
-    await apiRequest(`/conversations/${id}/messages`, {
+    const result = await apiRequest(`/conversations/${id}/messages`, {
       method: "POST",
       body: JSON.stringify({ text, media, anonymous })
     });
@@ -4095,7 +4180,24 @@ async function handleAction(action, id) {
     const docInput = document.querySelector("#message-doc-file");
     if (docInput) setInputFiles(docInput, []);
     drawMessageAttachmentStrip();
-    await refreshConversations();
+    const convoIdx = state.conversations.findIndex((item) => item.id === id);
+    if (convoIdx >= 0 && result?.message) {
+      const nextConversation = { ...state.conversations[convoIdx] };
+      nextConversation.messages = [...(nextConversation.messages || []), {
+        ...result.message,
+        createdAt: at(result.message.createdAt),
+        media: Array.isArray(result.message.media) ? result.message.media : []
+      }];
+      state.conversations[convoIdx] = nextConversation;
+      saveState();
+      render();
+    }
+    void refreshConversations().then(() => {
+      if (view === "messages") render();
+    }).catch((error) => {
+      console.error("refreshConversations after send-message failed", error);
+    });
+    return;
   }
   if (action === "edit-remark") {
     if (!id) return toast("Invalid user");
