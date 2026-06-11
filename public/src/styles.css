@@ -1416,6 +1416,31 @@ h3 {
   max-width: 28ch;
 }
 
+.instagram-chat-layout .chat-panel-list {
+  height: auto;
+  min-height: 0;
+  align-self: start;
+  gap: 14px;
+}
+
+.instagram-chat-layout .chat-panel-list .chat-section {
+  padding: 18px;
+}
+
+.instagram-chat-layout .chat-panel-list .chat-list-scroll {
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.instagram-chat-layout .chat-panel-list .chat-action-row {
+  gap: 10px;
+}
+
+.instagram-chat-layout .chat-panel-list .chat-cta-btn,
+.instagram-chat-layout .chat-panel-list .chat-tab-btn {
+  min-height: 40px;
+}
+
 .instagram-chat-layout .chat-panel-thread .between {
   align-items: flex-start;
   margin-bottom: 12px;
