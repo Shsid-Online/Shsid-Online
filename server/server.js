@@ -632,6 +632,16 @@ function hasReviewableVerificationSubmission(user) {
   return true;
 }
 
+function hasCompletedStudentProfile(user) {
+  const englishName = String(user?.englishName || "").trim();
+  const grade = Number(user?.grade);
+  const classNo = Number(user?.classNo);
+  if (!englishName) return false;
+  if (!Number.isInteger(grade) || grade < 1 || grade > 12) return false;
+  if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return false;
+  return true;
+}
+
 function hasAnonymousFeatureAccess(user) {
   if (!user) return false;
   if (user.role === "admin") return true;
@@ -723,7 +733,7 @@ async function handleApi(req, res, url) {
         email,
         passwordHash: null,
         role: "student",
-        status: "pending_verification",
+        status: "draft",
         englishName: "",
         chineseName: "",
         grade: null,
@@ -912,7 +922,11 @@ async function handleApi(req, res, url) {
   if (method === "GET" && url.pathname === "/api/students") {
     const user = requireAuth(req, res);
     if (!user) return;
-    const { items, pagination } = paginate(store.data.users.filter((item) => item.role === "student"), url, { limit: 50, maxLimit: 100 });
+    const { items, pagination } = paginate(
+      store.data.users.filter((item) => item.role === "student" && hasCompletedStudentProfile(item)),
+      url,
+      { limit: 50, maxLimit: 100 }
+    );
     const followIndexes = buildFollowIndexes();
     return sendJson(res, 200, { students: items.map((item) => userView(item, user, followIndexes)), pagination });
   }

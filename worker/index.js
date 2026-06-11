@@ -302,7 +302,7 @@ async function handleApi(request, env, url, route) {
         email,
         password_hash: null,
         role: "student",
-        status: "pending_verification",
+        status: "draft",
         english_name: "",
         chinese_name: "",
         grade: null,
@@ -575,7 +575,15 @@ async function handleApi(request, env, url, route) {
 
   if (method === "GET" && route === "/students") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
-    const rows = await env.DB.prepare("select * from users where role='student' order by created_at desc").all();
+    const rows = await env.DB.prepare(`
+      select *
+      from users
+      where role='student'
+        and trim(coalesce(english_name, '')) != ''
+        and grade between 1 and 12
+        and class_no between 1 and 13
+      order by created_at desc
+    `).all();
     return json({ students: await Promise.all((rows.results || []).map((row) => userView(env, row, authUser))), pagination: { limit: 100, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
   }
 
