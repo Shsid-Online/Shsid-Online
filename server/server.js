@@ -868,13 +868,13 @@ async function handleApi(req, res, url) {
     if (!englishName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
       store.audit(user.id, "profile_complete_failed", { reason: "invalid_profile_fields" });
       store.save();
-      return sendJson(res, 400, { error: "Name, grade 1-12, and class 1-13 are required" }, req);
+      return sendJson(res, 400, { error: "Please add your name, year, and class to continue" }, req);
     }
     const duplicate = store.data.users.find((item) => item.id !== user.id && item.englishName === englishName && item.chineseName === chineseName);
     if (duplicate) {
       store.audit(user.id, "profile_complete_failed", { reason: "duplicate_real_name", duplicateUserId: duplicate.id });
       store.save();
-      return sendJson(res, 409, { error: "A student account with this real name already exists" }, req);
+      return sendJson(res, 409, { error: "An account with this name already exists. Try signing in instead." }, req);
     }
     const nextVerificationVideo = String(body.verificationVideo || user.verificationVideo || "").slice(0, 200);
     const nextStatus = hasReviewableVerificationSubmission({

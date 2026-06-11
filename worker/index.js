@@ -488,7 +488,7 @@ async function handleApi(request, env, url, route) {
     const bio = String(body.bio || "").trim().slice(0, MAX_TEXT_LEN);
     const profilePhoto = String(body.profilePhoto || "").trim().slice(0, 2000);
     if (!englishName || !Number.isInteger(grade) || grade < 1 || grade > 12 || !Number.isInteger(classNo) || classNo < 1 || classNo > 13) {
-      return json({ error: "Name, grade 1-12, and class 1-13 are required" }, 400);
+      return json({ error: "Please add your name, year, and class to continue" }, 400);
     }
     if (await hasUsersProfilePhotoColumn(env)) {
       await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, profile_photo=?, updated_at=? where id=?")
@@ -525,7 +525,7 @@ async function handleApi(request, env, url, route) {
       : (Number.isInteger(existingClassNo) && existingClassNo >= 1 && existingClassNo <= 13 ? existingClassNo : 1);
     if (!englishName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
       await audit(env, authUser.id, "profile_complete_failed", { reason: "invalid_profile_fields" }, request);
-      return json({ error: "Name, grade 1-12, and class 1-13 are required" }, 400);
+      return json({ error: "Please add your name, year, and class to continue" }, 400);
     }
 
     const duplicate = await env.DB.prepare("select id from users where id != ? and english_name = ? and chinese_name = ? limit 1")
@@ -533,7 +533,7 @@ async function handleApi(request, env, url, route) {
       .first();
     if (duplicate) {
       await audit(env, authUser.id, "profile_complete_failed", { reason: "duplicate_real_name", duplicateUserId: duplicate.id }, request);
-      return json({ error: "A student account with this real name already exists" }, 409);
+      return json({ error: "An account with this name already exists. Try signing in instead." }, 409);
     }
 
     const profilePhoto = String(body.profilePhoto || "").trim().slice(0, 2000);

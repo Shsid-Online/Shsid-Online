@@ -2118,7 +2118,7 @@ function renderAuth() {
   const title = step === "email" ? "Sign in faster"
     : step === "verify" ? "Verify email"
       : step === "password" ? (mode === "register" ? "Create password" : "Enter password")
-        : step === "profile" ? "Student info"
+        : step === "profile" ? "Your school info"
           : step === "video" ? "Video verification"
             : "Waiting for confirmation";
   const isRejected = currentUser()?.status === "rejected";
@@ -2131,7 +2131,7 @@ function renderAuth() {
         : step === "password"
           ? "No OTP step is needed for returning users."
           : step === "profile"
-            ? "Enter your legal names and class information."
+            ? "Tell us the name you use at school and your class information."
             : step === "video"
               ? "This is optional. You can skip it now and add or change it later under Profile."
               : (isRejected
@@ -3606,7 +3606,7 @@ function bindAuth() {
       const grade = Number(document.querySelector("#reg-grade")?.value);
       const classNo = Number(document.querySelector("#reg-class")?.value);
       const photoFile = document.querySelector("#reg-photo")?.files?.[0];
-      if (!firstName || !lastName) return toast("Enter your first and last name");
+      if (!firstName || !lastName) return toast("Please enter your first and last name");
       if (!Number.isInteger(grade) || grade < 1 || grade > 12) return toast("Year must be 1-12");
       if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return toast("Class must be 1-13");
       const englishName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
@@ -3654,7 +3654,7 @@ function bindAuth() {
       const chineseName = String(state.pendingChineseName || user.chineseName || "").trim();
       const grade = Number(state.pendingGrade || user.grade);
       const classNo = Number(state.pendingClassNo || user.classNo);
-      if (!englishName) return toast("Enter your first and last name before submitting video");
+      if (!englishName) return toast("Please enter your first and last name before submitting video");
       if (!Number.isInteger(grade) || grade < 1 || grade > 12) return toast("Year must be 1-12");
       if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return toast("Class must be 1-13");
       state.pendingVideoName = videoFile.name;
