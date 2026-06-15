@@ -588,7 +588,6 @@ async function handleApi(request, env, url, route) {
   }
 
   if (method === "GET" && route === "/posts") {
-    if (!authUser) return json({ error: "Authentication required" }, 401);
     const { limit, offset } = pageParams(url, 10, 30);
     const postRows = await env.DB.prepare("select * from posts where deleted_at is null order by sticky desc, created_at desc limit ? offset ?").bind(limit, offset).all();
     const totalRow = await env.DB.prepare("select count(*) as count from posts where deleted_at is null").first();
@@ -598,8 +597,8 @@ async function handleApi(request, env, url, route) {
       posts.push({
         ...fromDbPost(post),
         comments: (comments.results || []).map(fromDbComment),
-        author: post.anonymous && authUser.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
-        adminAuthor: authUser.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
+        author: post.anonymous && authUser?.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
+        adminAuthor: authUser?.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
       });
     }
     const total = Number(totalRow?.count || 0);

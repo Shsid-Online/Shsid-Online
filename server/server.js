@@ -932,8 +932,8 @@ async function handleApi(req, res, url) {
   }
 
   if (method === "GET" && url.pathname === "/api/posts") {
-    const user = requireAuth(req, res);
-    if (!user) return;
+    const user = getAuthUser(req);
+    if (user?.status === "banned") return sendJson(res, 403, { error: "Account banned" }, req);
     const categoryFilter = String(url.searchParams.get("category") || "").trim().toLowerCase();
     const followIndexes = buildFollowIndexes();
     const visiblePosts = store.data.posts.filter((post) => {
