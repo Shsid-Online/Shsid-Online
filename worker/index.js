@@ -48,6 +48,7 @@ const LOGIN_FAIL_LOCK_SECONDS = 20 * 60;
 const authRateMap = new Map();
 let authRateLastSweepAt = 0;
 const DEFAULT_REPORT_MODERATOR_EMAILS = ["admin-2@shsid.online"];
+const PUBLIC_BOARD_USER_EMAIL = "board-guest@system.local";
 
 export default {
   async fetch(request, env) {
@@ -374,10 +375,12 @@ async function handleApi(request, env, url, route) {
     if (isAuthRateLimited(request, "auth_register")) return json({ error: "Too many requests. Please try again later." }, 429);
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
+    const username = normalizeUsername(body.username);
     if (email.length > 254) return json({ error: "Email address too long" }, 400);
     if (!isEmailAddress(email)) return json({ error: "Enter a valid email address" }, 400);
     if (password.length < 8) return json({ error: "Password must be at least 8 characters" }, 400);
     if (password.length > 128) return json({ error: "Password too long" }, 400);
+    if (!username) return json({ error: "Please choose a username" }, 400);
 
     const user = await getUserByEmail(env, email);
     if (!user) return json({ error: "No account setup was started for this email" }, 400);
@@ -393,8 +396,13 @@ async function handleApi(request, env, url, route) {
     const codeHash = await sha256Hex(code);
     if (codeHash !== record.codeHash) return json({ error: "Invalid verification code" }, 400);
 
+    const duplicateUsername = await env.DB.prepare("select id from users where id != ? and lower(trim(coalesce(english_name, ''))) = lower(?) limit 1")
+      .bind(user.id, username)
+      .first();
+    if (duplicateUsername) return json({ error: "That username is already taken" }, 409);
+
     const passwordHash = await hashPassword(password);
-    await env.DB.prepare("update users set password_hash = ?, updated_at = ? where id = ?").bind(passwordHash, now(), user.id).run();
+    await env.DB.prepare("update users set password_hash = ?, english_name = ?, updated_at = ? where id = ?").bind(passwordHash, username, now(), user.id).run();
     await env.SESSIONS.delete(key);
 
     const fresh = await getUserById(env, user.id);
@@ -488,7 +496,7 @@ async function handleApi(request, env, url, route) {
     const bio = String(body.bio || "").trim().slice(0, MAX_TEXT_LEN);
     const profilePhoto = String(body.profilePhoto || "").trim().slice(0, 2000);
     if (!englishName || !Number.isInteger(grade) || grade < 1 || grade > 12 || !Number.isInteger(classNo) || classNo < 1 || classNo > 13) {
-      return json({ error: "Please add your name, year, and class to continue" }, 400);
+      return json({ error: "Please complete the missing profile details before saving" }, 400);
     }
     if (await hasUsersProfilePhotoColumn(env)) {
       await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, profile_photo=?, updated_at=? where id=?")
@@ -506,58 +514,26 @@ async function handleApi(request, env, url, route) {
 
   if (method === "POST" && route === "/auth/complete-profile") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
-    const emailLocal = String(authUser.email || "").split("@")[0] || "";
-    const fallbackEnglishName = emailLocal ? emailLocal.replace(/[._-]+/g, " ").trim().slice(0, MAX_NAME_LEN) : "";
-    const englishName = String(body.englishName || "").trim().slice(0, MAX_NAME_LEN)
-      || String(authUser.english_name || "").trim().slice(0, MAX_NAME_LEN)
-      || fallbackEnglishName;
-    const chineseName = String(body.chineseName || "").trim().slice(0, MAX_NAME_LEN)
-      || String(authUser.chinese_name || "").trim().slice(0, MAX_NAME_LEN);
-    const providedGrade = Number(body.grade);
-    const providedClassNo = Number(body.classNo);
-    const existingGrade = Number(authUser.grade);
-    const existingClassNo = Number(authUser.class_no);
-    const grade = Number.isInteger(providedGrade) && providedGrade >= 1 && providedGrade <= 12
-      ? providedGrade
-      : (Number.isInteger(existingGrade) && existingGrade >= 1 && existingGrade <= 12 ? existingGrade : 10);
-    const classNo = Number.isInteger(providedClassNo) && providedClassNo >= 1 && providedClassNo <= 13
-      ? providedClassNo
-      : (Number.isInteger(existingClassNo) && existingClassNo >= 1 && existingClassNo <= 13 ? existingClassNo : 1);
-    if (!englishName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
-      await audit(env, authUser.id, "profile_complete_failed", { reason: "invalid_profile_fields" }, request);
-      return json({ error: "Please add your name, year, and class to continue" }, 400);
+    const username = normalizeUsername(body.englishName || body.username || authUser.english_name);
+    if (!username) {
+      await audit(env, authUser.id, "profile_complete_failed", { reason: "missing_username" }, request);
+      return json({ error: "Please choose a username" }, 400);
     }
 
-    const duplicate = await env.DB.prepare("select id from users where id != ? and english_name = ? and chinese_name = ? limit 1")
-      .bind(authUser.id, englishName, chineseName)
+    const duplicate = await env.DB.prepare("select id from users where id != ? and lower(trim(coalesce(english_name, ''))) = lower(?) limit 1")
+      .bind(authUser.id, username)
       .first();
     if (duplicate) {
-      await audit(env, authUser.id, "profile_complete_failed", { reason: "duplicate_real_name", duplicateUserId: duplicate.id }, request);
-      return json({ error: "An account with this name already exists. Try signing in instead." }, 409);
+      await audit(env, authUser.id, "profile_complete_failed", { reason: "duplicate_username", duplicateUserId: duplicate.id }, request);
+      return json({ error: "That username is already taken" }, 409);
     }
 
-    const profilePhoto = String(body.profilePhoto || "").trim().slice(0, 2000);
-    const nextVerificationVideo = String(body.verificationVideo || authUser.verification_video || "").slice(0, 200);
-    const nextStatus = hasReviewableVerificationSubmission({
-      ...authUser,
-      english_name: englishName,
-      chinese_name: chineseName,
-      grade,
-      class_no: classNo,
-      verification_video: nextVerificationVideo
-    }) ? "pending_verification" : "draft";
-    if (await hasUsersProfilePhotoColumn(env)) {
-      await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, profile_photo=?, verification_video=?, status=?, updated_at=? where id=?")
-        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), profilePhoto, nextVerificationVideo, nextStatus, now(), authUser.id)
-        .run();
-    } else {
-      await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, verification_video=?, status=?, updated_at=? where id=?")
-        .bind(englishName, chineseName, grade, classNo, String(body.bio || "").trim().slice(0, MAX_TEXT_LEN), nextVerificationVideo, nextStatus, now(), authUser.id)
-        .run();
-    }
+    await env.DB.prepare("update users set english_name=?, updated_at=? where id=?")
+      .bind(username, now(), authUser.id)
+      .run();
 
     const updated = await getUserById(env, authUser.id);
-    await audit(env, authUser.id, "profile_completed", { status: nextStatus }, request);
+    await audit(env, authUser.id, "profile_completed", { status: updated?.status || "draft" }, request);
     return json({ user: await userView(env, updated, updated) }, 200);
   }
 
@@ -622,18 +598,15 @@ async function handleApi(request, env, url, route) {
   }
 
   if (method === "POST" && route === "/posts") {
-    if (!authUser) return json({ error: "Authentication required" }, 401);
-    if (authUser.status !== "verified" && authUser.role !== "admin") return json({ error: "Verification required before posting" }, 403);
-    if (body.anonymous && !hasAnonymousFeatureAccess(authUser)) {
-      return json({ error: "Upload your verification video in Settings before using anonymous posting" }, 403);
-    }
+    if (authUser?.status === "banned") return json({ error: "Account banned" }, 403);
+    const actor = authUser || await ensureBoardGuestUser(env);
     const text = String(body.text || "").trim();
-    const media = sanitizeMediaItems(body.media, 20);
+    const media = sanitizeMediaItems(body.media, 1);
     if (!text && media.length === 0) return json({ error: "Text or media is required" }, 400);
 
     const post = {
       id: id("pst"),
-      author_id: authUser.id,
+      author_id: actor.id,
       title: String(body.title || "").trim().slice(0, MAX_TITLE_LEN),
       category: sanitizeCategory(body.category),
       text: text.slice(0, MAX_TEXT_LEN),
@@ -641,7 +614,7 @@ async function handleApi(request, env, url, route) {
       likes: "[]",
       hearts: "[]",
       saved_by: "[]",
-      anonymous: body.anonymous ? 1 : 0,
+      anonymous: authUser ? (body.anonymous ? 1 : 0) : 1,
       sticky: 0,
       deleted_at: null,
       created_at: now()
@@ -662,7 +635,7 @@ async function handleApi(request, env, url, route) {
         .bind(post.id, post.author_id, post.category, post.text, post.media, post.likes, post.anonymous, post.sticky, post.deleted_at, post.created_at)
         .run();
     }
-    await audit(env, authUser.id, "post_created", { postId: post.id }, request);
+    await audit(env, actor.id, "post_created", { postId: post.id }, request);
 
     return json({ post: fromDbPost(post) }, 201);
   }
@@ -713,7 +686,8 @@ async function handleApi(request, env, url, route) {
 
   const postCommentMatch = route.match(/^\/posts\/([^/]+)\/comments$/);
   if (method === "POST" && postCommentMatch) {
-    if (!authUser) return json({ error: "Authentication required" }, 401);
+    if (authUser?.status === "banned") return json({ error: "Account banned" }, 403);
+    const actor = authUser || await ensureBoardGuestUser(env);
     const text = String(body.text || "").trim();
     if (!text) return json({ error: "Comment text is required" }, 400);
     const post = await env.DB.prepare("select id from posts where id=? and deleted_at is null").bind(postCommentMatch[1]).first();
@@ -723,18 +697,14 @@ async function handleApi(request, env, url, route) {
       const target = await env.DB.prepare("select id from comments where id=? and post_id=? and deleted_at is null").bind(replyTo, post.id).first();
       if (!target) return json({ error: "Reply target not found" }, 400);
     }
-    if (body.anonymous && !hasAnonymousFeatureAccess(authUser)) {
-      return json({ error: "Upload your verification video in Settings before commenting anonymously" }, 403);
-    }
-
     const comment = {
       id: id("cmt"),
       post_id: post.id,
-      author_id: authUser.id,
+      author_id: actor.id,
       text: text.slice(0, MAX_TEXT_LEN),
       likes: "[]",
       reply_to: replyTo || null,
-      anonymous: authUser.role === "admin" ? 0 : (body.anonymous ? 1 : 0),
+      anonymous: authUser ? (authUser.role === "admin" ? 0 : (body.anonymous ? 1 : 0)) : 1,
       deleted_at: null,
       created_at: now()
     };
@@ -757,9 +727,9 @@ async function handleApi(request, env, url, route) {
         .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.anonymous, comment.deleted_at, comment.created_at)
         .run();
     }
-    await audit(env, authUser.id, "comment_created", { postId: post.id, commentId: comment.id }, request);
+    await audit(env, actor.id, "comment_created", { postId: post.id, commentId: comment.id }, request);
     const postOwner = await env.DB.prepare("select author_id from posts where id=?").bind(post.id).first();
-    if (postOwner?.author_id && postOwner.author_id !== authUser.id) {
+    if (authUser && postOwner?.author_id && postOwner.author_id !== authUser.id) {
       await createNotification(env, postOwner.author_id, "post_comment", `${notificationActorName(authUser)} commented on your post.`);
     }
 
@@ -1751,6 +1721,39 @@ async function getUserById(env, idValue) {
   return env.DB.prepare("select * from users where id = ? limit 1").bind(idValue).first();
 }
 
+async function ensureBoardGuestUser(env) {
+  const existing = await getUserByEmail(env, PUBLIC_BOARD_USER_EMAIL);
+  if (existing) return existing;
+  const user = {
+    id: id("usr"),
+    email: PUBLIC_BOARD_USER_EMAIL,
+    password_hash: null,
+    role: "student",
+    status: "verified",
+    english_name: "Board Guest",
+    chinese_name: "",
+    grade: null,
+    class_no: null,
+    bio: "System guest account for public board posts.",
+    profile_photo: "",
+    verification_video: "",
+    created_at: now(),
+    updated_at: now()
+  };
+  if (await hasUsersProfilePhotoColumn(env)) {
+    await env.DB.prepare(`insert into users (id, email, password_hash, role, status, english_name, chinese_name, grade, class_no, bio, profile_photo, verification_video, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(user.id, user.email, user.password_hash, user.role, user.status, user.english_name, user.chinese_name, user.grade, user.class_no, user.bio, user.profile_photo, user.verification_video, user.created_at, user.updated_at)
+      .run();
+  } else {
+    await env.DB.prepare(`insert into users (id, email, password_hash, role, status, english_name, chinese_name, grade, class_no, bio, verification_video, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(user.id, user.email, user.password_hash, user.role, user.status, user.english_name, user.chinese_name, user.grade, user.class_no, user.bio, user.verification_video, user.created_at, user.updated_at)
+      .run();
+  }
+  return user;
+}
+
 function moderatorEmails(env) {
   const raw = String(env.MODERATOR_EMAILS || "").trim().toLowerCase();
   const list = raw
@@ -1796,6 +1799,10 @@ function hasAnonymousFeatureAccess(user) {
   if (user.status !== "verified") return false;
   const verificationVideo = String(user?.verification_video ?? user?.verificationVideo ?? "").trim();
   return Boolean(verificationVideo && verificationVideo !== "pending-upload");
+}
+
+function normalizeUsername(value) {
+  return String(value || "").trim().slice(0, MAX_NAME_LEN);
 }
 
 async function userView(env, target, viewer) {

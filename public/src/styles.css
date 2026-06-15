@@ -155,6 +155,58 @@ a {
   margin-top: 10px;
 }
 
+.thread-form {
+  display: table;
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+}
+
+.form-row {
+  display: table-row;
+}
+
+.form-row label,
+.form-row input,
+.form-row select,
+.form-row textarea {
+  display: table-cell;
+  vertical-align: top;
+}
+
+.form-row label {
+  width: 118px;
+  padding: 6px;
+  background: var(--accent-soft);
+  border: 1px solid #b7c5d9;
+  font-weight: 700;
+}
+
+.form-row input,
+.form-row select,
+.form-row textarea {
+  width: 100%;
+  padding: 6px;
+  border: 1px solid #999999;
+  background: #ffffff;
+}
+
+.form-row-textarea textarea {
+  resize: vertical;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.form-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -230,6 +282,17 @@ a {
 .thread-body {
   margin: 0 0 7px;
   white-space: pre-wrap;
+}
+
+.thread-media {
+  margin: 0 0 8px;
+}
+
+.thread-media img {
+  display: block;
+  max-width: min(100%, 420px);
+  border: 1px solid var(--line);
+  background: #ffffff;
 }
 
 .thread-foot {
@@ -414,5 +477,24 @@ a {
 
   .vote-button {
     margin-left: 0;
+  }
+
+  .thread-form,
+  .form-row,
+  .form-row label,
+  .form-row input,
+  .form-row select,
+  .form-row textarea {
+    display: block;
+  }
+
+  .form-row label {
+    width: 100%;
+    margin-bottom: 4px;
+  }
+
+  .form-actions {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

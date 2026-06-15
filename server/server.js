@@ -54,6 +54,7 @@ const AD_SLOTS = new Set(["top_banner", "feed_inline", "students_inline", "popup
 const REPORT_TARGET_TYPES = new Set(["post", "conversation", "comment", "user"]);
 const REPORT_STATUSES = new Set(["pending", "dismissed", "actioned", "resolved"]);
 const VERIFICATION_DECISIONS = new Set(["approve", "reject"]);
+const PUBLIC_BOARD_USER_EMAIL = "board-guest@system.local";
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -254,6 +255,11 @@ function sanitizeMediaItems(value, limit = 20) {
     type: String(item?.type || "application/octet-stream").trim().slice(0, 120),
     name: String(item?.name || "").trim().slice(0, 260)
   })).filter((item) => item.url);
+}
+
+function getBoardActorId() {
+  const guest = store.findUserByEmail(PUBLIC_BOARD_USER_EMAIL);
+  return guest?.id || null;
 }
 
 function createVerificationCode() {
@@ -642,6 +648,10 @@ function hasCompletedStudentProfile(user) {
   return true;
 }
 
+function normalizeUsername(value) {
+  return String(value || "").trim().slice(0, MAX_NAME_LEN);
+}
+
 function hasAnonymousFeatureAccess(user) {
   if (!user) return false;
   if (user.role === "admin") return true;
@@ -767,6 +777,7 @@ async function handleApi(req, res, url) {
 
   if (method === "POST" && url.pathname === "/api/auth/register") {
     const email = String(body.email || "").trim().toLowerCase();
+    const username = normalizeUsername(body.username);
     if (email.length > 254) return sendJson(res, 400, { error: "Email address too long" }, req);
     const user = store.findUserByEmail(email);
     if (!user) return sendJson(res, 400, { error: "No account setup was started for this email" }, req);
@@ -789,7 +800,11 @@ async function handleApi(req, res, url) {
     }
     if (!body.password || String(body.password).length < 8) return sendJson(res, 400, { error: "Password must be at least 8 characters" }, req);
     if (String(body.password).length > 128) return sendJson(res, 400, { error: "Password too long" }, req);
+    if (!username) return sendJson(res, 400, { error: "Please choose a username" }, req);
+    const duplicateUsername = store.data.users.find((item) => item.id !== user.id && String(item.englishName || "").trim().toLowerCase() === username.toLowerCase());
+    if (duplicateUsername) return sendJson(res, 409, { error: "That username is already taken" }, req);
     user.passwordHash = hashPassword(String(body.password));
+    user.englishName = username;
     delete user.emailVerification;
     user.updatedAt = now();
     const session = store.createSession(user, SESSION_TTL_HOURS);
@@ -850,52 +865,23 @@ async function handleApi(req, res, url) {
   if (method === "POST" && url.pathname === "/api/auth/complete-profile") {
     const user = requireAuth(req, res);
     if (!user) return;
-    const emailLocal = String(user.email || "").split("@")[0] || "";
-    const fallbackEnglishName = emailLocal ? emailLocal.replace(/[._-]+/g, " ").trim().slice(0, MAX_NAME_LEN) : "";
-    const englishName = String(body.englishName || "").trim().slice(0, MAX_NAME_LEN)
-      || String(user.englishName || "").trim().slice(0, MAX_NAME_LEN)
-      || fallbackEnglishName;
-    const chineseName = String(body.chineseName || "").trim().slice(0, MAX_NAME_LEN)
-      || String(user.chineseName || "").trim().slice(0, MAX_NAME_LEN);
-    const providedGrade = Number(body.grade);
-    const providedClassNo = Number(body.classNo);
-    const grade = Number.isInteger(providedGrade) && providedGrade >= 1 && providedGrade <= 12
-      ? providedGrade
-      : (Number.isInteger(Number(user.grade)) && Number(user.grade) >= 1 && Number(user.grade) <= 12 ? Number(user.grade) : 10);
-    const classNo = Number.isInteger(providedClassNo) && providedClassNo >= 1 && providedClassNo <= 13
-      ? providedClassNo
-      : (Number.isInteger(Number(user.classNo)) && Number(user.classNo) >= 1 && Number(user.classNo) <= 13 ? Number(user.classNo) : 1);
-    if (!englishName || grade < 1 || grade > 12 || classNo < 1 || classNo > 13) {
-      store.audit(user.id, "profile_complete_failed", { reason: "invalid_profile_fields" });
+    const username = normalizeUsername(body.englishName || body.username || user.englishName);
+    if (!username) {
+      store.audit(user.id, "profile_complete_failed", { reason: "missing_username" });
       store.save();
-      return sendJson(res, 400, { error: "Please add your name, year, and class to continue" }, req);
+      return sendJson(res, 400, { error: "Please choose a username" }, req);
     }
-    const duplicate = store.data.users.find((item) => item.id !== user.id && item.englishName === englishName && item.chineseName === chineseName);
+    const duplicate = store.data.users.find((item) => item.id !== user.id && String(item.englishName || "").trim().toLowerCase() === username.toLowerCase());
     if (duplicate) {
-      store.audit(user.id, "profile_complete_failed", { reason: "duplicate_real_name", duplicateUserId: duplicate.id });
+      store.audit(user.id, "profile_complete_failed", { reason: "duplicate_username", duplicateUserId: duplicate.id });
       store.save();
-      return sendJson(res, 409, { error: "An account with this name already exists. Try signing in instead." }, req);
+      return sendJson(res, 409, { error: "That username is already taken" }, req);
     }
-    const nextVerificationVideo = String(body.verificationVideo || user.verificationVideo || "").slice(0, 200);
-    const nextStatus = hasReviewableVerificationSubmission({
-      ...user,
-      englishName,
-      chineseName,
-      grade,
-      classNo,
-      verificationVideo: nextVerificationVideo
-    }) ? "pending_verification" : "draft";
     Object.assign(user, {
-      englishName,
-      chineseName,
-      grade,
-      classNo,
-      verificationVideo: nextVerificationVideo,
-      bio: String(body.bio || "").trim().slice(0, MAX_TEXT_LEN),
-      status: nextStatus,
+      englishName: username,
       updatedAt: now()
     });
-    store.audit(user.id, "profile_completed", { status: nextStatus });
+    store.audit(user.id, "profile_completed", { status: user.status || "draft" });
     store.save();
     return sendJson(res, 200, { user: userView(user, user) }, req);
   }
@@ -944,30 +930,30 @@ async function handleApi(req, res, url) {
     const { items, pagination } = paginate(visiblePosts, url, { limit: 25, maxLimit: 100 });
     const posts = items.map((post) => ({
       ...post,
-      author: post.anonymous && user.role !== "admin" ? null : userView(store.findUserById(post.authorId), user, followIndexes),
-      adminAuthor: user.role === "admin" ? userView(store.findUserById(post.authorId), user, followIndexes) : undefined
+      author: post.anonymous && user?.role !== "admin" ? null : userView(store.findUserById(post.authorId), user, followIndexes),
+      adminAuthor: user?.role === "admin" ? userView(store.findUserById(post.authorId), user, followIndexes) : undefined
     }));
     return sendJson(res, 200, { posts, pagination });
   }
 
   if (method === "POST" && url.pathname === "/api/posts") {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    if (user.status !== "verified" && user.role !== "admin") return sendJson(res, 403, { error: "Verification required before posting" }, req);
-    if (body.anonymous && !hasAnonymousFeatureAccess(user)) {
-      return sendJson(res, 403, { error: "Upload your verification video in Settings before using anonymous posting" }, req);
-    }
+    const user = getAuthUser(req);
+    if (user?.status === "banned") return sendJson(res, 403, { error: "Account banned" }, req);
+    const authorId = user?.id || getBoardActorId();
+    if (!authorId) return sendJson(res, 500, { error: "Board guest account is unavailable" }, req);
     const text = String(body.text || "").trim();
     if (!text && !(body.media || []).length) return sendJson(res, 400, { error: "Text or media is required" }, req);
     const sanitizedText = text.slice(0, MAX_TEXT_LEN);
     const category = sanitizeCategory(body.category);
+    const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN) || "Untitled thread";
     const post = {
       id: id("pst"),
-      authorId: user.id,
-      anonymous: Boolean(body.anonymous),
+      authorId,
+      title,
+      anonymous: !user,
       category,
       text: sanitizedText,
-      media: sanitizeMediaItems(body.media, 9),
+      media: sanitizeMediaItems(body.media, 1),
       likes: [],
       hearts: [],
       savedBy: [],
@@ -977,9 +963,9 @@ async function handleApi(req, res, url) {
       deletedAt: null
     };
     store.data.posts.unshift(post);
-    store.audit(user.id, "post_created", {
+    store.audit(authorId, "post_created", {
       postId: post.id,
-      postTitle: title || "",
+      postTitle: title,
       postText: sanitizedText.slice(0, 240),
       category
     });
@@ -1032,8 +1018,10 @@ async function handleApi(req, res, url) {
 
   const postCommentMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/comments$/);
   if (method === "POST" && postCommentMatch) {
-    const user = requireAuth(req, res);
-    if (!user) return;
+    const user = getAuthUser(req);
+    if (user?.status === "banned") return sendJson(res, 403, { error: "Account banned" }, req);
+    const authorId = user?.id || getBoardActorId();
+    if (!authorId) return sendJson(res, 500, { error: "Board guest account is unavailable" }, req);
     const post = store.data.posts.find((item) => item.id === postCommentMatch[1] && !item.deletedAt);
     if (!post) return notFound(res);
     const text = String(body.text || "").trim();
@@ -1042,13 +1030,10 @@ async function handleApi(req, res, url) {
     if (replyTo && !post.comments.some((item) => item.id === replyTo && !item.deletedAt)) {
       return sendJson(res, 400, { error: "Reply target not found" }, req);
     }
-    if (body.anonymous && !hasAnonymousFeatureAccess(user)) {
-      return sendJson(res, 403, { error: "Upload your verification video in Settings before commenting anonymously" }, req);
-    }
     const comment = {
       id: id("cmt"),
-      authorId: user.id,
-      anonymous: user.role === "admin" ? false : Boolean(body.anonymous),
+      authorId,
+      anonymous: !user || user.role !== "admin",
       text: text.slice(0, MAX_TEXT_LEN),
       likes: [],
       replyTo: replyTo || null,
@@ -1056,10 +1041,10 @@ async function handleApi(req, res, url) {
       deletedAt: null
     };
     post.comments.push(comment);
-    if (post.authorId && post.authorId !== user.id) {
+    if (user && post.authorId && post.authorId !== user.id) {
       store.data.notifications.push({ id: id("ntf"), userId: post.authorId, type: "post_comment", body: `${user.englishName || "A student"} commented on your post.`, readAt: null, createdAt: now() });
     }
-    store.audit(user.id, "comment_created", {
+    store.audit(authorId, "comment_created", {
       postId: post.id,
       commentId: comment.id,
       commentText: comment.text,

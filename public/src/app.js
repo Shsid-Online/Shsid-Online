@@ -18,17 +18,16 @@ const initialState = {
   posts: [],
   board: "all",
   search: "",
+  composerBoard: "school",
+  composerTitle: "",
+  composerBody: "",
+  replyDrafts: {},
   authOpen: false,
   authMode: "login",
   authStep: "email",
   pendingEmail: "",
   pendingCode: "",
-  pendingFirstName: "",
-  pendingMiddleName: "",
-  pendingLastName: "",
-  pendingChineseName: "",
-  pendingGrade: 10,
-  pendingClassNo: 1,
+  pendingUsername: "",
   toast: ""
 };
 
@@ -63,17 +62,16 @@ function saveState() {
     currentUser: state.currentUser,
     board: state.board,
     search: state.search,
+    composerBoard: state.composerBoard,
+    composerTitle: state.composerTitle,
+    composerBody: state.composerBody,
+    replyDrafts: state.replyDrafts,
     authOpen: state.authOpen,
     authMode: state.authMode,
     authStep: state.authStep,
     pendingEmail: state.pendingEmail,
     pendingCode: state.pendingCode,
-    pendingFirstName: state.pendingFirstName,
-    pendingMiddleName: state.pendingMiddleName,
-    pendingLastName: state.pendingLastName,
-    pendingChineseName: state.pendingChineseName,
-    pendingGrade: state.pendingGrade,
-    pendingClassNo: state.pendingClassNo
+    pendingUsername: state.pendingUsername
   }));
 }
 
@@ -150,7 +148,7 @@ async function apiRequest(path, { method = "GET", body, auth = true, optionalAut
 }
 
 function needsProfile(user) {
-  return !user?.englishName || !user?.grade || !user?.classNo;
+  return !String(user?.englishName || "").trim();
 }
 
 async function fetchCurrentUser() {
@@ -199,11 +197,34 @@ async function fetchPosts() {
 
 function mergePost(updatedPost) {
   const normalized = normalizePost(updatedPost);
-  state.posts = state.posts.map((post) => (
-    post.id === normalized.id
-      ? { ...post, ...normalized, comments: normalized.comments.length ? normalized.comments : post.comments }
-      : post
-  ));
+  const existing = state.posts.find((post) => post.id === normalized.id);
+  if (existing) {
+    state.posts = state.posts.map((post) => (
+      post.id === normalized.id
+        ? { ...post, ...normalized, comments: normalized.comments.length ? normalized.comments : post.comments }
+        : post
+    ));
+  } else {
+    state.posts = [normalized, ...state.posts];
+  }
+}
+
+async function uploadSinglePhoto(file) {
+  const fileName = String(file?.name || "photo").trim();
+  const contentType = String(file?.type || "").trim().toLowerCase();
+  if (!contentType.startsWith("image/")) throw new Error("Please choose an image file");
+  const signed = await apiRequest("/upload-url", {
+    method: "POST",
+    body: { fileName, contentType, purpose: "media" },
+    auth: false
+  });
+  const response = await fetch(signed.uploadUrl, {
+    method: signed.method || "PUT",
+    headers: signed.headers || { "content-type": contentType },
+    body: file
+  });
+  if (!response.ok) throw new Error("Photo upload failed");
+  return { url: signed.mediaUrl, type: contentType, name: fileName };
 }
 
 function queueLike(postId) {
@@ -231,12 +252,7 @@ function resetAuthDraft({ keepEmail = false } = {}) {
   state.authMode = "login";
   state.pendingCode = "";
   if (!keepEmail) state.pendingEmail = "";
-  state.pendingFirstName = "";
-  state.pendingMiddleName = "";
-  state.pendingLastName = "";
-  state.pendingChineseName = "";
-  state.pendingGrade = 10;
-  state.pendingClassNo = 1;
+  state.pendingUsername = "";
 }
 
 function openAuth(mode = "login") {
@@ -330,15 +346,19 @@ async function submitPassword(event) {
   render();
   try {
     if (state.authMode === "register") {
+      const username = String(document.querySelector("#auth-username")?.value || "").trim();
       const confirm = String(document.querySelector("#auth-password-confirm")?.value || "");
+      if (!username) throw new Error("Please choose a username");
       if (!confirm) throw new Error("Please confirm your password");
       if (confirm !== password) throw new Error("Passwords do not match");
+      state.pendingUsername = username;
       const result = await apiRequest("/auth/register", {
         method: "POST",
         body: {
           email: state.pendingEmail,
           code: state.pendingCode,
-          password
+          password,
+          username
         },
         auth: false
       });
@@ -378,33 +398,23 @@ async function submitPassword(event) {
 async function submitProfile(event) {
   event.preventDefault();
   if (authBusy) return;
-  const firstName = String(document.querySelector("#reg-first")?.value || "").trim();
-  const middleName = String(document.querySelector("#reg-middle")?.value || "").trim();
-  const lastName = String(document.querySelector("#reg-last")?.value || "").trim();
-  const chineseName = String(document.querySelector("#reg-cn")?.value || "").trim();
-  const grade = Number(document.querySelector("#reg-grade")?.value);
-  const classNo = Number(document.querySelector("#reg-class")?.value);
-  if (!firstName || !lastName) return toast("Please enter your first and last name");
-  if (!Number.isInteger(grade) || grade < 1 || grade > 12) return toast("Please choose a year from 1 to 12");
-  if (!Number.isInteger(classNo) || classNo < 1 || classNo > 13) return toast("Please choose a class from 1 to 13");
+  const username = String(document.querySelector("#reg-username")?.value || "").trim();
+  if (!username) return toast("Please choose a username");
   authBusy = true;
   render();
   try {
-    const englishName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
+    state.pendingUsername = username;
     const result = await apiRequest("/auth/complete-profile", {
       method: "POST",
       body: {
-        englishName,
-        chineseName,
-        grade,
-        classNo
+        username
       }
     });
     state.currentUser = result.user || null;
     await finishAuthFlow();
     toast("Account ready. You can upvote now.");
   } catch (error) {
-    toast(error.message || "Could not save your school info");
+    toast(error.message || "Could not save your username");
   } finally {
     authBusy = false;
     saveState();
@@ -423,6 +433,65 @@ async function logout() {
   clearQueuedLike();
   saveState();
   render();
+}
+
+async function submitThread(event) {
+  event.preventDefault();
+  const title = String(document.querySelector("#composer-title")?.value || "").trim();
+  const body = String(document.querySelector("#composer-body")?.value || "").trim();
+  const category = String(document.querySelector("#composer-board")?.value || state.composerBoard || "school").trim().toLowerCase();
+  const photoFile = document.querySelector("#composer-photo")?.files?.[0] || null;
+  if (!title) return toast("Please add a subject");
+  if (!body && !photoFile) return toast("Please add a post or a photo");
+  try {
+    const media = photoFile ? [await uploadSinglePhoto(photoFile)] : [];
+    const result = await apiRequest("/posts", {
+      method: "POST",
+      body: { title, text: body, category, media },
+      auth: false,
+      optionalAuth: true
+    });
+    if (result.post) mergePost(result.post);
+    state.composerBoard = category;
+    state.composerTitle = "";
+    state.composerBody = "";
+    const photoInput = document.querySelector("#composer-photo");
+    if (photoInput) photoInput.value = "";
+    saveState();
+    render();
+    toast("Thread posted");
+  } catch (error) {
+    toast(error.message || "Could not post thread");
+  }
+}
+
+async function submitReply(postId) {
+  const replyKey = `reply-${postId}`;
+  const text = String(document.querySelector(`#${replyKey}`)?.value || "").trim();
+  if (!text) return toast("Please write a reply");
+  try {
+    const result = await apiRequest(`/posts/${postId}/comments`, {
+      method: "POST",
+      body: { text },
+      auth: false,
+      optionalAuth: true
+    });
+    const target = state.posts.find((post) => post.id === postId);
+    if (target && result.comment) {
+      target.comments = [...(target.comments || []), {
+        id: result.comment.id,
+        text: String(result.comment.text || "").trim(),
+        likes: Array.isArray(result.comment.likes) ? result.comment.likes : [],
+        createdAt: result.comment.createdAt
+      }];
+    }
+    state.replyDrafts[postId] = "";
+    saveState();
+    render();
+    toast("Reply posted");
+  } catch (error) {
+    toast(error.message || "Could not post reply");
+  }
 }
 
 function filteredPosts() {
@@ -453,6 +522,11 @@ function renderThreadCard(post, index) {
         <span class="thread-id">No.${5000 + index}</span>
       </div>
       <p class="thread-body">${escapeHtml(post.text || "No text added.")}</p>
+      ${(post.media || []).length ? `
+        <div class="thread-media">
+          <img src="${escapeHtml(post.media[0].url)}" alt="${escapeHtml(post.media[0].name || post.title || "Thread image")}" loading="lazy">
+        </div>
+      ` : ""}
       <div class="thread-foot">
         <span>${escapeHtml(board.name)}</span>
         <span>${(post.comments || []).length} repl${(post.comments || []).length === 1 ? "y" : "ies"}</span>
@@ -471,6 +545,13 @@ function renderThreadCard(post, index) {
           `).join("")}
         </div>
       ` : ""}
+      <form class="reply-form" data-reply-form="${escapeHtml(post.id)}">
+        <label>
+          Reply
+          <textarea id="reply-${escapeHtml(post.id)}" class="reply-input" rows="3" maxlength="280" placeholder="Post a public reply">${escapeHtml(state.replyDrafts[post.id] || "")}</textarea>
+        </label>
+        <button class="board-button" type="submit">Reply</button>
+      </form>
     </article>
   `;
 }
@@ -485,16 +566,16 @@ function renderAuthModal() {
       ? "Check your email"
       : step === "password"
         ? (mode === "register" ? "Create your password" : "Welcome back")
-        : "Your school info";
+        : "Choose a username";
   const subtitle = step === "email"
     ? "You only need an account to upvote threads. Browsing the board stays open."
     : step === "verify"
       ? "Enter the 6-digit code we sent to your email."
       : step === "password"
         ? (mode === "register"
-          ? "Finish setting up your account."
+          ? "Finish setting up your account with a password and username."
           : "Sign in to unlock upvotes.")
-        : "Tell us the name you use at school and your class information.";
+        : "Pick a username that no one else is using.";
 
   const body = step === "email" ? `
     <form id="auth-email-form" class="auth-form">
@@ -534,6 +615,10 @@ function renderAuthModal() {
       </label>
       ${mode === "register" ? `
         <label class="auth-field">
+          <span>Username</span>
+          <input id="auth-username" type="text" value="${escapeHtml(state.pendingUsername || "")}" placeholder="Choose a username" required>
+        </label>
+        <label class="auth-field">
           <span>Confirm password</span>
           <input id="auth-password-confirm" type="password" placeholder="Confirm password" required>
         </label>
@@ -545,36 +630,12 @@ function renderAuthModal() {
     </form>
   ` : `
     <form id="auth-profile-form" class="auth-form">
-      <div class="auth-grid">
-        <label class="auth-field">
-          <span>First name</span>
-          <input id="reg-first" value="${escapeHtml(state.pendingFirstName || "")}" placeholder="First name" required>
-        </label>
-        <label class="auth-field">
-          <span>Middle name</span>
-          <input id="reg-middle" value="${escapeHtml(state.pendingMiddleName || "")}" placeholder="Optional">
-        </label>
-      </div>
       <label class="auth-field">
-        <span>Last name</span>
-        <input id="reg-last" value="${escapeHtml(state.pendingLastName || "")}" placeholder="Last name" required>
+        <span>Username</span>
+        <input id="reg-username" value="${escapeHtml(state.pendingUsername || "")}" placeholder="Choose a username" required>
       </label>
-      <label class="auth-field">
-        <span>Chinese name</span>
-        <input id="reg-cn" value="${escapeHtml(state.pendingChineseName || "")}" placeholder="Optional">
-      </label>
-      <div class="auth-grid">
-        <label class="auth-field">
-          <span>Year</span>
-          <input id="reg-grade" type="number" min="1" max="12" value="${Number(state.pendingGrade || 10)}" required>
-        </label>
-        <label class="auth-field">
-          <span>Class</span>
-          <input id="reg-class" type="number" min="1" max="13" value="${Number(state.pendingClassNo || 1)}" required>
-        </label>
-      </div>
       <div class="auth-actions">
-        <button class="board-button primary" type="submit"${authBusy ? " disabled" : ""}>Finish account</button>
+        <button class="board-button primary" type="submit"${authBusy ? " disabled" : ""}>Save username</button>
       </div>
     </form>
   `;
@@ -636,6 +697,30 @@ function render() {
             ? `<span class="status-note">You can vote on threads right now.</span>`
             : `<button class="board-button primary" data-action="open-auth">Unlock upvotes</button>`}
         </div>
+        <form id="thread-form" class="thread-form">
+          <div class="form-row">
+            <label for="composer-board">Board</label>
+            <select id="composer-board">
+              ${BOARDS.map((board) => `<option value="${escapeHtml(board.category)}"${(state.composerBoard || state.board || "school") === board.category ? " selected" : ""}>${escapeHtml(board.slug)} ${escapeHtml(board.name)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="composer-title">Subject</label>
+            <input id="composer-title" type="text" maxlength="90" value="${escapeHtml(state.composerTitle || "")}" placeholder="Thread subject">
+          </div>
+          <div class="form-row form-row-textarea">
+            <label for="composer-body">Comment</label>
+            <textarea id="composer-body" rows="5" maxlength="5000" placeholder="Write your thread">${escapeHtml(state.composerBody || "")}</textarea>
+          </div>
+          <div class="form-row">
+            <label for="composer-photo">Photo</label>
+            <input id="composer-photo" type="file" accept="image/*">
+          </div>
+          <div class="form-actions">
+            <button class="board-button primary" type="submit">Post thread</button>
+            <span class="form-note">One photo max per thread.</span>
+          </div>
+        </form>
       </section>
 
       <section class="thread-controls">
@@ -683,6 +768,33 @@ function bindEvents() {
     state.search = String(event.target.value || "");
     saveState();
     render();
+  });
+
+  document.querySelector("#composer-board")?.addEventListener("change", (event) => {
+    state.composerBoard = String(event.target.value || "school");
+    saveState();
+  });
+  document.querySelector("#composer-title")?.addEventListener("input", (event) => {
+    state.composerTitle = String(event.target.value || "");
+    saveState();
+  });
+  document.querySelector("#composer-body")?.addEventListener("input", (event) => {
+    state.composerBody = String(event.target.value || "");
+    saveState();
+  });
+  document.querySelector("#thread-form")?.addEventListener("submit", submitThread);
+  document.querySelectorAll("[data-reply-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await submitReply(form.getAttribute("data-reply-form") || "");
+    });
+  });
+  document.querySelectorAll(".reply-input").forEach((input) => {
+    input.addEventListener("input", (event) => {
+      const id = String(event.target.id || "").replace(/^reply-/, "");
+      state.replyDrafts[id] = String(event.target.value || "");
+      saveState();
+    });
   });
 
   document.querySelectorAll("[data-action]").forEach((button) => {

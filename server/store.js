@@ -5,6 +5,7 @@ const path = require("node:path");
 const DEFAULT_DATA_FILE = path.resolve(process.cwd(), "data/dev-db.json");
 const INITIAL_ADMIN_EMAIL = process.env.INITIAL_ADMIN_EMAIL || "admin@example.com";
 const INITIAL_ADMIN_PASSWORD = process.env.INITIAL_ADMIN_PASSWORD;
+const PUBLIC_BOARD_USER_EMAIL = "board-guest@system.local";
 
 function now() {
   return new Date().toISOString();
@@ -53,6 +54,20 @@ function createSeed() {
         grade: 12,
         classNo: 1,
         bio: "Initial platform administrator",
+        createdAt: now(),
+        updatedAt: now()
+      },
+      {
+        id: id("usr"),
+        email: PUBLIC_BOARD_USER_EMAIL,
+        passwordHash: null,
+        role: "student",
+        status: "verified",
+        englishName: "Board Guest",
+        chineseName: "",
+        grade: null,
+        classNo: null,
+        bio: "System guest account for public board posts.",
         createdAt: now(),
         updatedAt: now()
       }
@@ -140,6 +155,22 @@ class Store {
         }
         delete user.sessions;
       }
+    }
+    if (!this.data.users.some((user) => user.email === PUBLIC_BOARD_USER_EMAIL)) {
+      this.data.users.push({
+        id: id("usr"),
+        email: PUBLIC_BOARD_USER_EMAIL,
+        passwordHash: null,
+        role: "student",
+        status: "verified",
+        englishName: "Board Guest",
+        chineseName: "",
+        grade: null,
+        classNo: null,
+        bio: "System guest account for public board posts.",
+        createdAt: now(),
+        updatedAt: now()
+      });
     }
   }
 
