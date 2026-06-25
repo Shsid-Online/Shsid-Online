@@ -11,6 +11,7 @@
   --accent-ink: #0f0c5d;
   --green: #117743;
   --shadow: 0 18px 44px rgba(19, 27, 11, 0.12);
+  --radius: 16px;
 }
 
 * {
@@ -29,9 +30,9 @@ body {
     linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0)),
     var(--bg);
   color: var(--ink);
-  font-family: "Arial", "Helvetica Neue", Helvetica, sans-serif;
-  font-size: 14px;
-  line-height: 1.4;
+  font-family: "Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
 }
 
 button,
@@ -55,14 +56,14 @@ a {
 }
 
 .page {
-  width: min(980px, calc(100% - 24px));
+  width: min(1120px, calc(100% - 40px));
   margin: 0 auto;
-  padding: 12px 0 32px;
+  padding: 20px 0 48px;
 }
 
 .site-header {
   text-align: center;
-  margin-bottom: 14px;
+  margin-bottom: 20px;
 }
 
 .account-strip,
@@ -74,15 +75,17 @@ a {
 .modal-card {
   border: 1px solid var(--line);
   background: var(--panel);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 28px rgba(35, 47, 24, 0.06);
 }
 
 .account-strip {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
-  margin-bottom: 12px;
+  gap: 16px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
   text-align: left;
 }
 
@@ -93,140 +96,137 @@ a {
 .site-header h1 {
   margin: 0;
   color: var(--accent);
-  font-size: 38px;
-  line-height: 1;
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  line-height: 0.95;
+  letter-spacing: -0.04em;
 }
 
 .tagline {
-  margin: 6px 0 4px;
+  margin: 10px auto 8px;
   color: #cc1105;
   font-weight: 700;
+  max-width: 760px;
 }
 
 .notice {
   max-width: 780px;
   margin: 0 auto;
+  color: var(--muted);
 }
 
 .board-nav {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 8px;
-  padding: 8px 10px;
-  margin-bottom: 10px;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
 }
 
 .board-link {
-  border: 0;
-  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
   color: #34345c;
   text-decoration: none;
   white-space: nowrap;
-  padding: 2px 4px;
+  padding: 8px 14px;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
 }
 
 .board-link:hover,
 .board-link.active {
   color: var(--accent);
-  text-decoration: underline;
+  text-decoration: none;
+  border-color: rgba(128, 0, 0, 0.2);
+  background: #fff9f7;
+  transform: translateY(-1px);
 }
 
 .post-box {
-  padding: 12px;
-  margin-bottom: 10px;
+  padding: 24px;
+  margin-bottom: 16px;
 }
 
 .post-box h2 {
-  margin: 0 0 6px;
-  font-size: 18px;
+  margin: 0 0 8px;
+  font-size: 1.9rem;
   color: var(--accent-ink);
+  letter-spacing: -0.03em;
 }
 
 .post-box-copy {
   margin: 0;
-}
-
-.post-box-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  margin-top: 10px;
+  max-width: 720px;
+  color: var(--muted);
 }
 
 .thread-form {
-  display: table;
-  width: 100%;
-  margin-top: 12px;
-  border-collapse: collapse;
+  display: grid;
+  gap: 14px;
+  margin-top: 20px;
 }
 
 .form-row {
-  display: table-row;
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0;
 }
 
 .form-row label,
 .form-row input,
 .form-row select,
 .form-row textarea {
-  display: table-cell;
-  vertical-align: top;
+  display: block;
+  min-width: 0;
 }
 
 .form-row label {
-  width: 118px;
-  padding: 6px;
+  width: auto;
+  padding: 14px 16px;
   background: var(--accent-soft);
   border: 1px solid #b7c5d9;
+  border-right: 0;
   font-weight: 700;
+  color: var(--accent-ink);
+  border-radius: 14px 0 0 14px;
 }
 
 .form-row input,
 .form-row select,
 .form-row textarea {
   width: 100%;
-  padding: 6px;
-  border: 1px solid #999999;
+  padding: 14px 16px;
+  border: 1px solid #a7af9b;
   background: #ffffff;
+  border-radius: 0 14px 14px 0;
 }
 
 .form-row-textarea textarea {
   resize: vertical;
+  min-height: 180px;
 }
 
 .form-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 4px;
 }
 
 .form-note {
   color: var(--muted);
-  font-size: 12px;
-}
-
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 8px;
-  border: 1px solid #b7c5d9;
-  background: var(--accent-soft);
-  color: var(--accent-ink);
-  font-weight: 700;
-}
-
-.status-note {
-  color: var(--muted);
+  font-size: 13px;
 }
 
 .thread-controls {
   display: grid;
-  grid-template-columns: 1fr 220px;
-  gap: 10px;
-  padding: 10px;
-  margin-bottom: 10px;
+  grid-template-columns: minmax(0, 1.3fr) minmax(180px, 0.7fr) minmax(180px, 0.55fr);
+  gap: 16px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
 }
 
 .control {
@@ -235,31 +235,38 @@ a {
 
 .control span {
   display: block;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
   font-weight: 700;
+  color: var(--accent-ink);
 }
 
 .control input,
 .control select,
 .auth-field input {
   width: 100%;
-  padding: 6px;
-  border: 1px solid #999999;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid #a7af9b;
   background: #ffffff;
   color: var(--ink);
+  border-radius: 12px;
 }
 
 .thread-list {
   display: grid;
-  gap: 8px;
+  gap: 14px;
 }
 
 .thread-card {
-  padding: 10px;
+  padding: 18px 20px;
 }
 
 .thread-head {
-  margin-bottom: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
   font-size: 13px;
 }
 
@@ -272,7 +279,8 @@ a {
 .thread-title {
   color: var(--accent-ink);
   font-weight: 700;
-  margin-right: 6px;
+  margin-right: 4px;
+  font-size: 1.08rem;
 }
 
 .thread-id {
@@ -280,12 +288,12 @@ a {
 }
 
 .thread-body {
-  margin: 0 0 7px;
+  margin: 0 0 12px;
   white-space: pre-wrap;
 }
 
 .thread-media {
-  margin: 0 0 8px;
+  margin: 0 0 14px;
 }
 
 .thread-media img {
@@ -299,20 +307,24 @@ a {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   font-size: 12px;
   color: #555555;
+  padding-top: 4px;
 }
 
 .reply-list {
-  margin-top: 8px;
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
 }
 
 .reply {
-  margin: 6px 0 0 18px;
-  padding: 6px 8px;
+  margin: 0 0 0 26px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
   background: var(--panel-strong);
+  border-radius: 14px;
 }
 
 .reply-head {
@@ -328,14 +340,18 @@ a {
 }
 
 .board-button {
-  padding: 5px 10px;
+  min-height: 44px;
+  padding: 10px 16px;
   border: 1px solid #999999;
   background: var(--accent-soft);
   color: var(--ink);
+  border-radius: 12px;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
 }
 
 .board-button:hover {
   background: #c7d1ef;
+  transform: translateY(-1px);
 }
 
 .board-button.primary {
@@ -346,20 +362,25 @@ a {
 }
 
 .board-button.small {
-  padding: 4px 8px;
+  min-height: 38px;
+  padding: 8px 12px;
 }
 
 .vote-button {
   margin-left: auto;
-  padding: 3px 8px;
+  min-height: 38px;
+  padding: 8px 12px;
   border: 1px solid #999999;
   background: #ffffff;
   color: var(--accent-ink);
   font-weight: 700;
+  border-radius: 999px;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
 }
 
 .vote-button:hover {
   background: #fff5f5;
+  transform: translateY(-1px);
 }
 
 .vote-button.liked {
@@ -369,7 +390,7 @@ a {
 }
 
 .empty-state {
-  padding: 12px;
+  padding: 22px 20px;
 }
 
 .toast {
@@ -398,7 +419,7 @@ a {
 
 .modal-card {
   width: min(560px, 100%);
-  padding: 14px;
+  padding: 20px;
   box-shadow: var(--shadow);
 }
 
@@ -427,7 +448,7 @@ a {
 
 .auth-form {
   display: grid;
-  gap: 10px;
+  gap: 14px;
 }
 
 .auth-grid {
@@ -454,15 +475,15 @@ a {
 
 @media (max-width: 720px) {
   .page {
-    width: min(100%, calc(100% - 14px));
+    width: min(100%, calc(100% - 20px));
+    padding: 14px 0 28px;
   }
 
   .site-header h1 {
-    font-size: 31px;
+    font-size: 2.5rem;
   }
 
   .account-strip,
-  .post-box-actions,
   .thread-controls,
   .modal-head,
   .auth-grid {
@@ -488,13 +509,36 @@ a {
     display: block;
   }
 
+  .post-box,
+  .thread-card,
+  .thread-controls,
+  .modal-card {
+    padding: 16px;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
   .form-row label {
     width: 100%;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
+    border-right: 1px solid #b7c5d9;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .form-row input,
+  .form-row select,
+  .form-row textarea {
+    border-radius: 0 0 12px 12px;
   }
 
   .form-actions {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .reply {
+    margin-left: 0;
   }
 }

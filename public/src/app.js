@@ -17,6 +17,7 @@ const initialState = {
   currentUser: null,
   posts: [],
   board: "all",
+  sort: "recent",
   search: "",
   composerBoard: "school",
   composerTitle: "",
@@ -35,6 +36,7 @@ const boardByCategory = new Map(BOARDS.map((board) => [board.category, board]));
 let state = loadState();
 let authBusy = false;
 let queuedLikePostId = "";
+let authReason = "";
 let toastTimer = null;
 
 function loadState() {
@@ -61,6 +63,7 @@ function saveState() {
     token: state.token,
     currentUser: state.currentUser,
     board: state.board,
+    sort: state.sort,
     search: state.search,
     composerBoard: state.composerBoard,
     composerTitle: state.composerTitle,
@@ -175,6 +178,7 @@ function normalizePost(post) {
     category: String(post.category || "school").trim().toLowerCase(),
     text: String(post.text || "").trim(),
     likes: Array.isArray(post.likes) ? post.likes : [],
+    media: Array.isArray(post.media) ? post.media : [],
     comments: Array.isArray(post.comments) ? post.comments.map((comment) => ({
       id: comment.id,
       text: String(comment.text || "").trim(),
@@ -238,7 +242,7 @@ function clearQueuedLike() {
 async function likePost(postId) {
   if (!state.token) {
     queueLike(postId);
-    openAuth("login");
+    openAuth("login", "vote");
     return;
   }
   const result = await apiRequest(`/posts/${postId}/like`, { method: "POST" });
@@ -255,15 +259,17 @@ function resetAuthDraft({ keepEmail = false } = {}) {
   state.pendingUsername = "";
 }
 
-function openAuth(mode = "login") {
+function openAuth(mode = "login", reason = "") {
   state.authOpen = true;
   state.authMode = mode === "register" ? "register" : "login";
   state.authStep = "email";
+  authReason = reason;
   render();
 }
 
 function closeAuth() {
   state.authOpen = false;
+  authReason = "";
   resetAuthDraft({ keepEmail: true });
   authBusy = false;
   saveState();
@@ -272,6 +278,7 @@ function closeAuth() {
 
 async function finishAuthFlow() {
   state.authOpen = false;
+  authReason = "";
   resetAuthDraft({ keepEmail: false });
   saveState();
   render();
@@ -496,7 +503,7 @@ async function submitReply(postId) {
 
 function filteredPosts() {
   const query = String(state.search || "").trim().toLowerCase();
-  return state.posts.filter((post) => {
+  const posts = state.posts.filter((post) => {
     const matchesBoard = state.board === "all" || post.category === state.board;
     if (!matchesBoard) return false;
     if (!query) return true;
@@ -509,6 +516,22 @@ function filteredPosts() {
     ].join(" ").toLowerCase();
     return haystack.includes(query);
   });
+  return posts.sort((left, right) => {
+    if (left.sticky !== right.sticky) return Number(right.sticky) - Number(left.sticky);
+    if (state.sort === "trending") {
+      const scoreDiff = trendingScore(right) - trendingScore(left);
+      if (scoreDiff) return scoreDiff;
+    }
+    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+  });
+}
+
+function trendingScore(post) {
+  const likes = Array.isArray(post.likes) ? post.likes.length : 0;
+  const replies = Array.isArray(post.comments) ? post.comments.length : 0;
+  const createdAt = new Date(post.createdAt || Date.now()).getTime();
+  const ageHours = Math.max(1, (Date.now() - createdAt) / 3600000);
+  return (likes * 4) + (replies * 3) - (ageHours * 0.35);
 }
 
 function renderThreadCard(post, index) {
@@ -568,7 +591,9 @@ function renderAuthModal() {
         ? (mode === "register" ? "Create your password" : "Welcome back")
         : "Choose a username";
   const subtitle = step === "email"
-    ? "You only need an account to upvote threads. Browsing the board stays open."
+    ? (authReason === "vote"
+      ? "You only need an account if you want to upvote. Reading and posting stay open."
+      : "Reading and posting stay open. Accounts are only for upvoting.")
     : step === "verify"
       ? "Enter the 6-digit code we sent to your email."
       : step === "password"
@@ -691,12 +716,6 @@ function render() {
       <section class="post-box">
         <h2>${escapeHtml(activeBoard?.name || "School Board")}</h2>
         <p class="post-box-copy">${escapeHtml(activeBoard?.blurb || "Open browsing, simple threads, and login-only upvotes.")}</p>
-        <div class="post-box-actions">
-          <span class="status-pill">${signedInUser ? "Upvotes unlocked" : "Sign in to upvote"}</span>
-          ${signedInUser
-            ? `<span class="status-note">You can vote on threads right now.</span>`
-            : `<button class="board-button primary" data-action="open-auth">Unlock upvotes</button>`}
-        </div>
         <form id="thread-form" class="thread-form">
           <div class="form-row">
             <label for="composer-board">Board</label>
@@ -735,6 +754,13 @@ function render() {
             ${BOARDS.map((board) => `<option value="${escapeHtml(board.category)}"${state.board === board.category ? " selected" : ""}>${escapeHtml(board.slug)} ${escapeHtml(board.name)}</option>`).join("")}
           </select>
         </label>
+        <label class="control">
+          <span>Sort</span>
+          <select id="sort-filter">
+            <option value="recent"${state.sort === "recent" ? " selected" : ""}>Most recent</option>
+            <option value="trending"${state.sort === "trending" ? " selected" : ""}>Trending</option>
+          </select>
+        </label>
       </section>
 
       <main class="thread-list">
@@ -766,6 +792,12 @@ function bindEvents() {
 
   document.querySelector("#search-input")?.addEventListener("input", (event) => {
     state.search = String(event.target.value || "");
+    saveState();
+    render();
+  });
+
+  document.querySelector("#sort-filter")?.addEventListener("change", (event) => {
+    state.sort = String(event.target.value || "recent") === "trending" ? "trending" : "recent";
     saveState();
     render();
   });
