@@ -5,11 +5,11 @@ const API_BASE = window.SHSID_API_BASE || (window.location.hostname === "127.0.0
   : "https://www.shsid.online/api");
 
 const BOARDS = [
-  { category: "school", slug: "/campus/", name: "Campus Talk", blurb: "Hallway drama, teachers, school changes, and campus rumors." },
-  { category: "academic", slug: "/study/", name: "Study Hall", blurb: "Tests, workload, tutoring, and class survival notes." },
-  { category: "lifestyle", slug: "/caf/", name: "Lunchroom", blurb: "Food, outfits, plans, and whatever people are talking about." },
-  { category: "gaming", slug: "/clubs/", name: "Clubs + Games", blurb: "Gaming, club life, tournaments, and after-school energy." },
-  { category: "shitpost", slug: "/random/", name: "After Hours", blurb: "Memes, chaos, and low-stakes nonsense." }
+  { category: "school", slug: "/campus/", name: "/campus/", blurb: "" },
+  { category: "academic", slug: "/study/", name: "/study/", blurb: "" },
+  { category: "lifestyle", slug: "/teacher/", name: "/teacher/", blurb: "" },
+  { category: "gaming", slug: "/club/", name: "/club/", blurb: "" },
+  { category: "shitpost", slug: "/random/", name: "/random/", blurb: "" }
 ];
 
 const initialState = {
@@ -91,8 +91,8 @@ function boardMeta(category) {
   return boardByCategory.get(String(category || "").trim().toLowerCase()) || {
     category: String(category || "school").trim().toLowerCase() || "school",
     slug: "/board/",
-    name: "School Board",
-    blurb: "Current discussion"
+    name: "/board/",
+    blurb: ""
   };
 }
 
@@ -749,8 +749,6 @@ function render() {
           </div>
         </div>
         <h1>SHSID Board</h1>
-        <p class="tagline">School board style threads for campus talk, study stress, lunch complaints, clubs, and random drama.</p>
-        <p class="notice">The old social dashboard is out for now. This version keeps the board public and only uses accounts for upvoting.</p>
       </header>
 
       <nav class="board-nav" id="boards">
@@ -761,13 +759,13 @@ function render() {
       </nav>
 
       <section class="post-box">
-        <h2>${escapeHtml(activeBoard?.name || "School Board")}</h2>
-        <p class="post-box-copy">${escapeHtml(activeBoard?.blurb || "Open browsing, simple threads, and login-only upvotes.")}</p>
+        <h2>Thread</h2>
+        <p class="post-box-copy">One photo max per thread.</p>
         <form id="thread-form" class="thread-form">
           <div class="form-row">
             <label for="composer-board">Board</label>
             <select id="composer-board">
-              ${BOARDS.map((board) => `<option value="${escapeHtml(board.category)}"${(state.composerBoard || state.board || "school") === board.category ? " selected" : ""}>${escapeHtml(board.slug)} ${escapeHtml(board.name)}</option>`).join("")}
+              ${BOARDS.map((board) => `<option value="${escapeHtml(board.category)}"${(state.composerBoard || state.board || "school") === board.category ? " selected" : ""}>${escapeHtml(board.slug)}</option>`).join("")}
             </select>
           </div>
           <div class="form-row">
@@ -784,7 +782,6 @@ function render() {
           </div>
           <div class="form-actions">
             <button class="board-button primary" type="submit">Post thread</button>
-            <span class="form-note">One photo max per thread.</span>
           </div>
         </form>
       </section>
@@ -797,8 +794,8 @@ function render() {
         <label class="control">
           <span>Board</span>
           <select id="board-filter">
-            <option value="all"${state.board === "all" ? " selected" : ""}>All boards</option>
-            ${BOARDS.map((board) => `<option value="${escapeHtml(board.category)}"${state.board === board.category ? " selected" : ""}>${escapeHtml(board.slug)} ${escapeHtml(board.name)}</option>`).join("")}
+            <option value="all"${state.board === "all" ? " selected" : ""}>/all/</option>
+            ${BOARDS.map((board) => `<option value="${escapeHtml(board.category)}"${state.board === board.category ? " selected" : ""}>${escapeHtml(board.slug)}</option>`).join("")}
           </select>
         </label>
         <label class="control">
