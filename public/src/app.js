@@ -179,11 +179,16 @@ function normalizePost(post) {
     text: String(post.text || "").trim(),
     likes: Array.isArray(post.likes) ? post.likes : [],
     media: Array.isArray(post.media) ? post.media : [],
+    guestAlias: String(post.guestAlias || "").trim(),
+    anonymous: Boolean(post.anonymous),
+    authorName: String(post.author?.englishName || post.author?.email || post.adminAuthor?.englishName || post.adminAuthor?.email || "").trim(),
     comments: Array.isArray(post.comments) ? post.comments.map((comment) => ({
       id: comment.id,
       text: String(comment.text || "").trim(),
       likes: Array.isArray(comment.likes) ? comment.likes : [],
-      createdAt: comment.createdAt
+      createdAt: comment.createdAt,
+      guestAlias: String(comment.guestAlias || "").trim(),
+      anonymous: Boolean(comment.anonymous)
     })) : [],
     createdAt: post.createdAt,
     sticky: Boolean(post.sticky)
@@ -580,6 +585,7 @@ function renderThreadCard(post, index) {
   const board = boardMeta(post.category);
   const liked = userCanLike(post);
   const adminMode = currentUser()?.role === "admin";
+  const postAlias = post.anonymous ? (post.guestAlias || `Anonymous No.${5000 + index}`) : (post.authorName || "Admin");
   return `
     <article class="thread-card">
       <div class="thread-head">
@@ -588,6 +594,7 @@ function renderThreadCard(post, index) {
         <span class="thread-id">No.${5000 + index}</span>
         ${adminMode ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
       </div>
+      <div class="thread-author">${escapeHtml(postAlias)}</div>
       <p class="thread-body">${escapeHtml(post.text || "No text added.")}</p>
       ${(post.media || []).length ? `
         <div class="thread-media">
@@ -607,7 +614,7 @@ function renderThreadCard(post, index) {
           ${(post.comments || []).map((comment, commentIndex) => `
             <div class="reply">
               <div class="reply-head">
-                <span>Anonymous No.${7000 + commentIndex}</span>
+                <span>${escapeHtml(comment.anonymous ? (comment.guestAlias || `Anonymous No.${7000 + commentIndex}`) : "Admin")}</span>
                 ${adminMode ? `<button class="inline-admin-link" data-action="delete-comment" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Delete</button>` : ""}
               </div>
               <p class="reply-body">${escapeHtml(comment.text)}</p>

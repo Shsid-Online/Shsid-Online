@@ -28,6 +28,8 @@ let hasPostsTitleColumnCache = null;
 let hasCommentsReplyToColumnCache = null;
 let hasCommentsLikesColumnCache = null;
 let hasPostsEngagementColumnsCache = null;
+let hasPostsGuestAliasColumnCache = null;
+let hasCommentsGuestAliasColumnCache = null;
 let hasAdsTableCache = null;
 
 const SECURITY_HEADERS = {
@@ -614,6 +616,7 @@ async function handleApi(request, env, url, route) {
       likes: "[]",
       hearts: "[]",
       saved_by: "[]",
+      guest_alias: authUser ? "" : createGuestAlias(),
       anonymous: authUser ? (body.anonymous ? 1 : 0) : 1,
       sticky: 0,
       deleted_at: null,
@@ -622,7 +625,12 @@ async function handleApi(request, env, url, route) {
 
     const hasTitle = await hasPostsTitleColumn(env);
     const hasEngagementColumns = await hasPostsEngagementColumns(env);
-    if (hasTitle && hasEngagementColumns) {
+    const hasGuestAlias = await hasPostsGuestAliasColumn(env);
+    if (hasTitle && hasEngagementColumns && hasGuestAlias) {
+      await env.DB.prepare("insert into posts (id, author_id, title, category, text, media, likes, hearts, saved_by, guest_alias, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(post.id, post.author_id, post.title, post.category, post.text, post.media, post.likes, post.hearts, post.saved_by, post.guest_alias, post.anonymous, post.sticky, post.deleted_at, post.created_at)
+        .run();
+    } else if (hasTitle && hasEngagementColumns) {
       await env.DB.prepare("insert into posts (id, author_id, title, category, text, media, likes, hearts, saved_by, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(post.id, post.author_id, post.title, post.category, post.text, post.media, post.likes, post.hearts, post.saved_by, post.anonymous, post.sticky, post.deleted_at, post.created_at)
         .run();
@@ -703,6 +711,7 @@ async function handleApi(request, env, url, route) {
       author_id: actor.id,
       text: text.slice(0, MAX_TEXT_LEN),
       likes: "[]",
+      guest_alias: authUser ? "" : createGuestAlias(),
       reply_to: replyTo || null,
       anonymous: authUser ? (authUser.role === "admin" ? 0 : (body.anonymous ? 1 : 0)) : 1,
       deleted_at: null,
@@ -710,7 +719,12 @@ async function handleApi(request, env, url, route) {
     };
     const hasReplyTo = await hasCommentsReplyToColumn(env);
     const hasLikes = await hasCommentsLikesColumn(env);
-    if (hasReplyTo && hasLikes) {
+    const hasGuestAlias = await hasCommentsGuestAliasColumn(env);
+    if (hasReplyTo && hasLikes && hasGuestAlias) {
+      await env.DB.prepare("insert into comments (id, post_id, author_id, text, likes, guest_alias, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.likes, comment.guest_alias, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
+        .run();
+    } else if (hasReplyTo && hasLikes) {
       await env.DB.prepare("insert into comments (id, post_id, author_id, text, likes, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.likes, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
         .run();
@@ -1668,6 +1682,7 @@ function fromDbPost(row) {
     likes: jsonArray(row.likes),
     hearts: jsonArray(row.hearts),
     savedBy: jsonArray(row.saved_by),
+    guestAlias: row.guest_alias || "",
     anonymous: Boolean(row.anonymous),
     sticky: Boolean(row.sticky),
     deletedAt: row.deleted_at,
@@ -1682,11 +1697,17 @@ function fromDbComment(row) {
     authorId: row.author_id,
     text: row.text,
     likes: jsonArray(row.likes),
+    guestAlias: row.guest_alias || "",
     replyTo: row.reply_to || null,
     anonymous: Boolean(row.anonymous),
     deletedAt: row.deleted_at,
     createdAt: row.created_at
   };
+}
+
+function createGuestAlias() {
+  const number = Math.floor(Math.random() * 9000) + 1000;
+  return `Anonymous ${number}`;
 }
 
 async function maybeAuthUser(request, env) {
@@ -1928,6 +1949,34 @@ async function hasPostsEngagementColumns(env) {
     return true;
   } catch {
     hasPostsEngagementColumnsCache = false;
+    return false;
+  }
+}
+
+async function hasPostsGuestAliasColumn(env) {
+  if (hasPostsGuestAliasColumnCache !== null) return hasPostsGuestAliasColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(posts)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (!names.includes("guest_alias")) await env.DB.prepare("alter table posts add column guest_alias text default ''").run();
+    hasPostsGuestAliasColumnCache = true;
+    return true;
+  } catch {
+    hasPostsGuestAliasColumnCache = false;
+    return false;
+  }
+}
+
+async function hasCommentsGuestAliasColumn(env) {
+  if (hasCommentsGuestAliasColumnCache !== null) return hasCommentsGuestAliasColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(comments)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (!names.includes("guest_alias")) await env.DB.prepare("alter table comments add column guest_alias text default ''").run();
+    hasCommentsGuestAliasColumnCache = true;
+    return true;
+  } catch {
+    hasCommentsGuestAliasColumnCache = false;
     return false;
   }
 }

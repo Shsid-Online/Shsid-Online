@@ -141,6 +141,12 @@ class Store {
         conversation.group = conversation.members.length > 2;
       }
     }
+    for (const post of this.data.posts || []) {
+      if (post.guestAlias === undefined) post.guestAlias = "";
+      for (const comment of post.comments || []) {
+        if (comment.guestAlias === undefined) comment.guestAlias = "";
+      }
+    }
     for (const user of this.data.users) {
       if (Array.isArray(user.sessions)) {
         for (const legacySession of user.sessions) {

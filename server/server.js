@@ -262,6 +262,11 @@ function getBoardActorId() {
   return guest?.id || null;
 }
 
+function createGuestAlias() {
+  const number = Math.floor(Math.random() * 9000) + 1000;
+  return `Anonymous ${number}`;
+}
+
 function createVerificationCode() {
   const bytes = crypto.randomBytes(5);
   const num = bytes.readUInt32BE(0) % 10 ** OTP_LENGTH;
@@ -946,11 +951,13 @@ async function handleApi(req, res, url) {
     const sanitizedText = text.slice(0, MAX_TEXT_LEN);
     const category = sanitizeCategory(body.category);
     const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN) || "Untitled thread";
+    const guestAlias = !user ? createGuestAlias() : "";
     const post = {
       id: id("pst"),
       authorId,
       title,
       anonymous: !user,
+      guestAlias,
       category,
       text: sanitizedText,
       media: sanitizeMediaItems(body.media, 1),
@@ -1034,6 +1041,7 @@ async function handleApi(req, res, url) {
       id: id("cmt"),
       authorId,
       anonymous: !user || user.role !== "admin",
+      guestAlias: !user ? createGuestAlias() : "",
       text: text.slice(0, MAX_TEXT_LEN),
       likes: [],
       replyTo: replyTo || null,
