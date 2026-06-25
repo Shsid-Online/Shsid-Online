@@ -213,6 +213,18 @@ function mergePost(updatedPost) {
   }
 }
 
+function removePost(postId) {
+  state.posts = state.posts.filter((post) => post.id !== postId);
+}
+
+function removeComment(postId, commentId) {
+  state.posts = state.posts.map((post) => (
+    post.id === postId
+      ? { ...post, comments: (post.comments || []).filter((comment) => comment.id !== commentId) }
+      : post
+  ));
+}
+
 async function uploadSinglePhoto(file) {
   const fileName = String(file?.name || "photo").trim();
   const contentType = String(file?.type || "").trim().toLowerCase();
@@ -501,6 +513,36 @@ async function submitReply(postId) {
   }
 }
 
+async function deletePost(postId) {
+  const user = currentUser();
+  if (!user || user.role !== "admin") return toast("Admin access required");
+  if (!window.confirm("Delete this thread?")) return;
+  try {
+    await apiRequest(`/posts/${postId}`, { method: "DELETE" });
+    removePost(postId);
+    saveState();
+    render();
+    toast("Thread deleted");
+  } catch (error) {
+    toast(error.message || "Could not delete thread");
+  }
+}
+
+async function deleteComment(postId, commentId) {
+  const user = currentUser();
+  if (!user || user.role !== "admin") return toast("Admin access required");
+  if (!window.confirm("Delete this reply?")) return;
+  try {
+    await apiRequest(`/posts/${postId}/comments/${commentId}`, { method: "DELETE" });
+    removeComment(postId, commentId);
+    saveState();
+    render();
+    toast("Reply deleted");
+  } catch (error) {
+    toast(error.message || "Could not delete reply");
+  }
+}
+
 function filteredPosts() {
   const query = String(state.search || "").trim().toLowerCase();
   const posts = state.posts.filter((post) => {
@@ -537,12 +579,14 @@ function trendingScore(post) {
 function renderThreadCard(post, index) {
   const board = boardMeta(post.category);
   const liked = userCanLike(post);
+  const adminMode = currentUser()?.role === "admin";
   return `
     <article class="thread-card">
       <div class="thread-head">
         <span class="thread-board">${escapeHtml(board.slug)}</span>
         <span class="thread-title">${escapeHtml(post.title)}</span>
         <span class="thread-id">No.${5000 + index}</span>
+        ${adminMode ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
       </div>
       <p class="thread-body">${escapeHtml(post.text || "No text added.")}</p>
       ${(post.media || []).length ? `
@@ -562,7 +606,10 @@ function renderThreadCard(post, index) {
         <div class="reply-list">
           ${(post.comments || []).map((comment, commentIndex) => `
             <div class="reply">
-              <div class="reply-head">Anonymous No.${7000 + commentIndex}</div>
+              <div class="reply-head">
+                <span>Anonymous No.${7000 + commentIndex}</span>
+                ${adminMode ? `<button class="inline-admin-link" data-action="delete-comment" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Delete</button>` : ""}
+              </div>
               <p class="reply-body">${escapeHtml(comment.text)}</p>
             </div>
           `).join("")}
@@ -833,6 +880,7 @@ function bindEvents() {
     button.addEventListener("click", async () => {
       const action = button.dataset.action;
       const id = button.dataset.id || "";
+      const commentId = button.dataset.commentId || "";
       if (action === "open-auth") {
         openAuth("login");
         return;
@@ -854,6 +902,14 @@ function bindEvents() {
       }
       if (action === "like-post") {
         await likePost(id);
+        return;
+      }
+      if (action === "delete-post") {
+        await deletePost(id);
+        return;
+      }
+      if (action === "delete-comment") {
+        await deleteComment(id, commentId);
       }
     });
   });
