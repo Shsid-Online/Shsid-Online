@@ -782,6 +782,7 @@ function render() {
           </div>
           <div class="form-actions">
             <button class="board-button primary" type="submit">Post thread</button>
+            <span class="form-note">One photo max per thread.</span>
           </div>
         </form>
       </section>
