@@ -1086,15 +1086,15 @@ async function handleApi(req, res, url) {
     if (user?.status === "banned") return sendJson(res, 403, { error: "Account banned" }, req);
     const authorId = user?.id || getBoardActorId();
     if (!authorId) return sendJson(res, 500, { error: "Board guest account is unavailable" }, req);
+    const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN);
     const text = String(body.text || "").trim();
-    if (!text && !(body.media || []).length) return sendJson(res, 400, { error: "Text or media is required" }, req);
+    if (!title && !text && !(body.media || []).length) return sendJson(res, 400, { error: "Subject, text, or media is required" }, req);
     const sanitizedText = text.slice(0, MAX_TEXT_LEN);
     const category = sanitizeCategory(body.category);
-    const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN) || "Untitled thread";
     const post = {
       id: id("pst"),
       authorId,
-      title,
+      title: title || "Untitled thread",
       anonymous: !user,
       category,
       text: sanitizedText,
@@ -1110,7 +1110,7 @@ async function handleApi(req, res, url) {
     store.data.posts.unshift(post);
     store.audit(authorId, "post_created", {
       postId: post.id,
-      postTitle: title,
+      postTitle: post.title,
       postText: sanitizedText.slice(0, 240),
       category
     });

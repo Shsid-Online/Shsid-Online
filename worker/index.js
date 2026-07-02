@@ -600,14 +600,15 @@ async function handleApi(request, env, url, route) {
   if (method === "POST" && route === "/posts") {
     if (authUser?.status === "banned") return json({ error: "Account banned" }, 403);
     const actor = authUser || await ensureBoardGuestUser(env);
+    const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN);
     const text = String(body.text || "").trim();
     const media = sanitizeMediaItems(body.media, 1);
-    if (!text && media.length === 0) return json({ error: "Text or media is required" }, 400);
+    if (!title && !text && media.length === 0) return json({ error: "Subject, text, or media is required" }, 400);
 
     const post = {
       id: id("pst"),
       author_id: actor.id,
-      title: String(body.title || "").trim().slice(0, MAX_TITLE_LEN),
+      title,
       category: sanitizeCategory(body.category),
       text: text.slice(0, MAX_TEXT_LEN),
       media: JSON.stringify(media),
