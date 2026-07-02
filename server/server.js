@@ -29,8 +29,12 @@ const SMTP_PASS = process.env.SMTP_PASS || "";
 const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || "no-reply@example.com";
 const SMTP_FROM_NAME = process.env.SMTP_FROM_NAME || "SHSID Social";
 const MAX_JSON_BODY_BYTES = 1_000_000;
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const UPLOAD_TTL_SECONDS = 10 * 60;
 const ROOT = path.resolve(__dirname, "..");
 const STATIC_ROOT = path.resolve(ROOT, "public");
+const LOCAL_UPLOAD_ROOT = path.resolve(ROOT, "data", "uploads");
+const UPLOAD_SIGNING_SECRET = String(process.env.UPLOAD_SIGNING_SECRET || "dev-local-upload-secret").trim();
 const store = new Store(DATA_FILE);
 store.load();
 
@@ -55,6 +59,17 @@ const REPORT_TARGET_TYPES = new Set(["post", "conversation", "comment", "user"])
 const REPORT_STATUSES = new Set(["pending", "dismissed", "actioned", "resolved"]);
 const VERIFICATION_DECISIONS = new Set(["approve", "reject"]);
 const PUBLIC_BOARD_USER_EMAIL = "board-guest@system.local";
+const ALLOWED_UPLOAD_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/svg+xml",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+  "application/pdf"
+]);
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -80,6 +95,15 @@ const mimeTypes = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".pdf": "application/pdf",
   ".webmanifest": "application/manifest+json; charset=utf-8",
   ".json": "application/json; charset=utf-8"
 };
@@ -141,6 +165,29 @@ function parseBody(req) {
       } catch {
         reject(new HttpError(400, "Invalid JSON"));
       }
+    });
+    req.on("error", () => reject(new HttpError(400, "Request stream error")));
+  });
+}
+
+function parseBinaryBody(req, maxBytes = MAX_UPLOAD_BYTES) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    let rejected = false;
+    req.on("data", (chunk) => {
+      if (rejected) return;
+      total += chunk.length;
+      if (total > maxBytes) {
+        rejected = true;
+        reject(new HttpError(413, "File too large. Max 25 MiB."));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (rejected) return;
+      resolve(Buffer.concat(chunks));
     });
     req.on("error", () => reject(new HttpError(400, "Request stream error")));
   });
@@ -241,6 +288,31 @@ function normalizeExternalUrl(value) {
   } catch {
     return "";
   }
+}
+
+function safeName(value) {
+  return String(value || "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 160);
+}
+
+function signUploadToken(message) {
+  return crypto.createHmac("sha256", UPLOAD_SIGNING_SECRET).update(message).digest("base64url");
+}
+
+function uploadTokenMatches(actual, expected) {
+  const actualBuf = Buffer.from(String(actual || ""));
+  const expectedBuf = Buffer.from(String(expected || ""));
+  if (actualBuf.length !== expectedBuf.length) return false;
+  return crypto.timingSafeEqual(actualBuf, expectedBuf);
+}
+
+function uploadPathForKey(key) {
+  const filePath = path.resolve(LOCAL_UPLOAD_ROOT, `.${String(key || "").startsWith("/") ? key : `/${String(key || "")}`}`);
+  if (!filePath.startsWith(LOCAL_UPLOAD_ROOT)) throw new HttpError(400, "Invalid upload key");
+  return filePath;
 }
 
 function sanitizeCategory(value) {
@@ -722,10 +794,83 @@ function notFound(res) {
 
 async function handleApi(req, res, url) {
   const method = req.method || "GET";
-  const body = method === "GET" || method === "HEAD" ? {} : await parseBody(req);
+  const isBinaryUploadPut = method === "PUT" && url.pathname.startsWith("/upload/");
+  const body = method === "GET" || method === "HEAD" || isBinaryUploadPut ? {} : await parseBody(req);
 
   if (method === "GET" && url.pathname === "/api/health") {
     return sendJson(res, 200, { ok: true, service: "shsid-social-api", time: now() });
+  }
+
+  if (method === "POST" && url.pathname === "/api/upload-url") {
+    const fileName = safeName(String(body.fileName || "").trim());
+    const contentType = String(body.contentType || "application/octet-stream").trim().toLowerCase();
+    const purpose = String(body.purpose || "media").trim().toLowerCase();
+    if (!fileName) return sendJson(res, 400, { error: "fileName is required" }, req);
+    if (purpose === "verification") {
+      if (!contentType.startsWith("video/")) return sendJson(res, 415, { error: "Verification upload must be a video file" }, req);
+    } else if (!ALLOWED_UPLOAD_TYPES.has(contentType)) {
+      return sendJson(res, 415, { error: "Unsupported file type" }, req);
+    }
+    const folder = purpose === "verification" ? "verification" : "uploads";
+    const key = `${folder}/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+    const expiresAt = Math.floor(Date.now() / 1000) + UPLOAD_TTL_SECONDS;
+    const token = signUploadToken(`${key}:${expiresAt}`);
+    const uploadUrl = `${url.origin}/upload/${encodeURIComponent(key)}?exp=${expiresAt}&token=${token}`;
+    const mediaUrl = `${url.origin}/api/media/${encodeURIComponent(key)}`;
+    return sendJson(res, 200, {
+      key,
+      uploadUrl,
+      mediaUrl,
+      method: "PUT",
+      headers: { "content-type": contentType }
+    }, req);
+  }
+
+  const uploadMatch = url.pathname.match(/^\/upload\/(.+)$/);
+  if (method === "PUT" && uploadMatch) {
+    const key = decodeURIComponent(uploadMatch[1]);
+    const exp = Number(url.searchParams.get("exp") || "0");
+    const token = String(url.searchParams.get("token") || "");
+    if (!key || !exp || !token) return sendJson(res, 400, { error: "Missing upload signature parameters" }, req);
+    if (Math.floor(Date.now() / 1000) > exp) return sendJson(res, 401, { error: "Upload URL expired" }, req);
+    const expected = signUploadToken(`${key}:${exp}`);
+    if (!uploadTokenMatches(token, expected)) return sendJson(res, 401, { error: "Invalid upload signature" }, req);
+
+    const contentType = String(req.headers["content-type"] || "application/octet-stream").trim().toLowerCase();
+    const isVerificationUpload = key.startsWith("verification/");
+    if (isVerificationUpload) {
+      if (!contentType.startsWith("video/")) return sendJson(res, 415, { error: "Verification upload must be a video file" }, req);
+    } else if (!ALLOWED_UPLOAD_TYPES.has(contentType)) {
+      return sendJson(res, 415, { error: "Unsupported file type" }, req);
+    }
+
+    const data = await parseBinaryBody(req);
+    const filePath = uploadPathForKey(key);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, data);
+    return sendJson(res, 200, { ok: true, key }, req);
+  }
+
+  const mediaMatch = url.pathname.match(/^\/api\/media\/(.+)$/);
+  if ((method === "GET" || method === "HEAD") && mediaMatch) {
+    const key = decodeURIComponent(mediaMatch[1]);
+    const filePath = uploadPathForKey(key);
+    if (!fs.existsSync(filePath)) return notFound(res);
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = mimeTypes[ext] || "application/octet-stream";
+    const stat = fs.statSync(filePath);
+    res.writeHead(200, {
+      ...getCommonHeaders(req),
+      "content-type": contentType,
+      "content-length": stat.size,
+      "cache-control": "public, max-age=3600, stale-while-revalidate=300"
+    });
+    if (method === "HEAD") {
+      res.end();
+      return;
+    }
+    fs.createReadStream(filePath).pipe(res);
+    return;
   }
 
   if (method === "POST" && url.pathname === "/api/auth/start") {
@@ -1848,11 +1993,11 @@ const server = http.createServer(async (req, res) => {
       send(res, 204, "", {}, req);
       return;
     }
-    if (!["GET", "HEAD", "POST", "PATCH", "DELETE"].includes(req.method || "")) {
+    if (!["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"].includes(req.method || "")) {
       sendJson(res, 405, { error: "Method not allowed" }, req);
       return;
     }
-    if (url.pathname.startsWith("/api/")) {
+    if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/upload/")) {
       await handleApi(req, res, url);
       return;
     }
