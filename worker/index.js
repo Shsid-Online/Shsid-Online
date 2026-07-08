@@ -603,7 +603,7 @@ async function handleApi(request, env, url, route) {
     const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN);
     const text = String(body.text || "").trim();
     const media = sanitizeMediaItems(body.media, 1);
-    if (!title && !text && media.length === 0) return json({ error: "Subject, text, or media is required" }, 400);
+    if (!title) return json({ error: "Subject is required" }, 400);
 
     const post = {
       id: id("pst"),

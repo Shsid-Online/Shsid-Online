@@ -239,8 +239,17 @@ a {
 }
 
 .thread-head {
+  display: grid;
+  gap: 4px;
   margin-bottom: 6px;
   font-size: 13px;
+}
+
+.thread-topline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .inline-admin-link {
@@ -260,9 +269,9 @@ a {
 }
 
 .thread-title {
+  display: block;
   color: var(--accent-ink);
   font-weight: 700;
-  margin-right: 6px;
 }
 
 .thread-id {

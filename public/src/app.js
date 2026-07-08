@@ -55,6 +55,10 @@ function loadState() {
       // ignore invalid legacy state
     }
   }
+  // Keep unsent board drafts session-only so old text does not reappear after refresh.
+  base.composerTitle = "";
+  base.composerBody = "";
+  base.replyDrafts = {};
   return base;
 }
 
@@ -66,9 +70,6 @@ function saveState() {
     sort: state.sort,
     search: state.search,
     composerBoard: state.composerBoard,
-    composerTitle: state.composerTitle,
-    composerBody: state.composerBody,
-    replyDrafts: state.replyDrafts,
     authOpen: state.authOpen,
     authMode: state.authMode,
     authStep: state.authStep,
@@ -126,6 +127,21 @@ function toast(message) {
     state.toast = "";
     render();
   }, 2600);
+}
+
+function hasUnsavedReplyDrafts() {
+  return Object.values(state.replyDrafts || {}).some((value) => String(value || "").trim());
+}
+
+function hasUnsavedComposerDraft() {
+  if (String(state.composerTitle || "").trim()) return true;
+  if (String(state.composerBody || "").trim()) return true;
+  const photoInput = document.querySelector("#composer-photo");
+  return Boolean(photoInput?.files?.length);
+}
+
+function hasUnsavedBoardChanges() {
+  return hasUnsavedComposerDraft() || hasUnsavedReplyDrafts();
 }
 
 async function apiRequest(path, { method = "GET", body, auth = true, optionalAuth = false } = {}) {
@@ -460,7 +476,7 @@ async function submitThread(event) {
   const body = String(document.querySelector("#composer-body")?.value || "").trim();
   const category = String(document.querySelector("#composer-board")?.value || state.composerBoard || "school").trim().toLowerCase();
   const photoFile = document.querySelector("#composer-photo")?.files?.[0] || null;
-  if (!title && !body && !photoFile) return toast("Please add a subject, a post, or a photo");
+  if (!title) return toast("Please add a subject");
   try {
     const media = photoFile ? [await uploadSinglePhoto(photoFile)] : [];
     const result = await apiRequest("/posts", {
@@ -582,12 +598,14 @@ function renderThreadCard(post, index) {
   return `
     <article class="thread-card">
       <div class="thread-head">
-        <span class="thread-board">${escapeHtml(board.slug)}</span>
-        <span class="thread-title">${escapeHtml(post.title)}</span>
-        <span class="thread-id">No.${5000 + index}</span>
-        ${adminMode ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
+        <div class="thread-topline">
+          <span class="thread-board">${escapeHtml(board.slug)}</span>
+          <span class="thread-id">No.${5000 + index}</span>
+          ${adminMode ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
+        </div>
+        <div class="thread-title">${escapeHtml(post.title)}</div>
       </div>
-      <p class="thread-body">${escapeHtml(post.text || "No text added.")}</p>
+      ${post.text ? `<p class="thread-body">${escapeHtml(post.text)}</p>` : ""}
       ${(post.media || []).length ? `
         <div class="thread-media">
           <img src="${escapeHtml(post.media[0].url)}" alt="${escapeHtml(post.media[0].name || post.title || "Thread image")}" loading="lazy">
@@ -768,12 +786,12 @@ function render() {
             </select>
           </div>
           <div class="form-row">
-            <label for="composer-title">Subject (optional)</label>
-            <input id="composer-title" type="text" maxlength="90" value="${escapeHtml(state.composerTitle || "")}" placeholder="Add a subject if you want">
+            <label for="composer-title">Subject</label>
+            <input id="composer-title" type="text" maxlength="90" value="${escapeHtml(state.composerTitle || "")}" placeholder="Thread subject">
           </div>
           <div class="form-row form-row-textarea">
-            <label for="composer-body">Comment</label>
-            <textarea id="composer-body" rows="5" maxlength="5000" placeholder="Write your thread">${escapeHtml(state.composerBody || "")}</textarea>
+            <label for="composer-body">Comment (optional)</label>
+            <textarea id="composer-body" rows="5" maxlength="5000" placeholder="Write your thread if you want">${escapeHtml(state.composerBody || "")}</textarea>
           </div>
           <div class="form-row">
             <label for="composer-photo">Photo</label>
@@ -926,6 +944,11 @@ function bindEvents() {
 }
 
 async function initialize() {
+  window.addEventListener("beforeunload", (event) => {
+    if (!hasUnsavedBoardChanges()) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
   await fetchCurrentUser();
   await fetchPosts();
   saveState();
