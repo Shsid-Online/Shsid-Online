@@ -476,7 +476,7 @@ async function submitThread(event) {
   const body = String(document.querySelector("#composer-body")?.value || "").trim();
   const category = String(document.querySelector("#composer-board")?.value || state.composerBoard || "school").trim().toLowerCase();
   const photoFile = document.querySelector("#composer-photo")?.files?.[0] || null;
-  if (!title) return toast("Please add a subject");
+  if (!title && !body && !photoFile) return toast("Please add a subject, comment, or photo");
   try {
     const media = photoFile ? [await uploadSinglePhoto(photoFile)] : [];
     const result = await apiRequest("/posts", {
@@ -786,8 +786,8 @@ function render() {
             </select>
           </div>
           <div class="form-row">
-            <label for="composer-title">Subject</label>
-            <input id="composer-title" type="text" maxlength="90" value="${escapeHtml(state.composerTitle || "")}" placeholder="Thread subject">
+            <label for="composer-title">Subject (optional)</label>
+            <input id="composer-title" type="text" maxlength="90" value="${escapeHtml(state.composerTitle || "")}" placeholder="Add a subject if you want">
           </div>
           <div class="form-row form-row-textarea">
             <label for="composer-body">Comment (optional)</label>
