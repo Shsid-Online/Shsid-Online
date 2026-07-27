@@ -265,12 +265,15 @@ a {
 .thread-board {
   color: var(--green);
   font-weight: 700;
-  margin-right: 6px;
 }
 
 .thread-author {
   color: var(--green);
   font-weight: 700;
+}
+
+.thread-separator {
+  color: var(--muted);
 }
 
 .thread-title {
@@ -290,13 +293,81 @@ a {
 
 .thread-media {
   margin: 0 0 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, max-content));
+  gap: 8px;
 }
 
 .thread-media img {
   display: block;
   max-width: min(100%, 420px);
+  max-height: 420px;
+  object-fit: contain;
   border: 1px solid var(--line);
   background: #ffffff;
+}
+
+.quote-card {
+  margin: 8px 0 10px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--green);
+  background: var(--panel-strong);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.composer-quote {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.quote-label {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.quote-excerpt {
+  margin-top: 3px;
+  white-space: pre-wrap;
+}
+
+.quote-search-row {
+  position: relative;
+}
+
+.quote-results {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.quote-result {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.quote-result:hover {
+  border-color: var(--green);
+}
+
+.quote-result-label {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.quote-result-text,
+.quote-empty {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .thread-foot {
@@ -306,6 +377,16 @@ a {
   gap: 10px;
   font-size: 12px;
   color: #555555;
+}
+
+.plain-board-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .reply-list {
@@ -330,9 +411,32 @@ a {
   font-weight: 700;
 }
 
+.reply-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .reply-body {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.reply-media {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, max-content));
+  gap: 8px;
+}
+
+.reply-media img {
+  display: block;
+  max-width: min(100%, 320px);
+  max-height: 320px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  background: #ffffff;
 }
 
 .reply-form {
@@ -359,11 +463,32 @@ a {
   resize: vertical;
 }
 
+.reply-photo-row {
+  display: block;
+  margin: 8px 0;
+  font-weight: 700;
+}
+
+.reply-photo-row input {
+  display: block;
+  margin-top: 4px;
+}
+
+.reply-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .board-button {
   padding: 6px 12px;
   border: 1px solid #999999;
   background: var(--accent-soft);
   color: var(--ink);
+}
+
+.board-button.muted {
+  background: #ffffff;
 }
 
 .board-button:hover {

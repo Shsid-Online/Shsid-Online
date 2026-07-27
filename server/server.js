@@ -384,6 +384,24 @@ function sanitizeMediaItems(value, limit = 20) {
   })).filter((item) => item.url);
 }
 
+function hasTooManyMediaItems(value, limit) {
+  return Array.isArray(value) && value.length > limit;
+}
+
+function sanitizeQuoteRef(value) {
+  if (!value || typeof value !== "object") return null;
+  const postId = String(value.postId || "").trim();
+  if (!postId) return null;
+  const targetPost = store.data.posts.find((post) => post.id === postId && !post.deletedAt);
+  if (!targetPost) return null;
+  const boardSlug = `/${String(targetPost.category || "board").trim().toLowerCase() || "board"}/`;
+  const number = Number(targetPost.postNumber);
+  const label = `${boardSlug}${targetPost.anonymousLabel || anonymousAccountLabelForUserId(targetPost.authorId)}${Number.isInteger(number) ? `/No.${number}` : ""}`;
+  const excerptSource = targetPost.text || targetPost.title || targetPost.media?.[0]?.name;
+  const excerpt = String(excerptSource || "").trim().replace(/\s+/g, " ").slice(0, 180);
+  return { type: "post", postId, label, excerpt };
+}
+
 function getBoardActorId() {
   const guest = store.findUserByEmail(PUBLIC_BOARD_USER_EMAIL);
   return guest?.id || null;
@@ -1150,7 +1168,10 @@ async function handleApi(req, res, url) {
     if (user) ensureAnonymousAccount(user);
     const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN);
     const text = String(body.text || "").trim();
-    if (!title && !text && !(body.media || []).length) return sendJson(res, 400, { error: "Subject, text, or media is required" }, req);
+    if (hasTooManyMediaItems(body.media, 9)) return sendJson(res, 400, { error: "Posts can include at most 9 photos" }, req);
+    const media = sanitizeMediaItems(body.media, 9);
+    const quoteRef = sanitizeQuoteRef(body.quoteRef);
+    if (!title && !text && !media.length && !quoteRef) return sendJson(res, 400, { error: "Subject, text, media, or quote is required" }, req);
     let requestedPostNumber = null;
     try {
       requestedPostNumber = user?.role === "admin" ? normalizePostNumber(body.postNumber) : null;
@@ -1174,7 +1195,8 @@ async function handleApi(req, res, url) {
       anonymousLabel: !user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null,
       category,
       text: sanitizedText,
-      media: sanitizeMediaItems(body.media, 1),
+      media,
+      quoteRef,
       likes: [],
       hearts: [],
       savedBy: [],
@@ -1247,7 +1269,9 @@ async function handleApi(req, res, url) {
     const post = store.data.posts.find((item) => item.id === postCommentMatch[1] && !item.deletedAt);
     if (!post) return notFound(res);
     const text = String(body.text || "").trim();
-    if (!text) return sendJson(res, 400, { error: "Comment text is required" }, req);
+    if (hasTooManyMediaItems(body.media, 5)) return sendJson(res, 400, { error: "Replies can include at most 5 photos" }, req);
+    const media = sanitizeMediaItems(body.media, 5);
+    if (!text && !media.length) return sendJson(res, 400, { error: "Comment text or media is required" }, req);
     const replyTo = String(body.replyTo || "").trim();
     if (replyTo && !post.comments.some((item) => item.id === replyTo && !item.deletedAt)) {
       return sendJson(res, 400, { error: "Reply target not found" }, req);
@@ -1258,6 +1282,7 @@ async function handleApi(req, res, url) {
       anonymous: !user || user.role !== "admin",
       anonymousLabel: !user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null,
       text: text.slice(0, MAX_TEXT_LEN),
+      media,
       likes: [],
       replyTo: replyTo || null,
       createdAt: now(),

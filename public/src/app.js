@@ -23,6 +23,8 @@ const initialState = {
   composerTitle: "",
   composerBody: "",
   composerPostNumber: "",
+  composerQuote: null,
+  composerQuoteSearch: "",
   replyDrafts: {},
   authOpen: false,
   authMode: "login",
@@ -40,6 +42,7 @@ let queuedLikePostId = "";
 let authReason = "";
 let toastTimer = null;
 let openReplyPostId = "";
+const openReplies = new Set();
 
 function loadState() {
   const base = structuredClone(initialState);
@@ -61,6 +64,8 @@ function loadState() {
   base.composerTitle = "";
   base.composerBody = "";
   base.composerPostNumber = "";
+  base.composerQuote = null;
+  base.composerQuoteSearch = "";
   base.replyDrafts = {};
   return base;
 }
@@ -133,13 +138,16 @@ function toast(message) {
 }
 
 function hasUnsavedReplyDrafts() {
-  return Object.values(state.replyDrafts || {}).some((value) => String(value || "").trim());
+  if (Object.values(state.replyDrafts || {}).some((value) => String(value || "").trim())) return true;
+  return [...document.querySelectorAll("[id^='reply-photo-']")].some((input) => input.files?.length);
 }
 
 function hasUnsavedComposerDraft() {
   if (String(state.composerTitle || "").trim()) return true;
   if (String(state.composerBody || "").trim()) return true;
   if (String(state.composerPostNumber || "").trim()) return true;
+  if (state.composerQuote) return true;
+  if (String(state.composerQuoteSearch || "").trim()) return true;
   const photoInput = document.querySelector("#composer-photo");
   return Boolean(photoInput?.files?.length);
 }
@@ -193,11 +201,24 @@ async function fetchCurrentUser() {
 
 function normalizePost(post) {
   const postNumber = Number(post.postNumber);
+  const authorLabel = String(
+    post.anonymousLabel
+      || post.adminAuthor?.englishName
+      || post.author?.englishName
+      || (post.adminAuthor?.role === "admin" || post.author?.role === "admin" ? "Admin" : "User")
+  ).trim();
   return {
     id: post.id,
     title: String(post.title || "").trim() || "Untitled thread",
     postNumber: Number.isInteger(postNumber) && postNumber > 0 ? postNumber : null,
     anonymousLabel: String(post.anonymousLabel || "").trim(),
+    authorLabel,
+    quoteRef: post.quoteRef && typeof post.quoteRef === "object" ? {
+      type: String(post.quoteRef.type || "post"),
+      postId: String(post.quoteRef.postId || ""),
+      label: String(post.quoteRef.label || "").trim(),
+      excerpt: String(post.quoteRef.excerpt || "").trim()
+    } : null,
     category: String(post.category || "school").trim().toLowerCase(),
     text: String(post.text || "").trim(),
     likes: Array.isArray(post.likes) ? post.likes : [],
@@ -206,6 +227,7 @@ function normalizePost(post) {
       id: comment.id,
       text: String(comment.text || "").trim(),
       anonymousLabel: String(comment.anonymousLabel || "").trim(),
+      media: Array.isArray(comment.media) ? comment.media : [],
       likes: Array.isArray(comment.likes) ? comment.likes : [],
       createdAt: comment.createdAt
     })) : [],
@@ -265,6 +287,61 @@ async function uploadSinglePhoto(file) {
   });
   if (!response.ok) throw new Error("Photo upload failed");
   return { url: signed.mediaUrl, type: contentType, name: fileName };
+}
+
+async function uploadPhotos(fileList, limit) {
+  const files = [...(fileList || [])].slice(0, limit);
+  if ([...(fileList || [])].length > limit) throw new Error(`Please choose at most ${limit} photos`);
+  return Promise.all(files.map(uploadSinglePhoto));
+}
+
+function quoteLabelForPost(post) {
+  const board = boardMeta(post.category);
+  const postNumber = Number.isInteger(post.postNumber) ? post.postNumber : "";
+  return `${board.slug}${post.authorLabel || post.anonymousLabel || "User"}${postNumber ? `/No.${postNumber}` : ""}`;
+}
+
+function quoteExcerpt(text) {
+  return String(text || "").trim().replace(/\s+/g, " ").slice(0, 180);
+}
+
+function quoteRefForPost(post) {
+  if (!post) return null;
+  return {
+    type: "post",
+    postId: post.id,
+    label: quoteLabelForPost(post),
+    excerpt: quoteExcerpt(post.text || post.title)
+  };
+}
+
+function startPostQuote(quoteRef) {
+  if (!quoteRef) return;
+  state.composerQuote = quoteRef;
+  state.composerQuoteSearch = "";
+  saveState();
+  render();
+  document.querySelector("#composer-body")?.focus();
+}
+
+function quoteSearchResults() {
+  const query = String(state.composerQuoteSearch || "").trim().toLowerCase();
+  if (!query) return [];
+  return state.posts
+    .filter((post) => post.id !== state.composerQuote?.postId)
+    .filter((post) => {
+      const haystack = [
+        post.title,
+        post.text,
+        post.authorLabel,
+        post.anonymousLabel,
+        post.postNumber ? `no.${post.postNumber}` : "",
+        boardMeta(post.category).slug,
+        boardMeta(post.category).name
+      ].join(" ").toLowerCase();
+      return haystack.includes(query);
+    })
+    .slice(0, 6);
 }
 
 function queueLike(postId) {
@@ -483,16 +560,17 @@ async function submitThread(event) {
   const title = String(document.querySelector("#composer-title")?.value || "").trim();
   const body = String(document.querySelector("#composer-body")?.value || "").trim();
   const category = String(document.querySelector("#composer-board")?.value || state.composerBoard || "school").trim().toLowerCase();
-  const photoFile = document.querySelector("#composer-photo")?.files?.[0] || null;
+  const photoFiles = document.querySelector("#composer-photo")?.files || [];
   const postNumber = currentUser()?.role === "admin"
     ? String(document.querySelector("#composer-post-number")?.value || "").trim()
     : "";
-  if (!title && !body && !photoFile) return toast("Please add a subject, comment, or photo");
+  const quoteRef = state.composerQuote || null;
+  if (!title && !body && !photoFiles.length && !quoteRef) return toast("Please add a subject, comment, photo, or quote");
   try {
-    const media = photoFile ? [await uploadSinglePhoto(photoFile)] : [];
+    const media = await uploadPhotos(photoFiles, 9);
     const result = await apiRequest("/posts", {
       method: "POST",
-      body: { title, text: body, category, media, ...(postNumber ? { postNumber } : {}) },
+      body: { title, text: body, category, media, ...(quoteRef ? { quoteRef } : {}), ...(postNumber ? { postNumber } : {}) },
       auth: false,
       optionalAuth: true
     });
@@ -501,6 +579,8 @@ async function submitThread(event) {
     state.composerTitle = "";
     state.composerBody = "";
     state.composerPostNumber = "";
+    state.composerQuote = null;
+    state.composerQuoteSearch = "";
     const photoInput = document.querySelector("#composer-photo");
     if (photoInput) photoInput.value = "";
     saveState();
@@ -514,11 +594,14 @@ async function submitThread(event) {
 async function submitReply(postId) {
   const replyKey = `reply-${postId}`;
   const text = String(document.querySelector(`#${replyKey}`)?.value || "").trim();
-  if (!text) return toast("Please write a reply");
+  const photoInput = document.querySelector(`#reply-photo-${CSS.escape(postId)}`);
+  const photoFiles = photoInput?.files || [];
+  if (!text && !photoFiles.length) return toast("Please write a reply or add a photo");
   try {
+    const media = await uploadPhotos(photoFiles, 5);
     const result = await apiRequest(`/posts/${postId}/comments`, {
       method: "POST",
-      body: { text },
+      body: { text, media },
       auth: false,
       optionalAuth: true
     });
@@ -527,12 +610,16 @@ async function submitReply(postId) {
       target.comments = [...(target.comments || []), {
         id: result.comment.id,
         text: String(result.comment.text || "").trim(),
+        anonymousLabel: String(result.comment.anonymousLabel || "").trim(),
+        media: Array.isArray(result.comment.media) ? result.comment.media : [],
         likes: Array.isArray(result.comment.likes) ? result.comment.likes : [],
         createdAt: result.comment.createdAt
       }];
     }
     state.replyDrafts[postId] = "";
+    openReplies.add(postId);
     if (openReplyPostId === postId) openReplyPostId = "";
+    if (photoInput) photoInput.value = "";
     saveState();
     render();
     toast("Reply posted");
@@ -610,6 +697,7 @@ function renderThreadCard(post, index) {
   const adminMode = currentUser()?.role === "admin";
   const replyOpen = openReplyPostId === post.id;
   const replyCount = (post.comments || []).length;
+  const repliesOpen = openReplies.has(post.id);
   const activityLabel = replyCount ? "last bump" : "posted";
   const displayNumber = Number.isInteger(post.postNumber) ? post.postNumber : 5000 + index;
   return `
@@ -617,35 +705,54 @@ function renderThreadCard(post, index) {
       <div class="thread-head">
         <div class="thread-topline">
           <span class="thread-board">${escapeHtml(board.slug)}</span>
-          ${post.anonymousLabel ? `<span class="thread-author">${escapeHtml(post.anonymousLabel)}</span>` : ""}
+          <span class="thread-author">${escapeHtml(post.authorLabel || "User")}</span>
+          <span class="thread-separator">/</span>
           <span class="thread-id">No.${displayNumber}</span>
           ${adminMode ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
         </div>
         <div class="thread-title">${escapeHtml(post.title)}</div>
       </div>
+      ${post.quoteRef ? `
+        <div class="quote-card">
+          <div class="quote-label">${escapeHtml(post.quoteRef.label || "Quoted post")}</div>
+          ${post.quoteRef.excerpt ? `<div class="quote-excerpt">&gt; ${escapeHtml(post.quoteRef.excerpt)}</div>` : ""}
+        </div>
+      ` : ""}
       ${post.text ? `<p class="thread-body">${escapeHtml(post.text)}</p>` : ""}
       ${(post.media || []).length ? `
         <div class="thread-media">
-          <img src="${escapeHtml(post.media[0].url)}" alt="${escapeHtml(post.media[0].name || post.title || "Thread image")}" loading="lazy">
+          ${(post.media || []).map((item) => `
+            <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.name || post.title || "Thread image")}" loading="lazy">
+          `).join("")}
         </div>
       ` : ""}
       <div class="thread-foot">
         <span>${escapeHtml(board.name)}</span>
         <span>${replyCount} repl${replyCount === 1 ? "y" : "ies"}</span>
         <span>${activityLabel} ${escapeHtml(timeAgo(post.createdAt))}</span>
+        ${replyCount ? `<button class="plain-board-action" type="button" data-action="${repliesOpen ? "hide-replies" : "show-replies"}" data-id="${escapeHtml(post.id)}">${repliesOpen ? "Hide replies" : "Show replies"}</button>` : ""}
         <button class="vote-button ${liked ? "liked" : ""}" data-action="like-post" data-id="${escapeHtml(post.id)}">
           ${liked ? "▲" : "△"} ${Array.isArray(post.likes) ? post.likes.length : 0}
         </button>
       </div>
-      ${(post.comments || []).length ? `
+      ${replyCount && repliesOpen ? `
         <div class="reply-list">
           ${(post.comments || []).map((comment, commentIndex) => `
             <div class="reply">
               <div class="reply-head">
                 <span>${escapeHtml(comment.anonymousLabel || `Anonymous ${String(7000 + commentIndex).slice(-4)}`)}</span>
-                ${adminMode ? `<button class="inline-admin-link" data-action="delete-comment" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Delete</button>` : ""}
+                <div class="reply-head-actions">
+                  ${adminMode ? `<button class="inline-admin-link" data-action="delete-comment" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Delete</button>` : ""}
+                </div>
               </div>
-              <p class="reply-body">${escapeHtml(comment.text)}</p>
+              ${comment.text ? `<p class="reply-body">${escapeHtml(comment.text)}</p>` : ""}
+              ${(comment.media || []).length ? `
+                <div class="reply-media">
+                  ${(comment.media || []).map((item) => `
+                    <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.name || "Reply image")}" loading="lazy">
+                  `).join("")}
+                </div>
+              ` : ""}
             </div>
           `).join("")}
         </div>
@@ -656,7 +763,15 @@ function renderThreadCard(post, index) {
             Reply
             <textarea id="reply-${escapeHtml(post.id)}" class="reply-input" rows="3" maxlength="280" placeholder="Post a public reply">${escapeHtml(state.replyDrafts[post.id] || "")}</textarea>
           </label>
-          <button class="board-button" type="submit">Reply</button>
+          <label class="reply-photo-row">
+            Photos
+            <input id="reply-photo-${escapeHtml(post.id)}" type="file" accept="image/*" multiple>
+          </label>
+          <div class="form-note">At most 5 photos per reply.</div>
+          <div class="reply-actions">
+            <button class="board-button" type="submit">Reply</button>
+            <button class="board-button muted" type="button" data-action="close-reply" data-id="${escapeHtml(post.id)}">Close</button>
+          </div>
         </form>
       ` : `
         <button class="board-button reply-toggle" type="button" data-action="open-reply" data-id="${escapeHtml(post.id)}">Reply</button>
@@ -773,6 +888,7 @@ function render() {
   const activeBoard = state.board === "all" ? null : boardMeta(state.board);
   const signedInUser = currentUser();
   const adminComposer = signedInUser?.role === "admin";
+  const quoteResults = quoteSearchResults();
   app.innerHTML = `
     <div class="page">
       <header class="site-header">
@@ -800,13 +916,36 @@ function render() {
 
       <section class="post-box">
         <h2>Thread</h2>
-        <p class="post-box-copy">One photo max per thread.</p>
+        <p class="post-box-copy">Up to 9 photos per thread.</p>
         <form id="thread-form" class="thread-form">
+          ${state.composerQuote ? `
+            <div class="quote-card composer-quote">
+              <div>
+                <div class="quote-label">Replying with post to ${escapeHtml(state.composerQuote.label || "quoted post")}</div>
+                ${state.composerQuote.excerpt ? `<div class="quote-excerpt">&gt; ${escapeHtml(state.composerQuote.excerpt)}</div>` : ""}
+              </div>
+              <button class="plain-board-action" type="button" data-action="clear-quote">Remove quote</button>
+            </div>
+          ` : ""}
           <div class="form-row">
             <label for="composer-board">Board</label>
             <select id="composer-board">
               ${BOARDS.map((board) => `<option value="${escapeHtml(board.category)}"${(state.composerBoard || state.board || "school") === board.category ? " selected" : ""}>${escapeHtml(board.slug)}</option>`).join("")}
             </select>
+          </div>
+          <div class="form-row quote-search-row">
+            <label for="composer-quote-search">Quote a post (optional)</label>
+            <input id="composer-quote-search" type="search" value="${escapeHtml(state.composerQuoteSearch || "")}" placeholder="Search subject, text, board, or No.">
+            ${String(state.composerQuoteSearch || "").trim() ? `
+              <div class="quote-results">
+                ${quoteResults.length ? quoteResults.map((post) => `
+                  <button class="quote-result" type="button" data-action="select-quote" data-id="${escapeHtml(post.id)}">
+                    <span class="quote-result-label">${escapeHtml(quoteLabelForPost(post))}</span>
+                    <span class="quote-result-text">${escapeHtml(quoteExcerpt(post.text || post.title) || "No text")}</span>
+                  </button>
+                `).join("") : `<div class="quote-empty">No matching posts found.</div>`}
+              </div>
+            ` : ""}
           </div>
           <div class="form-row">
             <label for="composer-title">Subject (optional)</label>
@@ -817,8 +956,8 @@ function render() {
             <textarea id="composer-body" rows="5" maxlength="5000" placeholder="Write your thread if you want">${escapeHtml(state.composerBody || "")}</textarea>
           </div>
           <div class="form-row">
-            <label for="composer-photo">Photo</label>
-            <input id="composer-photo" type="file" accept="image/*">
+            <label for="composer-photo">Photos</label>
+            <input id="composer-photo" type="file" accept="image/*" multiple>
           </div>
           ${adminComposer ? `
             <div class="form-row">
@@ -828,7 +967,7 @@ function render() {
           ` : ""}
           <div class="form-actions">
             <button class="board-button primary" type="submit">Post thread</button>
-            <span class="form-note">One photo max per thread.</span>
+            <span class="form-note">At most 9 photos per thread.</span>
           </div>
         </form>
       </section>
@@ -909,6 +1048,12 @@ function bindEvents() {
     state.composerPostNumber = String(event.target.value || "");
     saveState();
   });
+  document.querySelector("#composer-quote-search")?.addEventListener("input", (event) => {
+    state.composerQuoteSearch = String(event.target.value || "");
+    saveState();
+    render();
+    document.querySelector("#composer-quote-search")?.focus();
+  });
   document.querySelector("#thread-form")?.addEventListener("submit", submitThread);
   document.querySelectorAll("[data-reply-form]").forEach((form) => {
     form.addEventListener("submit", async (event) => {
@@ -952,10 +1097,36 @@ function bindEvents() {
         await likePost(id);
         return;
       }
+      if (action === "select-quote") {
+        startPostQuote(quoteRefForPost(state.posts.find((post) => post.id === id)));
+        return;
+      }
+      if (action === "clear-quote") {
+        state.composerQuote = null;
+        state.composerQuoteSearch = "";
+        saveState();
+        render();
+        return;
+      }
       if (action === "open-reply") {
         openReplyPostId = id;
         render();
         document.querySelector(`#reply-${CSS.escape(id)}`)?.focus();
+        return;
+      }
+      if (action === "close-reply") {
+        openReplyPostId = "";
+        render();
+        return;
+      }
+      if (action === "show-replies") {
+        openReplies.add(id);
+        render();
+        return;
+      }
+      if (action === "hide-replies") {
+        openReplies.delete(id);
+        render();
         return;
       }
       if (action === "delete-post") {

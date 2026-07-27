@@ -27,7 +27,9 @@ let hasUsersProfilePhotoColumnCache = null;
 let hasUsersAnonymousAccountColumnCache = null;
 let hasPostsTitleColumnCache = null;
 let hasPostsNumberColumnCache = null;
+let hasPostsQuoteRefColumnCache = null;
 let hasCommentsReplyToColumnCache = null;
+let hasCommentsMediaColumnCache = null;
 let hasCommentsLikesColumnCache = null;
 let hasPostsEngagementColumnsCache = null;
 let hasAdsTableCache = null;
@@ -615,8 +617,10 @@ async function handleApi(request, env, url, route) {
     const actor = authUser || await ensureBoardGuestUser(env);
     const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN);
     const text = String(body.text || "").trim();
-    const media = sanitizeMediaItems(body.media, 1);
-    if (!title && !text && media.length === 0) return json({ error: "Subject, text, or media is required" }, 400);
+    if (hasTooManyMediaItems(body.media, 9)) return json({ error: "Posts can include at most 9 photos" }, 400);
+    const media = sanitizeMediaItems(body.media, 9);
+    const quoteRef = await sanitizeQuoteRef(env, body.quoteRef);
+    if (!title && !text && media.length === 0 && !quoteRef) return json({ error: "Subject, text, media, or quote is required" }, 400);
     if (authUser) await ensureAnonymousAccountForUser(env, authUser);
     let postNumber;
     try {
@@ -633,6 +637,7 @@ async function handleApi(request, env, url, route) {
       category: sanitizeCategory(body.category),
       text: text.slice(0, MAX_TEXT_LEN),
       media: JSON.stringify(media),
+      quote_ref: quoteRef ? JSON.stringify(quoteRef) : "",
       likes: "[]",
       hearts: "[]",
       saved_by: "[]",
@@ -644,8 +649,13 @@ async function handleApi(request, env, url, route) {
 
     const hasTitle = await hasPostsTitleColumn(env);
     const hasPostNumber = await hasPostsNumberColumn(env);
+    const hasQuoteRef = await hasPostsQuoteRefColumn(env);
     const hasEngagementColumns = await hasPostsEngagementColumns(env);
-    if (hasTitle && hasPostNumber && hasEngagementColumns) {
+    if (hasTitle && hasPostNumber && hasQuoteRef && hasEngagementColumns) {
+      await env.DB.prepare("insert into posts (id, author_id, title, post_number, category, text, media, quote_ref, likes, hearts, saved_by, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(post.id, post.author_id, post.title, post.post_number, post.category, post.text, post.media, post.quote_ref, post.likes, post.hearts, post.saved_by, post.anonymous, post.sticky, post.deleted_at, post.created_at)
+        .run();
+    } else if (hasTitle && hasPostNumber && hasEngagementColumns) {
       await env.DB.prepare("insert into posts (id, author_id, title, post_number, category, text, media, likes, hearts, saved_by, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(post.id, post.author_id, post.title, post.post_number, post.category, post.text, post.media, post.likes, post.hearts, post.saved_by, post.anonymous, post.sticky, post.deleted_at, post.created_at)
         .run();
@@ -722,7 +732,9 @@ async function handleApi(request, env, url, route) {
     const actor = authUser || await ensureBoardGuestUser(env);
     if (authUser) await ensureAnonymousAccountForUser(env, authUser);
     const text = String(body.text || "").trim();
-    if (!text) return json({ error: "Comment text is required" }, 400);
+    if (hasTooManyMediaItems(body.media, 5)) return json({ error: "Replies can include at most 5 photos" }, 400);
+    const media = sanitizeMediaItems(body.media, 5);
+    if (!text && media.length === 0) return json({ error: "Comment text or media is required" }, 400);
     const post = await env.DB.prepare("select id from posts where id=? and deleted_at is null").bind(postCommentMatch[1]).first();
     if (!post) return json({ error: "Not found" }, 404);
     const replyTo = String(body.replyTo || "").trim();
@@ -735,6 +747,7 @@ async function handleApi(request, env, url, route) {
       post_id: post.id,
       author_id: actor.id,
       text: text.slice(0, MAX_TEXT_LEN),
+      media: JSON.stringify(media),
       likes: "[]",
       reply_to: replyTo || null,
       anonymous: authUser ? (authUser.role === "admin" ? 0 : 1) : 1,
@@ -742,14 +755,31 @@ async function handleApi(request, env, url, route) {
       created_at: now()
     };
     const hasReplyTo = await hasCommentsReplyToColumn(env);
+    const hasMedia = await hasCommentsMediaColumn(env);
     const hasLikes = await hasCommentsLikesColumn(env);
-    if (hasReplyTo && hasLikes) {
+    if (hasReplyTo && hasMedia && hasLikes) {
+      await env.DB.prepare("insert into comments (id, post_id, author_id, text, media, likes, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.media, comment.likes, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
+        .run();
+    } else if (hasReplyTo && hasMedia) {
+      await env.DB.prepare("insert into comments (id, post_id, author_id, text, media, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.media, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
+        .run();
+    } else if (hasMedia && hasLikes) {
+      await env.DB.prepare("insert into comments (id, post_id, author_id, text, media, likes, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.media, comment.likes, comment.anonymous, comment.deleted_at, comment.created_at)
+        .run();
+    } else if (hasReplyTo && hasLikes) {
       await env.DB.prepare("insert into comments (id, post_id, author_id, text, likes, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.likes, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
         .run();
     } else if (hasReplyTo) {
       await env.DB.prepare("insert into comments (id, post_id, author_id, text, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
+        .run();
+    } else if (hasMedia) {
+      await env.DB.prepare("insert into comments (id, post_id, author_id, text, media, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.media, comment.anonymous, comment.deleted_at, comment.created_at)
         .run();
     } else if (hasLikes) {
       await env.DB.prepare("insert into comments (id, post_id, author_id, text, likes, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
@@ -1627,6 +1657,19 @@ function sanitizeCategory(value) {
   return category || "school";
 }
 
+async function sanitizeQuoteRef(env, value) {
+  if (!value || typeof value !== "object") return null;
+  const postId = String(value.postId || "").trim();
+  if (!postId) return null;
+  const post = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postId).first();
+  if (!post) return null;
+  const boardSlug = `/${String(post.category || "board").trim().toLowerCase() || "board"}/`;
+  const postNumber = Number(post.post_number);
+  const label = `${boardSlug}${post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : "User"}${Number.isInteger(postNumber) ? `/No.${postNumber}` : ""}`;
+  const excerptSource = String(post.text || post.title || jsonArray(post.media)?.[0]?.name || "").trim();
+  return { type: "post", postId, label, excerpt: excerptSource.replace(/\s+/g, " ").slice(0, 180) };
+}
+
 function sanitizeMediaItems(value, limit = 20) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, limit).map((item) => ({
@@ -1634,6 +1677,10 @@ function sanitizeMediaItems(value, limit = 20) {
     type: String(item?.type || "application/octet-stream").trim().slice(0, 120),
     name: String(item?.name || "").trim().slice(0, 260)
   })).filter((item) => item.url);
+}
+
+function hasTooManyMediaItems(value, limit) {
+  return Array.isArray(value) && value.length > limit;
 }
 
 function unpackMessagePayload(rawText) {
@@ -1705,6 +1752,7 @@ function unpackConversationTitle(rawTitle) {
 
 function fromDbPost(row) {
   const postNumber = Number(row.post_number);
+  const quoteRef = jsonObject(row.quote_ref);
   return {
     id: row.id,
     authorId: row.author_id,
@@ -1713,6 +1761,7 @@ function fromDbPost(row) {
     category: row.category,
     text: row.text,
     media: jsonArray(row.media),
+    quoteRef: quoteRef && quoteRef.postId ? quoteRef : null,
     likes: jsonArray(row.likes),
     hearts: jsonArray(row.hearts),
     savedBy: jsonArray(row.saved_by),
@@ -1729,6 +1778,7 @@ function fromDbComment(row) {
     postId: row.post_id,
     authorId: row.author_id,
     text: row.text,
+    media: jsonArray(row.media),
     likes: jsonArray(row.likes),
     replyTo: row.reply_to || null,
     anonymous: Boolean(row.anonymous),
@@ -2001,6 +2051,24 @@ async function hasPostsNumberColumn(env) {
   }
 }
 
+async function hasPostsQuoteRefColumn(env) {
+  if (hasPostsQuoteRefColumnCache !== null) return hasPostsQuoteRefColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(posts)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (names.includes("quote_ref")) {
+      hasPostsQuoteRefColumnCache = true;
+      return true;
+    }
+    await env.DB.prepare("alter table posts add column quote_ref text default ''").run();
+    hasPostsQuoteRefColumnCache = true;
+    return true;
+  } catch {
+    hasPostsQuoteRefColumnCache = false;
+    return false;
+  }
+}
+
 async function hasCommentsReplyToColumn(env) {
   if (hasCommentsReplyToColumnCache !== null) return hasCommentsReplyToColumnCache;
   try {
@@ -2015,6 +2083,24 @@ async function hasCommentsReplyToColumn(env) {
     return true;
   } catch {
     hasCommentsReplyToColumnCache = false;
+    return false;
+  }
+}
+
+async function hasCommentsMediaColumn(env) {
+  if (hasCommentsMediaColumnCache !== null) return hasCommentsMediaColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(comments)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (names.includes("media")) {
+      hasCommentsMediaColumnCache = true;
+      return true;
+    }
+    await env.DB.prepare("alter table comments add column media text default '[]'").run();
+    hasCommentsMediaColumnCache = true;
+    return true;
+  } catch {
+    hasCommentsMediaColumnCache = false;
     return false;
   }
 }
@@ -2259,6 +2345,17 @@ function jsonArray(value) {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
+  }
+}
+
+function jsonObject(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
 }
 
