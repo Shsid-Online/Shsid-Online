@@ -24,7 +24,9 @@ const ALLOWED_UPLOAD_TYPES = [
   "application/pdf"
 ];
 let hasUsersProfilePhotoColumnCache = null;
+let hasUsersAnonymousAccountColumnCache = null;
 let hasPostsTitleColumnCache = null;
+let hasPostsNumberColumnCache = null;
 let hasCommentsReplyToColumnCache = null;
 let hasCommentsLikesColumnCache = null;
 let hasPostsEngagementColumnsCache = null;
@@ -325,6 +327,7 @@ async function handleApi(request, env, url, route) {
           .bind(user.id, user.email, user.password_hash, user.role, user.status, user.english_name, user.chinese_name, user.grade, user.class_no, user.bio, user.verification_video, user.created_at, user.updated_at)
           .run();
       }
+      await ensureAnonymousAccountForUser(env, user);
     }
 
     if (user.password_hash) {
@@ -570,9 +573,14 @@ async function handleApi(request, env, url, route) {
     const posts = [];
     for (const post of postRows.results || []) {
       const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
+      const commentViews = await Promise.all((comments.results || []).map(async (comment) => ({
+        ...fromDbComment(comment),
+        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null
+      })));
       posts.push({
         ...fromDbPost(post),
-        comments: (comments.results || []).map(fromDbComment),
+        anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
+        comments: commentViews,
         author: post.anonymous && authUser?.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
         adminAuthor: authUser?.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
       });
@@ -587,10 +595,15 @@ async function handleApi(request, env, url, route) {
     const post = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postByIdMatch[1]).first();
     if (!post) return json({ error: "Not found" }, 404);
     const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
+    const commentViews = await Promise.all((comments.results || []).map(async (comment) => ({
+      ...fromDbComment(comment),
+      anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null
+    })));
     return json({
       post: {
         ...fromDbPost(post),
-        comments: (comments.results || []).map(fromDbComment),
+        anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
+        comments: commentViews,
         author: post.anonymous && authUser.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
         adminAuthor: authUser.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
       }
@@ -604,26 +617,39 @@ async function handleApi(request, env, url, route) {
     const text = String(body.text || "").trim();
     const media = sanitizeMediaItems(body.media, 1);
     if (!title && !text && media.length === 0) return json({ error: "Subject, text, or media is required" }, 400);
+    if (authUser) await ensureAnonymousAccountForUser(env, authUser);
+    let postNumber;
+    try {
+      postNumber = await createPostNumber(env, authUser?.role === "admin" ? body.postNumber : null);
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : String(error) }, error.status || 500);
+    }
 
     const post = {
       id: id("pst"),
       author_id: actor.id,
       title,
+      post_number: postNumber,
       category: sanitizeCategory(body.category),
       text: text.slice(0, MAX_TEXT_LEN),
       media: JSON.stringify(media),
       likes: "[]",
       hearts: "[]",
       saved_by: "[]",
-      anonymous: authUser ? (body.anonymous ? 1 : 0) : 1,
+      anonymous: authUser ? (authUser.role === "admin" ? 0 : 1) : 1,
       sticky: 0,
       deleted_at: null,
       created_at: now()
     };
 
     const hasTitle = await hasPostsTitleColumn(env);
+    const hasPostNumber = await hasPostsNumberColumn(env);
     const hasEngagementColumns = await hasPostsEngagementColumns(env);
-    if (hasTitle && hasEngagementColumns) {
+    if (hasTitle && hasPostNumber && hasEngagementColumns) {
+      await env.DB.prepare("insert into posts (id, author_id, title, post_number, category, text, media, likes, hearts, saved_by, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(post.id, post.author_id, post.title, post.post_number, post.category, post.text, post.media, post.likes, post.hearts, post.saved_by, post.anonymous, post.sticky, post.deleted_at, post.created_at)
+        .run();
+    } else if (hasTitle && hasEngagementColumns) {
       await env.DB.prepare("insert into posts (id, author_id, title, category, text, media, likes, hearts, saved_by, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(post.id, post.author_id, post.title, post.category, post.text, post.media, post.likes, post.hearts, post.saved_by, post.anonymous, post.sticky, post.deleted_at, post.created_at)
         .run();
@@ -638,7 +664,12 @@ async function handleApi(request, env, url, route) {
     }
     await audit(env, actor.id, "post_created", { postId: post.id }, request);
 
-    return json({ post: fromDbPost(post) }, 201);
+    return json({
+      post: {
+        ...fromDbPost(post),
+        anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null
+      }
+    }, 201);
   }
 
   const postLikeMatch = route.match(/^\/posts\/([^/]+)\/like$/);
@@ -689,6 +720,7 @@ async function handleApi(request, env, url, route) {
   if (method === "POST" && postCommentMatch) {
     if (authUser?.status === "banned") return json({ error: "Account banned" }, 403);
     const actor = authUser || await ensureBoardGuestUser(env);
+    if (authUser) await ensureAnonymousAccountForUser(env, authUser);
     const text = String(body.text || "").trim();
     if (!text) return json({ error: "Comment text is required" }, 400);
     const post = await env.DB.prepare("select id from posts where id=? and deleted_at is null").bind(postCommentMatch[1]).first();
@@ -705,7 +737,7 @@ async function handleApi(request, env, url, route) {
       text: text.slice(0, MAX_TEXT_LEN),
       likes: "[]",
       reply_to: replyTo || null,
-      anonymous: authUser ? (authUser.role === "admin" ? 0 : (body.anonymous ? 1 : 0)) : 1,
+      anonymous: authUser ? (authUser.role === "admin" ? 0 : 1) : 1,
       deleted_at: null,
       created_at: now()
     };
@@ -734,7 +766,12 @@ async function handleApi(request, env, url, route) {
       await createNotification(env, postOwner.author_id, "post_comment", `${notificationActorName(authUser)} commented on your post.`);
     }
 
-    return json({ comment: fromDbComment(comment) }, 201);
+    return json({
+      comment: {
+        ...fromDbComment(comment),
+        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null
+      }
+    }, 201);
   }
 
   const postCommentLikeMatch = route.match(/^\/posts\/([^/]+)\/comments\/([^/]+)\/like$/);
@@ -752,14 +789,22 @@ async function handleApi(request, env, url, route) {
     const post = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postId).first();
     if (!post) return json({ error: "Not found" }, 404);
     const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
+    const commentViews = await Promise.all((comments.results || []).map(async (row) => ({
+      ...fromDbComment(row),
+      anonymousLabel: row.anonymous ? await anonymousAccountLabelForUserId(env, row.author_id) : null
+    })));
     return json({
       post: {
         ...fromDbPost(post),
-        comments: (comments.results || []).map(fromDbComment),
+        anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
+        comments: commentViews,
         author: post.anonymous && authUser.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
         adminAuthor: authUser.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
       },
-      comment: fromDbComment(comment)
+      comment: {
+        ...fromDbComment(comment),
+        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null
+      }
     }, 200);
   }
 
@@ -1659,10 +1704,12 @@ function unpackConversationTitle(rawTitle) {
 }
 
 function fromDbPost(row) {
+  const postNumber = Number(row.post_number);
   return {
     id: row.id,
     authorId: row.author_id,
     title: row.title || "",
+    postNumber: Number.isInteger(postNumber) && postNumber > 0 ? postNumber : null,
     category: row.category,
     text: row.text,
     media: jsonArray(row.media),
@@ -1752,6 +1799,7 @@ async function ensureBoardGuestUser(env) {
       .bind(user.id, user.email, user.password_hash, user.role, user.status, user.english_name, user.chinese_name, user.grade, user.class_no, user.bio, user.verification_video, user.created_at, user.updated_at)
       .run();
   }
+  await ensureAnonymousAccountForUser(env, user);
   return user;
 }
 
@@ -1864,6 +1912,57 @@ async function hasUsersProfilePhotoColumn(env) {
   }
 }
 
+async function hasUsersAnonymousAccountColumn(env) {
+  if (hasUsersAnonymousAccountColumnCache !== null) return hasUsersAnonymousAccountColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(users)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (names.includes("anonymous_account_number")) {
+      await env.DB.prepare("create unique index if not exists idx_users_anonymous_account_number on users(anonymous_account_number)").run();
+      hasUsersAnonymousAccountColumnCache = true;
+      return true;
+    }
+    await env.DB.prepare("alter table users add column anonymous_account_number integer").run();
+    await env.DB.prepare("create unique index if not exists idx_users_anonymous_account_number on users(anonymous_account_number)").run();
+    hasUsersAnonymousAccountColumnCache = true;
+    return true;
+  } catch {
+    hasUsersAnonymousAccountColumnCache = false;
+    return false;
+  }
+}
+
+async function createAnonymousAccountNumber(env, preferredUserId = "") {
+  await hasUsersAnonymousAccountColumn(env);
+  const rows = await env.DB.prepare("select id, anonymous_account_number from users where anonymous_account_number is not null").all();
+  const used = new Set((rows.results || [])
+    .filter((row) => row.id !== preferredUserId)
+    .map((row) => Number(row.anonymous_account_number))
+    .filter((value) => Number.isInteger(value) && value >= 1000 && value <= 9999));
+  for (let attempt = 0; attempt < 10000; attempt += 1) {
+    const candidate = randomFourDigitNumber();
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new Error("No unused anonymous account numbers are available");
+}
+
+async function ensureAnonymousAccountForUser(env, user) {
+  if (!user) return null;
+  const current = Number(user.anonymous_account_number);
+  if (Number.isInteger(current) && current >= 1000 && current <= 9999) return current;
+  const nextNumber = await createAnonymousAccountNumber(env, user.id);
+  await env.DB.prepare("update users set anonymous_account_number = ?, updated_at = ? where id = ?")
+    .bind(nextNumber, now(), user.id)
+    .run();
+  user.anonymous_account_number = nextNumber;
+  return nextNumber;
+}
+
+async function anonymousAccountLabelForUserId(env, userId) {
+  const number = await ensureAnonymousAccountForUser(env, await getUserById(env, userId));
+  return number ? `Anonymous ${number}` : "Anonymous";
+}
+
 async function hasPostsTitleColumn(env) {
   if (hasPostsTitleColumnCache !== null) return hasPostsTitleColumnCache;
   try {
@@ -1878,6 +1977,26 @@ async function hasPostsTitleColumn(env) {
     return true;
   } catch {
     hasPostsTitleColumnCache = false;
+    return false;
+  }
+}
+
+async function hasPostsNumberColumn(env) {
+  if (hasPostsNumberColumnCache !== null) return hasPostsNumberColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(posts)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (names.includes("post_number")) {
+      await env.DB.prepare("create unique index if not exists idx_posts_post_number on posts(post_number)").run();
+      hasPostsNumberColumnCache = true;
+      return true;
+    }
+    await env.DB.prepare("alter table posts add column post_number integer").run();
+    await env.DB.prepare("create unique index if not exists idx_posts_post_number on posts(post_number)").run();
+    hasPostsNumberColumnCache = true;
+    return true;
+  } catch {
+    hasPostsNumberColumnCache = false;
     return false;
   }
 }
@@ -2159,6 +2278,45 @@ function id(prefix) {
 
 function now() {
   return new Date().toISOString();
+}
+
+function normalizePostNumber(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (!/^\d{4}$/.test(raw)) {
+    const error = new Error("Post number must be an unused 4-digit number");
+    error.status = 400;
+    throw error;
+  }
+  return Number(raw);
+}
+
+function randomFourDigitNumber() {
+  const bytes = new Uint32Array(1);
+  crypto.getRandomValues(bytes);
+  return 1000 + (bytes[0] % 9000);
+}
+
+async function createPostNumber(env, preferredValue = null) {
+  await hasPostsNumberColumn(env);
+  const preferredNumber = normalizePostNumber(preferredValue);
+  const rows = await env.DB.prepare("select post_number from posts where post_number is not null").all();
+  const used = new Set((rows.results || [])
+    .map((row) => Number(row.post_number))
+    .filter((value) => Number.isInteger(value)));
+  if (preferredNumber !== null) {
+    if (used.has(preferredNumber)) {
+      const error = new Error("That post number is already used");
+      error.status = 409;
+      throw error;
+    }
+    return preferredNumber;
+  }
+  for (let attempt = 0; attempt < 10000; attempt += 1) {
+    const candidate = randomFourDigitNumber();
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new Error("No unused post numbers are available");
 }
 
 async function sha256Hex(input) {

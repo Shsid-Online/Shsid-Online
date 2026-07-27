@@ -268,6 +268,11 @@ a {
   margin-right: 6px;
 }
 
+.thread-author {
+  color: var(--green);
+  font-weight: 700;
+}
+
 .thread-title {
   display: block;
   color: var(--accent-ink);
@@ -331,6 +336,10 @@ a {
 }
 
 .reply-form {
+  margin-top: 12px;
+}
+
+.reply-toggle {
   margin-top: 12px;
 }
 

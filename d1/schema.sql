@@ -13,6 +13,7 @@ create table if not exists users (
   bio text default '',
   profile_photo text default '',
   verification_video text default '',
+  anonymous_account_number integer unique,
   created_at text not null,
   updated_at text not null
 );
@@ -30,6 +31,7 @@ create table if not exists posts (
   id text primary key,
   author_id text not null references users(id),
   title text not null default '',
+  post_number integer unique,
   category text not null default 'school',
   text text not null default '',
   media text not null default '[]',

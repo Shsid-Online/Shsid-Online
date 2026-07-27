@@ -15,6 +15,18 @@ function id(prefix) {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
+function anonymousAccountNumber(users, preferredUserId = "") {
+  const used = new Set((users || [])
+    .filter((user) => user?.id !== preferredUserId)
+    .map((user) => Number(user.anonymousAccountNumber))
+    .filter((value) => Number.isInteger(value) && value >= 1000 && value <= 9999));
+  for (let attempt = 0; attempt < 10000; attempt += 1) {
+    const candidate = crypto.randomInt(1000, 10000);
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new Error("No unused anonymous account numbers are available");
+}
+
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
   const hash = password;
   return `${salt}:${hash}`;
@@ -32,7 +44,7 @@ function tokenDigest(token) {
 
 function publicUser(user) {
   if (!user) return null;
-  const { passwordHash, sessions, pendingOtp, pendingVerification, emailVerification, ...safe } = user;
+  const { passwordHash, sessions, pendingOtp, pendingVerification, emailVerification, anonymousAccountNumber, ...safe } = user;
   return safe;
 }
 
@@ -41,6 +53,7 @@ function createSeed() {
     throw new Error("INITIAL_ADMIN_PASSWORD is required before creating the initial admin account");
   }
   const adminId = id("usr");
+  const adminAnonymousNumber = anonymousAccountNumber([]);
   return {
     users: [
       {
@@ -54,6 +67,7 @@ function createSeed() {
         grade: 12,
         classNo: 1,
         bio: "Initial platform administrator",
+        anonymousAccountNumber: adminAnonymousNumber,
         createdAt: now(),
         updatedAt: now()
       },
@@ -68,6 +82,7 @@ function createSeed() {
         grade: null,
         classNo: null,
         bio: "System guest account for public board posts.",
+        anonymousAccountNumber: anonymousAccountNumber([{ anonymousAccountNumber: adminAnonymousNumber }]),
         createdAt: now(),
         updatedAt: now()
       }
@@ -142,6 +157,10 @@ class Store {
       }
     }
     for (const user of this.data.users) {
+      const anonNumber = Number(user.anonymousAccountNumber);
+      if (!Number.isInteger(anonNumber) || anonNumber < 1000 || anonNumber > 9999) {
+        user.anonymousAccountNumber = anonymousAccountNumber(this.data.users, user.id);
+      }
       if (Array.isArray(user.sessions)) {
         for (const legacySession of user.sessions) {
           this.data.sessions.push({
@@ -168,6 +187,7 @@ class Store {
         grade: null,
         classNo: null,
         bio: "System guest account for public board posts.",
+        anonymousAccountNumber: anonymousAccountNumber(this.data.users),
         createdAt: now(),
         updatedAt: now()
       });

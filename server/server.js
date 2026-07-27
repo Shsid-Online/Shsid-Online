@@ -315,6 +315,61 @@ function uploadPathForKey(key) {
   return filePath;
 }
 
+function normalizePostNumber(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (!/^\d{4}$/.test(raw)) throw new HttpError(400, "Post number must be an unused 4-digit number");
+  return Number(raw);
+}
+
+function usedPostNumbers() {
+  return new Set((store.data.posts || [])
+    .map((post) => Number(post.postNumber))
+    .filter((value) => Number.isInteger(value)));
+}
+
+function createPostNumber(preferredNumber = null) {
+  const used = usedPostNumbers();
+  if (preferredNumber !== null) {
+    if (used.has(preferredNumber)) throw new HttpError(409, "That post number is already used");
+    return preferredNumber;
+  }
+  for (let attempt = 0; attempt < 10000; attempt += 1) {
+    const candidate = crypto.randomInt(1000, 10000);
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new HttpError(500, "No unused post numbers are available");
+}
+
+function createAnonymousAccountNumber(preferredUserId = "") {
+  const used = new Set((store.data.users || [])
+    .filter((user) => user?.id !== preferredUserId)
+    .map((user) => Number(user.anonymousAccountNumber))
+    .filter((value) => Number.isInteger(value) && value >= 1000 && value <= 9999));
+  for (let attempt = 0; attempt < 10000; attempt += 1) {
+    const candidate = crypto.randomInt(1000, 10000);
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new HttpError(500, "No unused anonymous account numbers are available");
+}
+
+function ensureAnonymousAccount(user) {
+  if (!user) return null;
+  const current = Number(user.anonymousAccountNumber);
+  if (Number.isInteger(current) && current >= 1000 && current <= 9999) return current;
+  user.anonymousAccountNumber = createAnonymousAccountNumber(user.id);
+  user.updatedAt = now();
+  return user.anonymousAccountNumber;
+}
+
+function anonymousAccountLabelForUserId(userId) {
+  const user = store.findUserById(userId);
+  const previous = Number(user?.anonymousAccountNumber);
+  const number = ensureAnonymousAccount(user);
+  if (user && (!Number.isInteger(previous) || previous < 1000 || previous > 9999)) store.save();
+  return number ? `Anonymous ${number}` : "Anonymous";
+}
+
 function sanitizeCategory(value) {
   const category = String(value || "school").trim().toLowerCase().slice(0, MAX_CATEGORY_LEN);
   return category || "school";
@@ -894,6 +949,7 @@ async function handleApi(req, res, url) {
         grade: null,
         classNo: null,
         bio: "",
+        anonymousAccountNumber: createAnonymousAccountNumber(),
         createdAt: now(),
         updatedAt: now()
       };
@@ -1075,6 +1131,11 @@ async function handleApi(req, res, url) {
     const { items, pagination } = paginate(visiblePosts, url, { limit: 25, maxLimit: 100 });
     const posts = items.map((post) => ({
       ...post,
+      anonymousLabel: post.anonymous ? anonymousAccountLabelForUserId(post.authorId) : null,
+      comments: (post.comments || []).map((comment) => ({
+        ...comment,
+        anonymousLabel: comment.anonymous ? anonymousAccountLabelForUserId(comment.authorId) : null
+      })),
       author: post.anonymous && user?.role !== "admin" ? null : userView(store.findUserById(post.authorId), user, followIndexes),
       adminAuthor: user?.role === "admin" ? userView(store.findUserById(post.authorId), user, followIndexes) : undefined
     }));
@@ -1086,16 +1147,31 @@ async function handleApi(req, res, url) {
     if (user?.status === "banned") return sendJson(res, 403, { error: "Account banned" }, req);
     const authorId = user?.id || getBoardActorId();
     if (!authorId) return sendJson(res, 500, { error: "Board guest account is unavailable" }, req);
+    if (user) ensureAnonymousAccount(user);
     const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN);
     const text = String(body.text || "").trim();
     if (!title && !text && !(body.media || []).length) return sendJson(res, 400, { error: "Subject, text, or media is required" }, req);
+    let requestedPostNumber = null;
+    try {
+      requestedPostNumber = user?.role === "admin" ? normalizePostNumber(body.postNumber) : null;
+    } catch (error) {
+      return sendJson(res, error.status || 400, { error: error.message }, req);
+    }
+    let postNumber;
+    try {
+      postNumber = createPostNumber(requestedPostNumber);
+    } catch (error) {
+      return sendJson(res, error.status || 500, { error: error.message }, req);
+    }
     const sanitizedText = text.slice(0, MAX_TEXT_LEN);
     const category = sanitizeCategory(body.category);
     const post = {
       id: id("pst"),
       authorId,
       title: title || "Untitled thread",
-      anonymous: !user,
+      postNumber,
+      anonymous: !user || user.role !== "admin",
+      anonymousLabel: !user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null,
       category,
       text: sanitizedText,
       media: sanitizeMediaItems(body.media, 1),
@@ -1167,6 +1243,7 @@ async function handleApi(req, res, url) {
     if (user?.status === "banned") return sendJson(res, 403, { error: "Account banned" }, req);
     const authorId = user?.id || getBoardActorId();
     if (!authorId) return sendJson(res, 500, { error: "Board guest account is unavailable" }, req);
+    if (user) ensureAnonymousAccount(user);
     const post = store.data.posts.find((item) => item.id === postCommentMatch[1] && !item.deletedAt);
     if (!post) return notFound(res);
     const text = String(body.text || "").trim();
@@ -1179,6 +1256,7 @@ async function handleApi(req, res, url) {
       id: id("cmt"),
       authorId,
       anonymous: !user || user.role !== "admin",
+      anonymousLabel: !user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null,
       text: text.slice(0, MAX_TEXT_LEN),
       likes: [],
       replyTo: replyTo || null,

@@ -22,6 +22,7 @@ const initialState = {
   composerBoard: "school",
   composerTitle: "",
   composerBody: "",
+  composerPostNumber: "",
   replyDrafts: {},
   authOpen: false,
   authMode: "login",
@@ -38,6 +39,7 @@ let authBusy = false;
 let queuedLikePostId = "";
 let authReason = "";
 let toastTimer = null;
+let openReplyPostId = "";
 
 function loadState() {
   const base = structuredClone(initialState);
@@ -58,6 +60,7 @@ function loadState() {
   // Keep unsent board drafts session-only so old text does not reappear after refresh.
   base.composerTitle = "";
   base.composerBody = "";
+  base.composerPostNumber = "";
   base.replyDrafts = {};
   return base;
 }
@@ -136,6 +139,7 @@ function hasUnsavedReplyDrafts() {
 function hasUnsavedComposerDraft() {
   if (String(state.composerTitle || "").trim()) return true;
   if (String(state.composerBody || "").trim()) return true;
+  if (String(state.composerPostNumber || "").trim()) return true;
   const photoInput = document.querySelector("#composer-photo");
   return Boolean(photoInput?.files?.length);
 }
@@ -188,9 +192,12 @@ async function fetchCurrentUser() {
 }
 
 function normalizePost(post) {
+  const postNumber = Number(post.postNumber);
   return {
     id: post.id,
     title: String(post.title || "").trim() || "Untitled thread",
+    postNumber: Number.isInteger(postNumber) && postNumber > 0 ? postNumber : null,
+    anonymousLabel: String(post.anonymousLabel || "").trim(),
     category: String(post.category || "school").trim().toLowerCase(),
     text: String(post.text || "").trim(),
     likes: Array.isArray(post.likes) ? post.likes : [],
@@ -198,6 +205,7 @@ function normalizePost(post) {
     comments: Array.isArray(post.comments) ? post.comments.map((comment) => ({
       id: comment.id,
       text: String(comment.text || "").trim(),
+      anonymousLabel: String(comment.anonymousLabel || "").trim(),
       likes: Array.isArray(comment.likes) ? comment.likes : [],
       createdAt: comment.createdAt
     })) : [],
@@ -476,12 +484,15 @@ async function submitThread(event) {
   const body = String(document.querySelector("#composer-body")?.value || "").trim();
   const category = String(document.querySelector("#composer-board")?.value || state.composerBoard || "school").trim().toLowerCase();
   const photoFile = document.querySelector("#composer-photo")?.files?.[0] || null;
+  const postNumber = currentUser()?.role === "admin"
+    ? String(document.querySelector("#composer-post-number")?.value || "").trim()
+    : "";
   if (!title && !body && !photoFile) return toast("Please add a subject, comment, or photo");
   try {
     const media = photoFile ? [await uploadSinglePhoto(photoFile)] : [];
     const result = await apiRequest("/posts", {
       method: "POST",
-      body: { title, text: body, category, media },
+      body: { title, text: body, category, media, ...(postNumber ? { postNumber } : {}) },
       auth: false,
       optionalAuth: true
     });
@@ -489,6 +500,7 @@ async function submitThread(event) {
     state.composerBoard = category;
     state.composerTitle = "";
     state.composerBody = "";
+    state.composerPostNumber = "";
     const photoInput = document.querySelector("#composer-photo");
     if (photoInput) photoInput.value = "";
     saveState();
@@ -520,6 +532,7 @@ async function submitReply(postId) {
       }];
     }
     state.replyDrafts[postId] = "";
+    if (openReplyPostId === postId) openReplyPostId = "";
     saveState();
     render();
     toast("Reply posted");
@@ -595,12 +608,17 @@ function renderThreadCard(post, index) {
   const board = boardMeta(post.category);
   const liked = userCanLike(post);
   const adminMode = currentUser()?.role === "admin";
+  const replyOpen = openReplyPostId === post.id;
+  const replyCount = (post.comments || []).length;
+  const activityLabel = replyCount ? "last bump" : "posted";
+  const displayNumber = Number.isInteger(post.postNumber) ? post.postNumber : 5000 + index;
   return `
     <article class="thread-card">
       <div class="thread-head">
         <div class="thread-topline">
           <span class="thread-board">${escapeHtml(board.slug)}</span>
-          <span class="thread-id">No.${5000 + index}</span>
+          ${post.anonymousLabel ? `<span class="thread-author">${escapeHtml(post.anonymousLabel)}</span>` : ""}
+          <span class="thread-id">No.${displayNumber}</span>
           ${adminMode ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
         </div>
         <div class="thread-title">${escapeHtml(post.title)}</div>
@@ -613,8 +631,8 @@ function renderThreadCard(post, index) {
       ` : ""}
       <div class="thread-foot">
         <span>${escapeHtml(board.name)}</span>
-        <span>${(post.comments || []).length} repl${(post.comments || []).length === 1 ? "y" : "ies"}</span>
-        <span>last bump ${escapeHtml(timeAgo(post.createdAt))}</span>
+        <span>${replyCount} repl${replyCount === 1 ? "y" : "ies"}</span>
+        <span>${activityLabel} ${escapeHtml(timeAgo(post.createdAt))}</span>
         <button class="vote-button ${liked ? "liked" : ""}" data-action="like-post" data-id="${escapeHtml(post.id)}">
           ${liked ? "▲" : "△"} ${Array.isArray(post.likes) ? post.likes.length : 0}
         </button>
@@ -624,7 +642,7 @@ function renderThreadCard(post, index) {
           ${(post.comments || []).map((comment, commentIndex) => `
             <div class="reply">
               <div class="reply-head">
-                <span>Anonymous No.${7000 + commentIndex}</span>
+                <span>${escapeHtml(comment.anonymousLabel || `Anonymous ${String(7000 + commentIndex).slice(-4)}`)}</span>
                 ${adminMode ? `<button class="inline-admin-link" data-action="delete-comment" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Delete</button>` : ""}
               </div>
               <p class="reply-body">${escapeHtml(comment.text)}</p>
@@ -632,13 +650,17 @@ function renderThreadCard(post, index) {
           `).join("")}
         </div>
       ` : ""}
-      <form class="reply-form" data-reply-form="${escapeHtml(post.id)}">
-        <label>
-          Reply
-          <textarea id="reply-${escapeHtml(post.id)}" class="reply-input" rows="3" maxlength="280" placeholder="Post a public reply">${escapeHtml(state.replyDrafts[post.id] || "")}</textarea>
-        </label>
-        <button class="board-button" type="submit">Reply</button>
-      </form>
+      ${replyOpen ? `
+        <form class="reply-form" data-reply-form="${escapeHtml(post.id)}">
+          <label>
+            Reply
+            <textarea id="reply-${escapeHtml(post.id)}" class="reply-input" rows="3" maxlength="280" placeholder="Post a public reply">${escapeHtml(state.replyDrafts[post.id] || "")}</textarea>
+          </label>
+          <button class="board-button" type="submit">Reply</button>
+        </form>
+      ` : `
+        <button class="board-button reply-toggle" type="button" data-action="open-reply" data-id="${escapeHtml(post.id)}">Reply</button>
+      `}
     </article>
   `;
 }
@@ -750,6 +772,7 @@ function render() {
   const posts = filteredPosts();
   const activeBoard = state.board === "all" ? null : boardMeta(state.board);
   const signedInUser = currentUser();
+  const adminComposer = signedInUser?.role === "admin";
   app.innerHTML = `
     <div class="page">
       <header class="site-header">
@@ -797,6 +820,12 @@ function render() {
             <label for="composer-photo">Photo</label>
             <input id="composer-photo" type="file" accept="image/*">
           </div>
+          ${adminComposer ? `
+            <div class="form-row">
+              <label for="composer-post-number">Post No. (admin)</label>
+              <input id="composer-post-number" type="number" min="1000" max="9999" value="${escapeHtml(state.composerPostNumber || "")}" placeholder="Unused 4-digit number">
+            </div>
+          ` : ""}
           <div class="form-actions">
             <button class="board-button primary" type="submit">Post thread</button>
             <span class="form-note">One photo max per thread.</span>
@@ -876,6 +905,10 @@ function bindEvents() {
     state.composerBody = String(event.target.value || "");
     saveState();
   });
+  document.querySelector("#composer-post-number")?.addEventListener("input", (event) => {
+    state.composerPostNumber = String(event.target.value || "");
+    saveState();
+  });
   document.querySelector("#thread-form")?.addEventListener("submit", submitThread);
   document.querySelectorAll("[data-reply-form]").forEach((form) => {
     form.addEventListener("submit", async (event) => {
@@ -917,6 +950,12 @@ function bindEvents() {
       }
       if (action === "like-post") {
         await likePost(id);
+        return;
+      }
+      if (action === "open-reply") {
+        openReplyPostId = id;
+        render();
+        document.querySelector(`#reply-${CSS.escape(id)}`)?.focus();
         return;
       }
       if (action === "delete-post") {
