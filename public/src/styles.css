@@ -326,29 +326,43 @@ a {
 }
 
 .quote-card {
+  display: grid;
+  gap: 4px;
   margin: 8px 0 10px;
   padding: 8px 10px;
   border-left: 3px solid var(--green);
   background: var(--panel-strong);
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.35;
 }
 
 .composer-quote {
-  display: flex;
-  justify-content: space-between;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: flex-start;
+  margin-top: 12px;
+}
+
+.quote-card-body {
+  min-width: 0;
 }
 
 .quote-label {
   color: var(--green);
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .quote-excerpt {
-  margin-top: 3px;
-  white-space: pre-wrap;
+  display: block;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.quote-remove {
+  white-space: nowrap;
 }
 
 .quote-search-row {

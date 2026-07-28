@@ -367,6 +367,19 @@ function startPostQuote(quoteRef) {
   document.querySelector("#composer-body")?.focus();
 }
 
+function renderQuoteCard(quoteRef, { composer = false } = {}) {
+  if (!quoteRef) return "";
+  return `
+    <div class="quote-card${composer ? " composer-quote" : ""}">
+      <div class="quote-card-body">
+        <div class="quote-label">${escapeHtml(composer ? `Quoting ${quoteRef.label || "post"}` : quoteRef.label || "Quoted post")}</div>
+        ${quoteRef.excerpt ? `<div class="quote-excerpt">&gt; ${escapeHtml(quoteRef.excerpt)}</div>` : ""}
+      </div>
+      ${composer ? `<button class="plain-board-action quote-remove" type="button" data-action="clear-quote">Remove quote</button>` : ""}
+    </div>
+  `;
+}
+
 function quoteSearchResults() {
   const query = String(state.composerQuoteSearch || "").trim().toLowerCase();
   if (!query) return [];
@@ -778,10 +791,7 @@ function renderThreadCard(post, index) {
         <div class="thread-title">${escapeHtml(post.title)}</div>
       </div>
       ${post.quoteRef ? `
-        <div class="quote-card">
-          <div class="quote-label">${escapeHtml(post.quoteRef.label || "Quoted post")}</div>
-          ${post.quoteRef.excerpt ? `<div class="quote-excerpt">&gt; ${escapeHtml(post.quoteRef.excerpt)}</div>` : ""}
-        </div>
+        ${renderQuoteCard(post.quoteRef)}
       ` : ""}
       ${post.text ? `<p class="thread-body">${escapeHtml(post.text)}</p>` : ""}
       ${(post.media || []).length ? `
@@ -991,16 +1001,8 @@ function render() {
           ${composerOpen ? `<button class="board-button small muted" type="button" data-action="close-composer">Close</button>` : `<button class="board-button primary" type="button" data-action="open-composer">Post</button>`}
         </div>
         ${composerOpen ? `
+        ${state.composerQuote ? renderQuoteCard(state.composerQuote, { composer: true }) : ""}
         <form id="thread-form" class="thread-form">
-          ${state.composerQuote ? `
-            <div class="quote-card composer-quote">
-              <div>
-                <div class="quote-label">Replying with post to ${escapeHtml(state.composerQuote.label || "quoted post")}</div>
-                ${state.composerQuote.excerpt ? `<div class="quote-excerpt">&gt; ${escapeHtml(state.composerQuote.excerpt)}</div>` : ""}
-              </div>
-              <button class="plain-board-action" type="button" data-action="clear-quote">Remove quote</button>
-            </div>
-          ` : ""}
           <div class="form-row">
             <label for="composer-board">Board</label>
             <select id="composer-board">
