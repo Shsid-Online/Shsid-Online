@@ -190,6 +190,11 @@ a {
   background: #ffffff;
 }
 
+.form-row-note span {
+  display: table-cell;
+  padding: 4px 8px 8px;
+}
+
 .form-row-textarea textarea {
   min-height: 160px;
   resize: vertical;
@@ -206,6 +211,12 @@ a {
 .form-note {
   color: var(--muted);
   font-size: 12px;
+}
+
+.selected-photo-note {
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .thread-controls {

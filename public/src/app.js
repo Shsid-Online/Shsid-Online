@@ -45,7 +45,9 @@ let authReason = "";
 let toastTimer = null;
 let openReplyPostId = "";
 let threadSubmitting = false;
+let composerPhotoFiles = [];
 const replySubmittingPostIds = new Set();
+const replyPhotoFilesByPostId = new Map();
 const openReplies = new Set();
 
 function loadState() {
@@ -147,6 +149,7 @@ function toast(message) {
 
 function hasUnsavedReplyDrafts() {
   if (Object.values(state.replyDrafts || {}).some((value) => String(value || "").trim())) return true;
+  if ([...replyPhotoFilesByPostId.values()].some((files) => files.length)) return true;
   return [...document.querySelectorAll("[id^='reply-photo-']")].some((input) => input.files?.length);
 }
 
@@ -156,6 +159,7 @@ function hasUnsavedComposerDraft() {
   if (String(state.composerPostNumber || "").trim()) return true;
   if (state.composerQuote) return true;
   if (String(state.composerQuoteSearch || "").trim()) return true;
+  if (composerPhotoFiles.length) return true;
   const photoInput = document.querySelector("#composer-photo");
   return Boolean(photoInput?.files?.length);
 }
@@ -312,6 +316,25 @@ async function uploadPhotos(fileList, limit) {
   const files = [...(fileList || [])].slice(0, limit);
   if ([...(fileList || [])].length > limit) throw new Error(`Please choose at most ${limit} photos`);
   return Promise.all(files.map(uploadSinglePhoto));
+}
+
+function selectedPhotoSummary(files, emptyText = "") {
+  const selected = [...(files || [])];
+  if (!selected.length) return emptyText;
+  const names = selected.map((file) => String(file.name || "photo").trim()).filter(Boolean);
+  const preview = names.slice(0, 3).join(", ");
+  const extra = names.length > 3 ? ` +${names.length - 3} more` : "";
+  return `${selected.length} photo${selected.length === 1 ? "" : "s"} selected${preview ? `: ${preview}${extra}` : ""}`;
+}
+
+function composerPhotos() {
+  const inputFiles = document.querySelector("#composer-photo")?.files || [];
+  return inputFiles.length ? [...inputFiles] : composerPhotoFiles;
+}
+
+function replyPhotos(postId) {
+  const inputFiles = document.querySelector(`#reply-photo-${CSS.escape(postId)}`)?.files || [];
+  return inputFiles.length ? [...inputFiles] : (replyPhotoFilesByPostId.get(postId) || []);
 }
 
 function quoteLabelForPost(post) {
@@ -581,7 +604,7 @@ async function submitThread(event) {
   const title = String(document.querySelector("#composer-title")?.value || "").trim();
   const body = String(document.querySelector("#composer-body")?.value || "").trim();
   const category = String(document.querySelector("#composer-board")?.value || state.composerBoard || "school").trim().toLowerCase();
-  const photoFiles = document.querySelector("#composer-photo")?.files || [];
+  const photoFiles = composerPhotos();
   const postNumber = currentUser()?.role === "admin"
     ? String(document.querySelector("#composer-post-number")?.value || "").trim()
     : "";
@@ -604,6 +627,7 @@ async function submitThread(event) {
     state.composerQuote = null;
     state.composerQuoteSearch = "";
     state.composerOpen = false;
+    composerPhotoFiles = [];
     const photoInput = document.querySelector("#composer-photo");
     if (photoInput) photoInput.value = "";
     saveState();
@@ -621,7 +645,7 @@ async function submitReply(postId) {
   const replyKey = `reply-${postId}`;
   const text = String(document.querySelector(`#${replyKey}`)?.value || "").trim();
   const photoInput = document.querySelector(`#reply-photo-${CSS.escape(postId)}`);
-  const photoFiles = photoInput?.files || [];
+  const photoFiles = replyPhotos(postId);
   if (!text && !photoFiles.length) return toast("Please write a reply or add a photo");
   replySubmittingPostIds.add(postId);
   try {
@@ -649,6 +673,7 @@ async function submitReply(postId) {
       }
     }
     state.replyDrafts[postId] = "";
+    replyPhotoFilesByPostId.delete(postId);
     openReplies.add(postId);
     if (openReplyPostId === postId) openReplyPostId = "";
     if (photoInput) photoInput.value = "";
@@ -737,6 +762,7 @@ function renderThreadCard(post, index) {
   const replyCount = (post.comments || []).length;
   const repliesOpen = openReplies.has(post.id);
   const replySubmitting = replySubmittingPostIds.has(post.id);
+  const replyPhotoSummary = selectedPhotoSummary(replyPhotoFilesByPostId.get(post.id) || [], "No photos selected");
   const activityLabel = replyCount ? "last bump" : "posted";
   const displayNumber = Number.isInteger(post.postNumber) ? post.postNumber : 5000 + index;
   return `
@@ -806,6 +832,7 @@ function renderThreadCard(post, index) {
             Photos
             <input id="reply-photo-${escapeHtml(post.id)}" type="file" accept="image/*" multiple>
           </label>
+          <div class="selected-photo-note" id="reply-photo-note-${escapeHtml(post.id)}">${escapeHtml(replyPhotoSummary)}</div>
           <div class="form-note">At most 5 photos per reply.</div>
           <div class="reply-actions">
             <button class="board-button" type="submit"${replySubmitting ? " disabled" : ""}>${replySubmitting ? "Posting..." : "Reply"}</button>
@@ -929,6 +956,7 @@ function render() {
   const adminComposer = signedInUser?.role === "admin";
   const quoteResults = quoteSearchResults();
   const composerOpen = Boolean(state.composerOpen || hasUnsavedComposerDraft());
+  const composerPhotoSummary = selectedPhotoSummary(composerPhotoFiles, "No photos selected");
   app.innerHTML = `
     <div class="page">
       <header class="site-header">
@@ -1004,6 +1032,10 @@ function render() {
           <div class="form-row">
             <label for="composer-photo">Photos</label>
             <input id="composer-photo" type="file" accept="image/*" multiple>
+          </div>
+          <div class="form-row form-row-note">
+            <span></span>
+            <span class="selected-photo-note" id="composer-photo-note">${escapeHtml(composerPhotoSummary)}</span>
           </div>
           ${adminComposer ? `
             <div class="form-row">
@@ -1095,6 +1127,11 @@ function bindEvents() {
     state.composerPostNumber = String(event.target.value || "");
     saveState();
   });
+  document.querySelector("#composer-photo")?.addEventListener("change", (event) => {
+    composerPhotoFiles = [...(event.target.files || [])];
+    const note = document.querySelector("#composer-photo-note");
+    if (note) note.textContent = selectedPhotoSummary(composerPhotoFiles, "No photos selected");
+  });
   document.querySelector("#composer-quote-search")?.addEventListener("input", (event) => {
     state.composerQuoteSearch = String(event.target.value || "");
     saveState();
@@ -1113,6 +1150,14 @@ function bindEvents() {
       const id = String(event.target.id || "").replace(/^reply-/, "");
       state.replyDrafts[id] = String(event.target.value || "");
       saveState();
+    });
+  });
+  document.querySelectorAll("[id^='reply-photo-']").forEach((input) => {
+    input.addEventListener("change", (event) => {
+      const id = String(event.target.id || "").replace(/^reply-photo-/, "");
+      replyPhotoFilesByPostId.set(id, [...(event.target.files || [])]);
+      const note = document.getElementById(`reply-photo-note-${id}`);
+      if (note) note.textContent = selectedPhotoSummary(replyPhotoFilesByPostId.get(id) || [], "No photos selected");
     });
   });
 
