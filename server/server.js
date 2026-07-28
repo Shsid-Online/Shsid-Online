@@ -1150,9 +1150,11 @@ async function handleApi(req, res, url) {
     const posts = items.map((post) => ({
       ...post,
       anonymousLabel: post.anonymous ? anonymousAccountLabelForUserId(post.authorId) : null,
+      canDelete: Boolean(user && (user.role === "admin" || post.authorId === user.id)),
       comments: (post.comments || []).map((comment) => ({
         ...comment,
-        anonymousLabel: comment.anonymous ? anonymousAccountLabelForUserId(comment.authorId) : null
+        anonymousLabel: comment.anonymous ? anonymousAccountLabelForUserId(comment.authorId) : null,
+        canDelete: Boolean(user && (user.role === "admin" || comment.authorId === user.id))
       })),
       author: post.anonymous && user?.role !== "admin" ? null : userView(store.findUserById(post.authorId), user, followIndexes),
       adminAuthor: user?.role === "admin" ? userView(store.findUserById(post.authorId), user, followIndexes) : undefined
@@ -1193,6 +1195,7 @@ async function handleApi(req, res, url) {
       postNumber,
       anonymous: !user || user.role !== "admin",
       anonymousLabel: !user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null,
+      canDelete: Boolean(user),
       category,
       text: sanitizedText,
       media,
@@ -1281,6 +1284,7 @@ async function handleApi(req, res, url) {
       authorId,
       anonymous: !user || user.role !== "admin",
       anonymousLabel: !user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null,
+      canDelete: Boolean(user),
       text: text.slice(0, MAX_TEXT_LEN),
       media,
       likes: [],
@@ -1339,18 +1343,19 @@ async function handleApi(req, res, url) {
 
   const postIdOnlyMatch = url.pathname.match(/^\/api\/posts\/([^/]+)$/);
   if (postIdOnlyMatch && (method === "PATCH" || method === "DELETE")) {
-    const admin = requireAdmin(req, res);
-    if (!admin) return;
+    const user = method === "DELETE" ? requireAuth(req, res) : requireAdmin(req, res);
+    if (!user) return;
     const post = store.data.posts.find((item) => item.id === postIdOnlyMatch[1]);
     if (!post) return notFound(res);
     if (method === "DELETE") {
+      if (user.role !== "admin" && post.authorId !== user.id) return sendJson(res, 403, { error: "Not allowed to delete this post" }, req);
       post.deletedAt = now();
-      store.audit(admin.id, "post_deleted", { postId: post.id });
+      store.audit(user.id, "post_deleted", { postId: post.id });
       store.save();
       return sendJson(res, 200, { ok: true });
     }
     if (body.sticky !== undefined) post.sticky = Boolean(body.sticky);
-    store.audit(admin.id, "post_updated", { postId: post.id, sticky: post.sticky });
+    store.audit(user.id, "post_updated", { postId: post.id, sticky: post.sticky });
     store.save();
     return sendJson(res, 200, { post });
   }

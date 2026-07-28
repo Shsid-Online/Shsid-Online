@@ -137,6 +137,13 @@ a {
   margin-bottom: 12px;
 }
 
+.post-box-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
 .post-box h2 {
   margin: 0 0 8px;
   font-size: 18px;

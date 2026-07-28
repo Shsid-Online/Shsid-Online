@@ -577,11 +577,13 @@ async function handleApi(request, env, url, route) {
       const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
       const commentViews = await Promise.all((comments.results || []).map(async (comment) => ({
         ...fromDbComment(comment),
-        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null
+        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null,
+        canDelete: Boolean(authUser && (authUser.role === "admin" || comment.author_id === authUser.id))
       })));
       posts.push({
         ...fromDbPost(post),
         anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
+        canDelete: Boolean(authUser && (authUser.role === "admin" || post.author_id === authUser.id)),
         comments: commentViews,
         author: post.anonymous && authUser?.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
         adminAuthor: authUser?.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
@@ -599,12 +601,14 @@ async function handleApi(request, env, url, route) {
     const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
     const commentViews = await Promise.all((comments.results || []).map(async (comment) => ({
       ...fromDbComment(comment),
-      anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null
+      anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null,
+      canDelete: Boolean(authUser && (authUser.role === "admin" || comment.author_id === authUser.id))
     })));
     return json({
       post: {
         ...fromDbPost(post),
         anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
+        canDelete: Boolean(authUser && (authUser.role === "admin" || post.author_id === authUser.id)),
         comments: commentViews,
         author: post.anonymous && authUser.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
         adminAuthor: authUser.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
@@ -677,7 +681,8 @@ async function handleApi(request, env, url, route) {
     return json({
       post: {
         ...fromDbPost(post),
-        anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null
+        anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
+        canDelete: Boolean(authUser)
       }
     }, 201);
   }
@@ -799,7 +804,8 @@ async function handleApi(request, env, url, route) {
     return json({
       comment: {
         ...fromDbComment(comment),
-        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null
+        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null,
+        canDelete: Boolean(authUser)
       }
     }, 201);
   }
@@ -821,30 +827,34 @@ async function handleApi(request, env, url, route) {
     const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
     const commentViews = await Promise.all((comments.results || []).map(async (row) => ({
       ...fromDbComment(row),
-      anonymousLabel: row.anonymous ? await anonymousAccountLabelForUserId(env, row.author_id) : null
+      anonymousLabel: row.anonymous ? await anonymousAccountLabelForUserId(env, row.author_id) : null,
+      canDelete: Boolean(authUser && (authUser.role === "admin" || row.author_id === authUser.id))
     })));
     return json({
       post: {
         ...fromDbPost(post),
         anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
+        canDelete: Boolean(authUser && (authUser.role === "admin" || post.author_id === authUser.id)),
         comments: commentViews,
         author: post.anonymous && authUser.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
         adminAuthor: authUser.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
       },
       comment: {
         ...fromDbComment(comment),
-        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null
+        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null,
+        canDelete: Boolean(authUser && (authUser.role === "admin" || comment.author_id === authUser.id))
       }
     }, 200);
   }
 
   const postCommentDeleteMatch = route.match(/^\/posts\/([^/]+)\/comments\/([^/]+)$/);
   if (method === "DELETE" && postCommentDeleteMatch) {
-    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    if (!authUser) return json({ error: "Authentication required" }, 401);
     const postId = postCommentDeleteMatch[1];
     const commentId = postCommentDeleteMatch[2];
     const comment = await env.DB.prepare("select * from comments where id=? and post_id=? and deleted_at is null").bind(commentId, postId).first();
     if (!comment) return json({ error: "Not found" }, 404);
+    if (authUser.role !== "admin" && comment.author_id !== authUser.id) return json({ error: "Not allowed to delete this comment" }, 403);
     await env.DB.prepare("update comments set deleted_at=? where id=?").bind(now(), comment.id).run();
     await audit(env, authUser.id, "comment_deleted", { postId, commentId }, request);
     return json({ ok: true }, 200);
@@ -852,10 +862,12 @@ async function handleApi(request, env, url, route) {
 
   const postMatch = route.match(/^\/posts\/([^/]+)$/);
   if (postMatch && (method === "PATCH" || method === "DELETE")) {
-    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    if (method === "PATCH" && authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const row = await env.DB.prepare("select * from posts where id=?").bind(postMatch[1]).first();
     if (!row) return json({ error: "Not found" }, 404);
     if (method === "DELETE") {
+      if (authUser.role !== "admin" && row.author_id !== authUser.id) return json({ error: "Not allowed to delete this post" }, 403);
       await env.DB.prepare("update posts set deleted_at=? where id=?").bind(now(), row.id).run();
       await audit(env, authUser.id, "post_deleted", { postId: row.id }, request);
       return json({ ok: true }, 200);

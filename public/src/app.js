@@ -25,6 +25,7 @@ const initialState = {
   composerPostNumber: "",
   composerQuote: null,
   composerQuoteSearch: "",
+  composerOpen: false,
   replyDrafts: {},
   authOpen: false,
   authMode: "login",
@@ -42,6 +43,8 @@ let queuedLikePostId = "";
 let authReason = "";
 let toastTimer = null;
 let openReplyPostId = "";
+let threadSubmitting = false;
+const replySubmittingPostIds = new Set();
 const openReplies = new Set();
 
 function loadState() {
@@ -201,18 +204,26 @@ async function fetchCurrentUser() {
 
 function normalizePost(post) {
   const postNumber = Number(post.postNumber);
+  const anonymous = Boolean(post.anonymous);
+  const viewerId = currentUser()?.id || "";
+  const authorId = String(post.authorId || "");
+  const realAuthorLabel = post.adminAuthor?.englishName
+    || post.author?.englishName
+    || (post.adminAuthor?.role === "admin" || post.author?.role === "admin" ? "Admin" : "");
   const authorLabel = String(
     post.anonymousLabel
-      || post.adminAuthor?.englishName
-      || post.author?.englishName
-      || (post.adminAuthor?.role === "admin" || post.author?.role === "admin" ? "Admin" : "User")
+      || (anonymous ? "Anonymous" : realAuthorLabel)
+      || "Anonymous"
   ).trim();
   return {
     id: post.id,
+    authorId,
     title: String(post.title || "").trim() || "Untitled thread",
     postNumber: Number.isInteger(postNumber) && postNumber > 0 ? postNumber : null,
+    anonymous,
     anonymousLabel: String(post.anonymousLabel || "").trim(),
     authorLabel,
+    canDelete: Boolean(post.canDelete || (viewerId && authorId === viewerId)),
     quoteRef: post.quoteRef && typeof post.quoteRef === "object" ? {
       type: String(post.quoteRef.type || "post"),
       postId: String(post.quoteRef.postId || ""),
@@ -225,8 +236,10 @@ function normalizePost(post) {
     media: Array.isArray(post.media) ? post.media : [],
     comments: Array.isArray(post.comments) ? post.comments.map((comment) => ({
       id: comment.id,
+      authorId: String(comment.authorId || ""),
       text: String(comment.text || "").trim(),
-      anonymousLabel: String(comment.anonymousLabel || "").trim(),
+      anonymousLabel: String(comment.anonymousLabel || "Anonymous").trim(),
+      canDelete: Boolean(comment.canDelete || (viewerId && String(comment.authorId || "") === viewerId)),
       media: Array.isArray(comment.media) ? comment.media : [],
       likes: Array.isArray(comment.likes) ? comment.likes : [],
       createdAt: comment.createdAt
@@ -298,7 +311,7 @@ async function uploadPhotos(fileList, limit) {
 function quoteLabelForPost(post) {
   const board = boardMeta(post.category);
   const postNumber = Number.isInteger(post.postNumber) ? post.postNumber : "";
-  return `${board.slug}${post.authorLabel || post.anonymousLabel || "User"}${postNumber ? `/No.${postNumber}` : ""}`;
+  return `${board.slug}${post.authorLabel || post.anonymousLabel || "Anonymous"}${postNumber ? `/No.${postNumber}` : ""}`;
 }
 
 function quoteExcerpt(text) {
@@ -319,6 +332,7 @@ function startPostQuote(quoteRef) {
   if (!quoteRef) return;
   state.composerQuote = quoteRef;
   state.composerQuoteSearch = "";
+  state.composerOpen = true;
   saveState();
   render();
   document.querySelector("#composer-body")?.focus();
@@ -557,6 +571,7 @@ async function logout() {
 
 async function submitThread(event) {
   event.preventDefault();
+  if (threadSubmitting) return;
   const title = String(document.querySelector("#composer-title")?.value || "").trim();
   const body = String(document.querySelector("#composer-body")?.value || "").trim();
   const category = String(document.querySelector("#composer-board")?.value || state.composerBoard || "school").trim().toLowerCase();
@@ -566,6 +581,7 @@ async function submitThread(event) {
     : "";
   const quoteRef = state.composerQuote || null;
   if (!title && !body && !photoFiles.length && !quoteRef) return toast("Please add a subject, comment, photo, or quote");
+  threadSubmitting = true;
   try {
     const media = await uploadPhotos(photoFiles, 9);
     const result = await apiRequest("/posts", {
@@ -581,6 +597,7 @@ async function submitThread(event) {
     state.composerPostNumber = "";
     state.composerQuote = null;
     state.composerQuoteSearch = "";
+    state.composerOpen = false;
     const photoInput = document.querySelector("#composer-photo");
     if (photoInput) photoInput.value = "";
     saveState();
@@ -588,15 +605,19 @@ async function submitThread(event) {
     toast("Thread posted");
   } catch (error) {
     toast(error.message || "Could not post thread");
+  } finally {
+    threadSubmitting = false;
   }
 }
 
 async function submitReply(postId) {
+  if (replySubmittingPostIds.has(postId)) return;
   const replyKey = `reply-${postId}`;
   const text = String(document.querySelector(`#${replyKey}`)?.value || "").trim();
   const photoInput = document.querySelector(`#reply-photo-${CSS.escape(postId)}`);
   const photoFiles = photoInput?.files || [];
   if (!text && !photoFiles.length) return toast("Please write a reply or add a photo");
+  replySubmittingPostIds.add(postId);
   try {
     const media = await uploadPhotos(photoFiles, 5);
     const result = await apiRequest(`/posts/${postId}/comments`, {
@@ -607,14 +628,19 @@ async function submitReply(postId) {
     });
     const target = state.posts.find((post) => post.id === postId);
     if (target && result.comment) {
-      target.comments = [...(target.comments || []), {
+      const nextComment = {
         id: result.comment.id,
         text: String(result.comment.text || "").trim(),
-        anonymousLabel: String(result.comment.anonymousLabel || "").trim(),
+        anonymousLabel: String(result.comment.anonymousLabel || "Anonymous").trim(),
+        authorId: String(result.comment.authorId || ""),
+        canDelete: Boolean(result.comment.canDelete || result.comment.authorId === currentUser()?.id),
         media: Array.isArray(result.comment.media) ? result.comment.media : [],
         likes: Array.isArray(result.comment.likes) ? result.comment.likes : [],
         createdAt: result.comment.createdAt
-      }];
+      };
+      if (!(target.comments || []).some((comment) => comment.id === nextComment.id)) {
+        target.comments = [...(target.comments || []), nextComment];
+      }
     }
     state.replyDrafts[postId] = "";
     openReplies.add(postId);
@@ -625,12 +651,15 @@ async function submitReply(postId) {
     toast("Reply posted");
   } catch (error) {
     toast(error.message || "Could not post reply");
+  } finally {
+    replySubmittingPostIds.delete(postId);
   }
 }
 
 async function deletePost(postId) {
   const user = currentUser();
-  if (!user || user.role !== "admin") return toast("Admin access required");
+  const post = state.posts.find((item) => item.id === postId);
+  if (!user || (user.role !== "admin" && !post?.canDelete && post?.authorId !== user.id)) return toast("You can only delete your own post");
   if (!window.confirm("Delete this thread?")) return;
   try {
     await apiRequest(`/posts/${postId}`, { method: "DELETE" });
@@ -645,7 +674,9 @@ async function deletePost(postId) {
 
 async function deleteComment(postId, commentId) {
   const user = currentUser();
-  if (!user || user.role !== "admin") return toast("Admin access required");
+  const post = state.posts.find((item) => item.id === postId);
+  const comment = (post?.comments || []).find((item) => item.id === commentId);
+  if (!user || (user.role !== "admin" && !comment?.canDelete && comment?.authorId !== user.id)) return toast("You can only delete your own reply");
   if (!window.confirm("Delete this reply?")) return;
   try {
     await apiRequest(`/posts/${postId}/comments/${commentId}`, { method: "DELETE" });
@@ -695,9 +726,11 @@ function renderThreadCard(post, index) {
   const board = boardMeta(post.category);
   const liked = userCanLike(post);
   const adminMode = currentUser()?.role === "admin";
+  const canDeletePost = adminMode || Boolean(post.canDelete);
   const replyOpen = openReplyPostId === post.id;
   const replyCount = (post.comments || []).length;
   const repliesOpen = openReplies.has(post.id);
+  const replySubmitting = replySubmittingPostIds.has(post.id);
   const activityLabel = replyCount ? "last bump" : "posted";
   const displayNumber = Number.isInteger(post.postNumber) ? post.postNumber : 5000 + index;
   return `
@@ -705,10 +738,10 @@ function renderThreadCard(post, index) {
       <div class="thread-head">
         <div class="thread-topline">
           <span class="thread-board">${escapeHtml(board.slug)}</span>
-          <span class="thread-author">${escapeHtml(post.authorLabel || "User")}</span>
+          <span class="thread-author">${escapeHtml(post.authorLabel || "Anonymous")}</span>
           <span class="thread-separator">/</span>
           <span class="thread-id">No.${displayNumber}</span>
-          ${adminMode ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
+          ${canDeletePost ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
         </div>
         <div class="thread-title">${escapeHtml(post.title)}</div>
       </div>
@@ -740,9 +773,9 @@ function renderThreadCard(post, index) {
           ${(post.comments || []).map((comment, commentIndex) => `
             <div class="reply">
               <div class="reply-head">
-                <span>${escapeHtml(comment.anonymousLabel || `Anonymous ${String(7000 + commentIndex).slice(-4)}`)}</span>
+                <span>${escapeHtml(comment.anonymousLabel || "Anonymous")}</span>
                 <div class="reply-head-actions">
-                  ${adminMode ? `<button class="inline-admin-link" data-action="delete-comment" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Delete</button>` : ""}
+                  ${(adminMode || comment.canDelete) ? `<button class="inline-admin-link" data-action="delete-comment" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Delete</button>` : ""}
                 </div>
               </div>
               ${comment.text ? `<p class="reply-body">${escapeHtml(comment.text)}</p>` : ""}
@@ -769,7 +802,7 @@ function renderThreadCard(post, index) {
           </label>
           <div class="form-note">At most 5 photos per reply.</div>
           <div class="reply-actions">
-            <button class="board-button" type="submit">Reply</button>
+            <button class="board-button" type="submit"${replySubmitting ? " disabled" : ""}>${replySubmitting ? "Posting..." : "Reply"}</button>
             <button class="board-button muted" type="button" data-action="close-reply" data-id="${escapeHtml(post.id)}">Close</button>
           </div>
         </form>
@@ -889,6 +922,7 @@ function render() {
   const signedInUser = currentUser();
   const adminComposer = signedInUser?.role === "admin";
   const quoteResults = quoteSearchResults();
+  const composerOpen = Boolean(state.composerOpen || hasUnsavedComposerDraft());
   app.innerHTML = `
     <div class="page">
       <header class="site-header">
@@ -915,8 +949,14 @@ function render() {
       </nav>
 
       <section class="post-box">
-        <h2>Thread</h2>
-        <p class="post-box-copy">Up to 9 photos per thread.</p>
+        <div class="post-box-head">
+          <div>
+            <h2>Thread</h2>
+            <p class="post-box-copy">${composerOpen ? "Up to 9 photos per thread." : "Start a new thread when you are ready."}</p>
+          </div>
+          ${composerOpen ? `<button class="board-button small muted" type="button" data-action="close-composer">Close</button>` : `<button class="board-button primary" type="button" data-action="open-composer">Post</button>`}
+        </div>
+        ${composerOpen ? `
         <form id="thread-form" class="thread-form">
           ${state.composerQuote ? `
             <div class="quote-card composer-quote">
@@ -966,10 +1006,11 @@ function render() {
             </div>
           ` : ""}
           <div class="form-actions">
-            <button class="board-button primary" type="submit">Post thread</button>
+            <button class="board-button primary" type="submit"${threadSubmitting ? " disabled" : ""}>${threadSubmitting ? "Posting..." : "Post thread"}</button>
             <span class="form-note">At most 9 photos per thread.</span>
           </div>
         </form>
+        ` : ""}
       </section>
 
       <section class="thread-controls">
@@ -1095,6 +1136,19 @@ function bindEvents() {
       }
       if (action === "like-post") {
         await likePost(id);
+        return;
+      }
+      if (action === "open-composer") {
+        state.composerOpen = true;
+        saveState();
+        render();
+        document.querySelector("#composer-title")?.focus();
+        return;
+      }
+      if (action === "close-composer") {
+        state.composerOpen = false;
+        saveState();
+        render();
         return;
       }
       if (action === "select-quote") {
