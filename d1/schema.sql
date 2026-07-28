@@ -32,6 +32,7 @@ create table if not exists posts (
   author_id text not null references users(id),
   title text not null default '',
   post_number integer unique,
+  admin_anonymous_account_number integer unique,
   category text not null default 'school',
   text text not null default '',
   media text not null default '[]',

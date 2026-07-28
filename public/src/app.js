@@ -22,7 +22,7 @@ const initialState = {
   composerBoard: "school",
   composerTitle: "",
   composerBody: "",
-  composerPostNumber: "",
+  composerAnonymousNumber: "",
   composerQuote: null,
   composerQuoteSearch: "",
   composerOpen: false,
@@ -72,7 +72,7 @@ function loadState() {
   // Keep unsent board drafts session-only so old text does not reappear after refresh.
   base.composerTitle = "";
   base.composerBody = "";
-  base.composerPostNumber = "";
+  base.composerAnonymousNumber = "";
   base.composerQuote = null;
   base.composerQuoteSearch = "";
   base.replyDrafts = {};
@@ -156,7 +156,7 @@ function hasUnsavedReplyDrafts() {
 function hasUnsavedComposerDraft() {
   if (String(state.composerTitle || "").trim()) return true;
   if (String(state.composerBody || "").trim()) return true;
-  if (String(state.composerPostNumber || "").trim()) return true;
+  if (String(state.composerAnonymousNumber || "").trim()) return true;
   if (state.composerQuote) return true;
   if (String(state.composerQuoteSearch || "").trim()) return true;
   if (composerPhotoFiles.length) return true;
@@ -618,8 +618,8 @@ async function submitThread(event) {
   const body = String(document.querySelector("#composer-body")?.value || "").trim();
   const category = String(document.querySelector("#composer-board")?.value || state.composerBoard || "school").trim().toLowerCase();
   const photoFiles = composerPhotos();
-  const postNumber = currentUser()?.role === "admin"
-    ? String(document.querySelector("#composer-post-number")?.value || "").trim()
+  const anonymousAccountNumber = currentUser()?.role === "admin"
+    ? String(document.querySelector("#composer-anonymous-number")?.value || "").trim()
     : "";
   const quoteRef = state.composerQuote || null;
   if (!title && !body && !photoFiles.length && !quoteRef) return toast("Please add a subject, comment, photo, or quote");
@@ -628,7 +628,7 @@ async function submitThread(event) {
     const media = await uploadPhotos(photoFiles, 9);
     const result = await apiRequest("/posts", {
       method: "POST",
-      body: { title, text: body, category, media, ...(quoteRef ? { quoteRef } : {}), ...(postNumber ? { postNumber } : {}) },
+      body: { title, text: body, category, media, ...(quoteRef ? { quoteRef } : {}), ...(anonymousAccountNumber ? { anonymousAccountNumber } : {}) },
       auth: false,
       optionalAuth: true
     });
@@ -636,7 +636,7 @@ async function submitThread(event) {
     state.composerBoard = category;
     state.composerTitle = "";
     state.composerBody = "";
-    state.composerPostNumber = "";
+    state.composerAnonymousNumber = "";
     state.composerQuote = null;
     state.composerQuoteSearch = "";
     state.composerOpen = false;
@@ -1041,8 +1041,8 @@ function render() {
           </div>
           ${adminComposer ? `
             <div class="form-row">
-              <label for="composer-post-number">Post No. (admin)</label>
-              <input id="composer-post-number" type="number" min="1000" max="9999" value="${escapeHtml(state.composerPostNumber || "")}" placeholder="Unused 4-digit number">
+              <label for="composer-anonymous-number">Anonymous No. (admin)</label>
+              <input id="composer-anonymous-number" type="number" min="1000" max="9999" value="${escapeHtml(state.composerAnonymousNumber || "")}" placeholder="Unused anonymous number">
             </div>
           ` : ""}
           <div class="form-actions">
@@ -1125,8 +1125,8 @@ function bindEvents() {
     state.composerBody = String(event.target.value || "");
     saveState();
   });
-  document.querySelector("#composer-post-number")?.addEventListener("input", (event) => {
-    state.composerPostNumber = String(event.target.value || "");
+  document.querySelector("#composer-anonymous-number")?.addEventListener("input", (event) => {
+    state.composerAnonymousNumber = String(event.target.value || "");
     saveState();
   });
   document.querySelector("#composer-photo")?.addEventListener("change", (event) => {

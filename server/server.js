@@ -324,6 +324,13 @@ function normalizePostNumber(value) {
   return Number(raw);
 }
 
+function normalizeAnonymousAccountNumber(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (!/^\d{4}$/.test(raw)) throw new HttpError(400, "Anonymous number must be an unused 4-digit number");
+  return Number(raw);
+}
+
 function usedPostNumbers() {
   return new Set((store.data.posts || [])
     .map((post) => Number(post.postNumber))
@@ -353,6 +360,16 @@ function createAnonymousAccountNumber(preferredUserId = "") {
     if (!used.has(candidate)) return candidate;
   }
   throw new HttpError(500, "No unused anonymous account numbers are available");
+}
+
+function ensureUnusedAnonymousAccountNumber(number) {
+  const candidate = normalizeAnonymousAccountNumber(number);
+  if (candidate === null) return null;
+  const usedByUser = (store.data.users || []).some((user) => Number(user.anonymousAccountNumber) === candidate);
+  const usedByGuest = (store.data.guestAliases || []).some((alias) => Number(alias.anonymousAccountNumber) === candidate);
+  const usedByAdminPost = (store.data.posts || []).some((post) => Number(post.adminAnonymousAccountNumber) === candidate);
+  if (usedByUser || usedByGuest || usedByAdminPost) throw new HttpError(409, "That anonymous number is already used");
+  return candidate;
 }
 
 function ensureAnonymousAccount(user) {
@@ -420,6 +437,8 @@ function boardViewContext() {
 
 function anonymousAccountLabelForBoardItem(item, viewContext = null) {
   if (!item?.anonymous) return null;
+  const adminNumber = Number(item.adminAnonymousAccountNumber);
+  if (Number.isInteger(adminNumber) && adminNumber >= 1000 && adminNumber <= 9999) return `Anonymous ${adminNumber}`;
   const context = viewContext || boardViewContext();
   if (context.boardActorId && item.authorId === context.boardActorId && item.ownerTokenDigest) {
     let number = context.guestAliases?.get(item.ownerTokenDigest);
@@ -1268,15 +1287,15 @@ async function handleApi(req, res, url) {
     const media = sanitizeMediaItems(body.media, 9);
     const quoteRef = sanitizeQuoteRef(body.quoteRef);
     if (!title && !text && !media.length && !quoteRef) return sendJson(res, 400, { error: "Subject, text, media, or quote is required" }, req);
-    let requestedPostNumber = null;
+    let requestedAnonymousNumber = null;
     try {
-      requestedPostNumber = user?.role === "admin" ? normalizePostNumber(body.postNumber) : null;
+      requestedAnonymousNumber = user?.role === "admin" ? ensureUnusedAnonymousAccountNumber(body.anonymousAccountNumber) : null;
     } catch (error) {
       return sendJson(res, error.status || 400, { error: error.message }, req);
     }
     let postNumber;
     try {
-      postNumber = createPostNumber(requestedPostNumber);
+      postNumber = createPostNumber();
     } catch (error) {
       return sendJson(res, error.status || 500, { error: error.message }, req);
     }
@@ -1287,8 +1306,9 @@ async function handleApi(req, res, url) {
       authorId,
       title: title || "Untitled thread",
       postNumber,
-      anonymous: !user || user.role !== "admin",
-      anonymousLabel: !user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null,
+      anonymous: !user || user.role !== "admin" || Boolean(requestedAnonymousNumber),
+      anonymousLabel: requestedAnonymousNumber ? `Anonymous ${requestedAnonymousNumber}` : (!user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null),
+      adminAnonymousAccountNumber: requestedAnonymousNumber,
       ownerTokenDigest: ownerDigest,
       canDelete: Boolean(user || ownerDigest),
       category,
