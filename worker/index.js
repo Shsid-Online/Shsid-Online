@@ -28,8 +28,10 @@ let hasUsersAnonymousAccountColumnCache = null;
 let hasPostsTitleColumnCache = null;
 let hasPostsNumberColumnCache = null;
 let hasPostsQuoteRefColumnCache = null;
+let hasPostsOwnerTokenColumnCache = null;
 let hasCommentsReplyToColumnCache = null;
 let hasCommentsMediaColumnCache = null;
+let hasCommentsOwnerTokenColumnCache = null;
 let hasCommentsLikesColumnCache = null;
 let hasPostsEngagementColumnsCache = null;
 let hasAdsTableCache = null;
@@ -569,6 +571,7 @@ async function handleApi(request, env, url, route) {
   }
 
   if (method === "GET" && route === "/posts") {
+    const ownerDigest = await boardOwnerDigest(request);
     const { limit, offset } = pageParams(url, 10, 30);
     const postRows = await env.DB.prepare("select * from posts where deleted_at is null order by sticky desc, created_at desc limit ? offset ?").bind(limit, offset).all();
     const totalRow = await env.DB.prepare("select count(*) as count from posts where deleted_at is null").first();
@@ -578,12 +581,12 @@ async function handleApi(request, env, url, route) {
       const commentViews = await Promise.all((comments.results || []).map(async (comment) => ({
         ...fromDbComment(comment),
         anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null,
-        canDelete: Boolean(authUser && (authUser.role === "admin" || comment.author_id === authUser.id))
+        canDelete: canDeleteDbItem(authUser, comment, ownerDigest)
       })));
       posts.push({
         ...fromDbPost(post),
         anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
-        canDelete: Boolean(authUser && (authUser.role === "admin" || post.author_id === authUser.id)),
+        canDelete: canDeleteDbItem(authUser, post, ownerDigest),
         comments: commentViews,
         author: post.anonymous && authUser?.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
         adminAuthor: authUser?.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
@@ -596,19 +599,20 @@ async function handleApi(request, env, url, route) {
   const postByIdMatch = route.match(/^\/posts\/([^/]+)$/);
   if (method === "GET" && postByIdMatch) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
+    const ownerDigest = await boardOwnerDigest(request);
     const post = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postByIdMatch[1]).first();
     if (!post) return json({ error: "Not found" }, 404);
     const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
     const commentViews = await Promise.all((comments.results || []).map(async (comment) => ({
       ...fromDbComment(comment),
       anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null,
-      canDelete: Boolean(authUser && (authUser.role === "admin" || comment.author_id === authUser.id))
+      canDelete: canDeleteDbItem(authUser, comment, ownerDigest)
     })));
     return json({
       post: {
         ...fromDbPost(post),
         anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
-        canDelete: Boolean(authUser && (authUser.role === "admin" || post.author_id === authUser.id)),
+        canDelete: canDeleteDbItem(authUser, post, ownerDigest),
         comments: commentViews,
         author: post.anonymous && authUser.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
         adminAuthor: authUser.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
@@ -618,6 +622,7 @@ async function handleApi(request, env, url, route) {
 
   if (method === "POST" && route === "/posts") {
     if (authUser?.status === "banned") return json({ error: "Account banned" }, 403);
+    const ownerDigest = await boardOwnerDigest(request);
     const actor = authUser || await ensureBoardGuestUser(env);
     const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN);
     const text = String(body.text || "").trim();
@@ -642,6 +647,7 @@ async function handleApi(request, env, url, route) {
       text: text.slice(0, MAX_TEXT_LEN),
       media: JSON.stringify(media),
       quote_ref: quoteRef ? JSON.stringify(quoteRef) : "",
+      owner_token_digest: ownerDigest,
       likes: "[]",
       hearts: "[]",
       saved_by: "[]",
@@ -654,8 +660,13 @@ async function handleApi(request, env, url, route) {
     const hasTitle = await hasPostsTitleColumn(env);
     const hasPostNumber = await hasPostsNumberColumn(env);
     const hasQuoteRef = await hasPostsQuoteRefColumn(env);
+    const hasOwnerToken = await hasPostsOwnerTokenColumn(env);
     const hasEngagementColumns = await hasPostsEngagementColumns(env);
-    if (hasTitle && hasPostNumber && hasQuoteRef && hasEngagementColumns) {
+    if (hasTitle && hasPostNumber && hasQuoteRef && hasOwnerToken && hasEngagementColumns) {
+      await env.DB.prepare("insert into posts (id, author_id, title, post_number, category, text, media, quote_ref, owner_token_digest, likes, hearts, saved_by, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(post.id, post.author_id, post.title, post.post_number, post.category, post.text, post.media, post.quote_ref, post.owner_token_digest, post.likes, post.hearts, post.saved_by, post.anonymous, post.sticky, post.deleted_at, post.created_at)
+        .run();
+    } else if (hasTitle && hasPostNumber && hasQuoteRef && hasEngagementColumns) {
       await env.DB.prepare("insert into posts (id, author_id, title, post_number, category, text, media, quote_ref, likes, hearts, saved_by, anonymous, sticky, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(post.id, post.author_id, post.title, post.post_number, post.category, post.text, post.media, post.quote_ref, post.likes, post.hearts, post.saved_by, post.anonymous, post.sticky, post.deleted_at, post.created_at)
         .run();
@@ -682,7 +693,7 @@ async function handleApi(request, env, url, route) {
       post: {
         ...fromDbPost(post),
         anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
-        canDelete: Boolean(authUser)
+        canDelete: Boolean(authUser || ownerDigest)
       }
     }, 201);
   }
@@ -734,6 +745,7 @@ async function handleApi(request, env, url, route) {
   const postCommentMatch = route.match(/^\/posts\/([^/]+)\/comments$/);
   if (method === "POST" && postCommentMatch) {
     if (authUser?.status === "banned") return json({ error: "Account banned" }, 403);
+    const ownerDigest = await boardOwnerDigest(request);
     const actor = authUser || await ensureBoardGuestUser(env);
     if (authUser) await ensureAnonymousAccountForUser(env, authUser);
     const text = String(body.text || "").trim();
@@ -753,6 +765,7 @@ async function handleApi(request, env, url, route) {
       author_id: actor.id,
       text: text.slice(0, MAX_TEXT_LEN),
       media: JSON.stringify(media),
+      owner_token_digest: ownerDigest,
       likes: "[]",
       reply_to: replyTo || null,
       anonymous: authUser ? (authUser.role === "admin" ? 0 : 1) : 1,
@@ -761,8 +774,13 @@ async function handleApi(request, env, url, route) {
     };
     const hasReplyTo = await hasCommentsReplyToColumn(env);
     const hasMedia = await hasCommentsMediaColumn(env);
+    const hasOwnerToken = await hasCommentsOwnerTokenColumn(env);
     const hasLikes = await hasCommentsLikesColumn(env);
-    if (hasReplyTo && hasMedia && hasLikes) {
+    if (hasReplyTo && hasMedia && hasOwnerToken && hasLikes) {
+      await env.DB.prepare("insert into comments (id, post_id, author_id, text, media, owner_token_digest, likes, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.media, comment.owner_token_digest, comment.likes, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
+        .run();
+    } else if (hasReplyTo && hasMedia && hasLikes) {
       await env.DB.prepare("insert into comments (id, post_id, author_id, text, media, likes, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.media, comment.likes, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
         .run();
@@ -805,7 +823,7 @@ async function handleApi(request, env, url, route) {
       comment: {
         ...fromDbComment(comment),
         anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null,
-        canDelete: Boolean(authUser)
+        canDelete: Boolean(authUser || ownerDigest)
       }
     }, 201);
   }
@@ -849,27 +867,29 @@ async function handleApi(request, env, url, route) {
 
   const postCommentDeleteMatch = route.match(/^\/posts\/([^/]+)\/comments\/([^/]+)$/);
   if (method === "DELETE" && postCommentDeleteMatch) {
-    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const ownerDigest = await boardOwnerDigest(request);
+    if (!authUser && !ownerDigest) return json({ error: "Authentication required" }, 401);
     const postId = postCommentDeleteMatch[1];
     const commentId = postCommentDeleteMatch[2];
     const comment = await env.DB.prepare("select * from comments where id=? and post_id=? and deleted_at is null").bind(commentId, postId).first();
     if (!comment) return json({ error: "Not found" }, 404);
-    if (authUser.role !== "admin" && comment.author_id !== authUser.id) return json({ error: "Not allowed to delete this comment" }, 403);
+    if (!canDeleteDbItem(authUser, comment, ownerDigest)) return json({ error: "Not allowed to delete this comment" }, 403);
     await env.DB.prepare("update comments set deleted_at=? where id=?").bind(now(), comment.id).run();
-    await audit(env, authUser.id, "comment_deleted", { postId, commentId }, request);
+    await audit(env, authUser?.id || comment.author_id, "comment_deleted", { postId, commentId }, request);
     return json({ ok: true }, 200);
   }
 
   const postMatch = route.match(/^\/posts\/([^/]+)$/);
   if (postMatch && (method === "PATCH" || method === "DELETE")) {
-    if (!authUser) return json({ error: "Authentication required" }, 401);
-    if (method === "PATCH" && authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    const ownerDigest = await boardOwnerDigest(request);
+    if (method === "PATCH" && (!authUser || authUser.role !== "admin")) return json({ error: "Admin access required" }, 403);
+    if (method === "DELETE" && !authUser && !ownerDigest) return json({ error: "Authentication required" }, 401);
     const row = await env.DB.prepare("select * from posts where id=?").bind(postMatch[1]).first();
     if (!row) return json({ error: "Not found" }, 404);
     if (method === "DELETE") {
-      if (authUser.role !== "admin" && row.author_id !== authUser.id) return json({ error: "Not allowed to delete this post" }, 403);
+      if (!canDeleteDbItem(authUser, row, ownerDigest)) return json({ error: "Not allowed to delete this post" }, 403);
       await env.DB.prepare("update posts set deleted_at=? where id=?").bind(now(), row.id).run();
-      await audit(env, authUser.id, "post_deleted", { postId: row.id }, request);
+      await audit(env, authUser?.id || row.author_id, "post_deleted", { postId: row.id }, request);
       return json({ ok: true }, 200);
     }
     await env.DB.prepare("update posts set sticky=? where id=?").bind(body.sticky ? 1 : 0, row.id).run();
@@ -2025,6 +2045,18 @@ async function anonymousAccountLabelForUserId(env, userId) {
   return number ? `Anonymous ${number}` : "Anonymous";
 }
 
+async function boardOwnerDigest(request) {
+  const raw = String(request.headers.get("x-board-owner-token") || "").trim();
+  return raw ? sha256Hex(raw) : "";
+}
+
+function canDeleteDbItem(user, item, ownerDigest = "") {
+  if (!item) return false;
+  if (user?.role === "admin") return true;
+  if (user?.id && item.author_id === user.id) return true;
+  return Boolean(ownerDigest && item.owner_token_digest && item.owner_token_digest === ownerDigest);
+}
+
 async function hasPostsTitleColumn(env) {
   if (hasPostsTitleColumnCache !== null) return hasPostsTitleColumnCache;
   try {
@@ -2081,6 +2113,24 @@ async function hasPostsQuoteRefColumn(env) {
   }
 }
 
+async function hasPostsOwnerTokenColumn(env) {
+  if (hasPostsOwnerTokenColumnCache !== null) return hasPostsOwnerTokenColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(posts)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (names.includes("owner_token_digest")) {
+      hasPostsOwnerTokenColumnCache = true;
+      return true;
+    }
+    await env.DB.prepare("alter table posts add column owner_token_digest text default ''").run();
+    hasPostsOwnerTokenColumnCache = true;
+    return true;
+  } catch {
+    hasPostsOwnerTokenColumnCache = false;
+    return false;
+  }
+}
+
 async function hasCommentsReplyToColumn(env) {
   if (hasCommentsReplyToColumnCache !== null) return hasCommentsReplyToColumnCache;
   try {
@@ -2113,6 +2163,24 @@ async function hasCommentsMediaColumn(env) {
     return true;
   } catch {
     hasCommentsMediaColumnCache = false;
+    return false;
+  }
+}
+
+async function hasCommentsOwnerTokenColumn(env) {
+  if (hasCommentsOwnerTokenColumnCache !== null) return hasCommentsOwnerTokenColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(comments)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (names.includes("owner_token_digest")) {
+      hasCommentsOwnerTokenColumnCache = true;
+      return true;
+    }
+    await env.DB.prepare("alter table comments add column owner_token_digest text default ''").run();
+    hasCommentsOwnerTokenColumnCache = true;
+    return true;
+  } catch {
+    hasCommentsOwnerTokenColumnCache = false;
     return false;
   }
 }
@@ -2325,7 +2393,7 @@ function withCors(response, origin) {
     headers.set("access-control-allow-credentials", "true");
   }
   headers.set("access-control-allow-methods", "GET,HEAD,POST,PATCH,DELETE,OPTIONS");
-  headers.set("access-control-allow-headers", "Content-Type, Authorization, Range");
+  headers.set("access-control-allow-headers", "Content-Type, Authorization, Range, X-Board-Owner-Token");
   headers.set("vary", "Origin");
   return new Response(response.body, { status: response.status, headers });
 }

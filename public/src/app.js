@@ -26,6 +26,7 @@ const initialState = {
   composerQuote: null,
   composerQuoteSearch: "",
   composerOpen: false,
+  boardOwnerToken: "",
   replyDrafts: {},
   authOpen: false,
   authMode: "login",
@@ -63,6 +64,9 @@ function loadState() {
       // ignore invalid legacy state
     }
   }
+  if (!String(base.boardOwnerToken || "").trim()) {
+    base.boardOwnerToken = crypto.randomUUID();
+  }
   // Keep unsent board drafts session-only so old text does not reappear after refresh.
   base.composerTitle = "";
   base.composerBody = "";
@@ -81,6 +85,7 @@ function saveState() {
     sort: state.sort,
     search: state.search,
     composerBoard: state.composerBoard,
+    boardOwnerToken: state.boardOwnerToken,
     authOpen: state.authOpen,
     authMode: state.authMode,
     authStep: state.authStep,
@@ -161,6 +166,7 @@ function hasUnsavedBoardChanges() {
 
 async function apiRequest(path, { method = "GET", body, auth = true, optionalAuth = false } = {}) {
   const headers = { "Content-Type": "application/json" };
+  if (state.boardOwnerToken) headers["X-Board-Owner-Token"] = state.boardOwnerToken;
   if ((auth || optionalAuth) && state.token) {
     headers.Authorization = `Bearer ${state.token}`;
   }
@@ -659,7 +665,7 @@ async function submitReply(postId) {
 async function deletePost(postId) {
   const user = currentUser();
   const post = state.posts.find((item) => item.id === postId);
-  if (!user || (user.role !== "admin" && !post?.canDelete && post?.authorId !== user.id)) return toast("You can only delete your own post");
+  if (!post?.canDelete && (!user || (user.role !== "admin" && post?.authorId !== user.id))) return toast("You can only delete your own post");
   if (!window.confirm("Delete this thread?")) return;
   try {
     await apiRequest(`/posts/${postId}`, { method: "DELETE" });
@@ -676,7 +682,7 @@ async function deleteComment(postId, commentId) {
   const user = currentUser();
   const post = state.posts.find((item) => item.id === postId);
   const comment = (post?.comments || []).find((item) => item.id === commentId);
-  if (!user || (user.role !== "admin" && !comment?.canDelete && comment?.authorId !== user.id)) return toast("You can only delete your own reply");
+  if (!comment?.canDelete && (!user || (user.role !== "admin" && comment?.authorId !== user.id))) return toast("You can only delete your own reply");
   if (!window.confirm("Delete this reply?")) return;
   try {
     await apiRequest(`/posts/${postId}/comments/${commentId}`, { method: "DELETE" });

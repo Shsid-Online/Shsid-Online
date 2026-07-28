@@ -7,7 +7,7 @@ const tls = require("node:tls");
 
 loadEnvFile(path.resolve(__dirname, "..", ".env"));
 
-const { Store, hashPassword, verifyPassword, publicUser, id, now } = require("./store");
+const { Store, hashPassword, verifyPassword, publicUser, id, now, tokenDigest } = require("./store");
 
 const PORT = Number(process.env.PORT || 4174);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -115,6 +115,8 @@ const commonHeaders = {
   "permissions-policy": "camera=(), microphone=(), geolocation=()",
   "x-xss-protection": "1; mode=block",
   "strict-transport-security": "max-age=31536000; includeSubDomains",
+  "access-control-allow-methods": "GET,HEAD,POST,PATCH,DELETE,OPTIONS",
+  "access-control-allow-headers": "Content-Type,Authorization,Range,X-Board-Owner-Token",
   "content-security-policy": "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; img-src 'self' data: https: blob:; media-src 'self' https: blob:; connect-src 'self' https://www.shsid.online https://shsid.online; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'self'"
 };
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "https://www.shsid.online,https://shsid.online").split(",").map((o) => o.trim());
@@ -368,6 +370,24 @@ function anonymousAccountLabelForUserId(userId) {
   const number = ensureAnonymousAccount(user);
   if (user && (!Number.isInteger(previous) || previous < 1000 || previous > 9999)) store.save();
   return number ? `Anonymous ${number}` : "Anonymous";
+}
+
+function boardOwnerDigest(req) {
+  const raw = String(req.headers["x-board-owner-token"] || "").trim();
+  return raw ? tokenDigest(raw) : "";
+}
+
+function canDeleteBoardItem(user, item, ownerDigest = "") {
+  if (!item) return false;
+  if (user?.role === "admin") return true;
+  if (user?.id && item.authorId === user.id) return true;
+  return Boolean(ownerDigest && item.ownerTokenDigest === ownerDigest);
+}
+
+function withoutOwnerTokenDigest(item) {
+  if (!item || typeof item !== "object") return item;
+  const { ownerTokenDigest, ...safe } = item;
+  return safe;
 }
 
 function sanitizeCategory(value) {
@@ -1138,6 +1158,7 @@ async function handleApi(req, res, url) {
 
   if (method === "GET" && url.pathname === "/api/posts") {
     const user = getAuthUser(req);
+    const ownerDigest = boardOwnerDigest(req);
     if (user?.status === "banned") return sendJson(res, 403, { error: "Account banned" }, req);
     const categoryFilter = String(url.searchParams.get("category") || "").trim().toLowerCase();
     const followIndexes = buildFollowIndexes();
@@ -1148,13 +1169,13 @@ async function handleApi(req, res, url) {
     });
     const { items, pagination } = paginate(visiblePosts, url, { limit: 25, maxLimit: 100 });
     const posts = items.map((post) => ({
-      ...post,
+      ...withoutOwnerTokenDigest(post),
       anonymousLabel: post.anonymous ? anonymousAccountLabelForUserId(post.authorId) : null,
-      canDelete: Boolean(user && (user.role === "admin" || post.authorId === user.id)),
+      canDelete: canDeleteBoardItem(user, post, ownerDigest),
       comments: (post.comments || []).map((comment) => ({
-        ...comment,
+        ...withoutOwnerTokenDigest(comment),
         anonymousLabel: comment.anonymous ? anonymousAccountLabelForUserId(comment.authorId) : null,
-        canDelete: Boolean(user && (user.role === "admin" || comment.authorId === user.id))
+        canDelete: canDeleteBoardItem(user, comment, ownerDigest)
       })),
       author: post.anonymous && user?.role !== "admin" ? null : userView(store.findUserById(post.authorId), user, followIndexes),
       adminAuthor: user?.role === "admin" ? userView(store.findUserById(post.authorId), user, followIndexes) : undefined
@@ -1164,6 +1185,7 @@ async function handleApi(req, res, url) {
 
   if (method === "POST" && url.pathname === "/api/posts") {
     const user = getAuthUser(req);
+    const ownerDigest = boardOwnerDigest(req);
     if (user?.status === "banned") return sendJson(res, 403, { error: "Account banned" }, req);
     const authorId = user?.id || getBoardActorId();
     if (!authorId) return sendJson(res, 500, { error: "Board guest account is unavailable" }, req);
@@ -1195,7 +1217,8 @@ async function handleApi(req, res, url) {
       postNumber,
       anonymous: !user || user.role !== "admin",
       anonymousLabel: !user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null,
-      canDelete: Boolean(user),
+      ownerTokenDigest: ownerDigest,
+      canDelete: Boolean(user || ownerDigest),
       category,
       text: sanitizedText,
       media,
@@ -1216,7 +1239,7 @@ async function handleApi(req, res, url) {
       category
     });
     store.save();
-    return sendJson(res, 201, { post });
+    return sendJson(res, 201, { post: withoutOwnerTokenDigest(post) });
   }
 
   const postLikeMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/like$/);
@@ -1265,6 +1288,7 @@ async function handleApi(req, res, url) {
   const postCommentMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/comments$/);
   if (method === "POST" && postCommentMatch) {
     const user = getAuthUser(req);
+    const ownerDigest = boardOwnerDigest(req);
     if (user?.status === "banned") return sendJson(res, 403, { error: "Account banned" }, req);
     const authorId = user?.id || getBoardActorId();
     if (!authorId) return sendJson(res, 500, { error: "Board guest account is unavailable" }, req);
@@ -1284,7 +1308,8 @@ async function handleApi(req, res, url) {
       authorId,
       anonymous: !user || user.role !== "admin",
       anonymousLabel: !user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null,
-      canDelete: Boolean(user),
+      ownerTokenDigest: ownerDigest,
+      canDelete: Boolean(user || ownerDigest),
       text: text.slice(0, MAX_TEXT_LEN),
       media,
       likes: [],
@@ -1303,7 +1328,7 @@ async function handleApi(req, res, url) {
       replyTo: comment.replyTo || null
     });
     store.save();
-    return sendJson(res, 201, { comment });
+    return sendJson(res, 201, { comment: withoutOwnerTokenDigest(comment) });
   }
 
   const postCommentLikeMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/comments\/([^/]+)\/like$/);
@@ -1323,16 +1348,17 @@ async function handleApi(req, res, url) {
 
   const postCommentDeleteMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/comments\/([^/]+)$/);
   if (method === "DELETE" && postCommentDeleteMatch) {
-    const user = requireAuth(req, res);
-    if (!user) return;
+    const user = getAuthUser(req);
+    const ownerDigest = boardOwnerDigest(req);
+    if (!user && !ownerDigest) return sendJson(res, 401, { error: "Authentication required" }, req);
     const post = store.data.posts.find((item) => item.id === postCommentDeleteMatch[1] && !item.deletedAt);
     if (!post) return notFound(res);
     const comment = (post.comments || []).find((item) => item.id === postCommentDeleteMatch[2] && !item.deletedAt);
     if (!comment) return notFound(res);
-    const canDelete = user.role === "admin" || comment.authorId === user.id;
+    const canDelete = canDeleteBoardItem(user, comment, ownerDigest);
     if (!canDelete) return sendJson(res, 403, { error: "Not allowed to delete this comment" }, req);
     comment.deletedAt = now();
-    store.audit(user.id, "comment_deleted", {
+    store.audit(user?.id || post.authorId, "comment_deleted", {
       postId: post.id,
       commentId: comment.id,
       commentText: comment.text || ""
@@ -1343,14 +1369,16 @@ async function handleApi(req, res, url) {
 
   const postIdOnlyMatch = url.pathname.match(/^\/api\/posts\/([^/]+)$/);
   if (postIdOnlyMatch && (method === "PATCH" || method === "DELETE")) {
-    const user = method === "DELETE" ? requireAuth(req, res) : requireAdmin(req, res);
-    if (!user) return;
+    const user = method === "DELETE" ? getAuthUser(req) : requireAdmin(req, res);
+    const ownerDigest = boardOwnerDigest(req);
+    if (method === "DELETE" && !user && !ownerDigest) return sendJson(res, 401, { error: "Authentication required" }, req);
+    if (method !== "DELETE" && !user) return;
     const post = store.data.posts.find((item) => item.id === postIdOnlyMatch[1]);
     if (!post) return notFound(res);
     if (method === "DELETE") {
-      if (user.role !== "admin" && post.authorId !== user.id) return sendJson(res, 403, { error: "Not allowed to delete this post" }, req);
+      if (!canDeleteBoardItem(user, post, ownerDigest)) return sendJson(res, 403, { error: "Not allowed to delete this post" }, req);
       post.deletedAt = now();
-      store.audit(user.id, "post_deleted", { postId: post.id });
+      store.audit(user?.id || post.authorId, "post_deleted", { postId: post.id });
       store.save();
       return sendJson(res, 200, { ok: true });
     }
