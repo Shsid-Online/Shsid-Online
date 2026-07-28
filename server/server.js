@@ -372,24 +372,33 @@ function anonymousAccountLabelForUserId(userId) {
   return number ? `Anonymous ${number}` : "Anonymous";
 }
 
-function anonymousAccountLabelForOwnerDigest(ownerDigest) {
+function anonymousAccountLabelForOwnerDigest(ownerDigest, reservedNumbers = new Set()) {
   const digest = String(ownerDigest || "").trim();
   if (!digest) return "Anonymous";
   const seed = Number.parseInt(digest.slice(0, 12), 16);
   if (!Number.isFinite(seed)) return "Anonymous";
-  const number = (seed % 9000) + 1000;
-  return `Anonymous ${number}`;
+  for (let attempt = 0; attempt < 9000; attempt += 1) {
+    const number = ((seed + attempt * 7919) % 9000) + 1000;
+    if (!reservedNumbers.has(number)) return `Anonymous ${number}`;
+  }
+  return "Anonymous";
 }
 
 function boardViewContext() {
-  return { boardActorId: getBoardActorId() || "" };
+  const reservedAnonymousNumbers = new Set((store.data.users || [])
+    .map((user) => Number(user.anonymousAccountNumber))
+    .filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999));
+  return {
+    boardActorId: getBoardActorId() || "",
+    reservedAnonymousNumbers
+  };
 }
 
 function anonymousAccountLabelForBoardItem(item, viewContext = null) {
   if (!item?.anonymous) return null;
   const context = viewContext || boardViewContext();
   if (context.boardActorId && item.authorId === context.boardActorId && item.ownerTokenDigest) {
-    return anonymousAccountLabelForOwnerDigest(item.ownerTokenDigest);
+    return anonymousAccountLabelForOwnerDigest(item.ownerTokenDigest, context.reservedAnonymousNumbers);
   }
   return anonymousAccountLabelForUserId(item.authorId);
 }

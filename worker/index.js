@@ -2027,23 +2027,33 @@ async function anonymousAccountLabelForUserId(env, userId) {
 
 async function boardViewContext(env) {
   const boardGuest = await getUserByEmail(env, PUBLIC_BOARD_USER_EMAIL);
-  return { boardGuestId: boardGuest?.id || "" };
+  const rows = await env.DB.prepare("select anonymous_account_number from users where anonymous_account_number is not null").all();
+  const reservedAnonymousNumbers = new Set((rows.results || [])
+    .map((row) => Number(row.anonymous_account_number))
+    .filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999));
+  return {
+    boardGuestId: boardGuest?.id || "",
+    reservedAnonymousNumbers
+  };
 }
 
-function anonymousAccountLabelForOwnerDigest(ownerDigest) {
+function anonymousAccountLabelForOwnerDigest(ownerDigest, reservedNumbers = new Set()) {
   const digest = String(ownerDigest || "").trim();
   if (!digest) return "Anonymous";
   const seed = Number.parseInt(digest.slice(0, 12), 16);
   if (!Number.isFinite(seed)) return "Anonymous";
-  const number = (seed % 9000) + 1000;
-  return `Anonymous ${number}`;
+  for (let attempt = 0; attempt < 9000; attempt += 1) {
+    const number = ((seed + attempt * 7919) % 9000) + 1000;
+    if (!reservedNumbers.has(number)) return `Anonymous ${number}`;
+  }
+  return "Anonymous";
 }
 
 async function anonymousAccountLabelForBoardRow(env, row, viewContext = null) {
   if (!row?.anonymous) return null;
   const context = viewContext || await boardViewContext(env);
   if (context.boardGuestId && row.author_id === context.boardGuestId && row.owner_token_digest) {
-    return anonymousAccountLabelForOwnerDigest(row.owner_token_digest);
+    return anonymousAccountLabelForOwnerDigest(row.owner_token_digest, context.reservedAnonymousNumbers);
   }
   return anonymousAccountLabelForUserId(env, row.author_id);
 }
