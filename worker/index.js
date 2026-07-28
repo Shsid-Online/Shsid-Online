@@ -575,10 +575,11 @@ async function handleApi(request, env, url, route) {
     const { limit, offset } = pageParams(url, 10, 30);
     const postRows = await env.DB.prepare("select * from posts where deleted_at is null order by sticky desc, created_at desc limit ? offset ?").bind(limit, offset).all();
     const totalRow = await env.DB.prepare("select count(*) as count from posts where deleted_at is null").first();
+    const viewContext = await boardViewContext(env);
     const posts = [];
     for (const post of postRows.results || []) {
       const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
-      posts.push(await boardPostView(env, post, authUser, ownerDigest, comments));
+      posts.push(await boardPostView(env, post, authUser, ownerDigest, comments, viewContext));
     }
     const total = Number(totalRow?.count || 0);
     return json({ posts, pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null } }, 200);
@@ -591,8 +592,9 @@ async function handleApi(request, env, url, route) {
     const post = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postByIdMatch[1]).first();
     if (!post) return json({ error: "Not found" }, 404);
     const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
+    const viewContext = await boardViewContext(env);
     return json({
-      post: await boardPostView(env, post, authUser, ownerDigest, comments)
+      post: await boardPostView(env, post, authUser, ownerDigest, comments, viewContext)
     }, 200);
   }
 
@@ -1653,7 +1655,7 @@ async function sanitizeQuoteRef(env, value) {
   if (!post) return null;
   const boardSlug = `/${String(post.category || "board").trim().toLowerCase() || "board"}/`;
   const postNumber = Number(post.post_number);
-  const label = `${boardSlug}${post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : "User"}${Number.isInteger(postNumber) ? `/No.${postNumber}` : ""}`;
+  const label = `${boardSlug}${await anonymousAccountLabelForBoardRow(env, post) || "User"}${Number.isInteger(postNumber) ? `/No.${postNumber}` : ""}`;
   const excerptSource = String(post.text || post.title || jsonArray(post.media)?.[0]?.name || "").trim();
   return { type: "post", postId, label, excerpt: excerptSource.replace(/\s+/g, " ").slice(0, 180) };
 }
@@ -1775,21 +1777,23 @@ function fromDbComment(row) {
   };
 }
 
-async function boardCommentView(env, row, authUser, ownerDigest = "") {
+async function boardCommentView(env, row, authUser, ownerDigest = "", viewContext = null) {
+  const context = viewContext || await boardViewContext(env);
   return {
     ...fromDbComment(row),
-    anonymousLabel: row.anonymous ? await anonymousAccountLabelForUserId(env, row.author_id) : null,
+    anonymousLabel: await anonymousAccountLabelForBoardRow(env, row, context),
     canDelete: canDeleteDbItem(authUser, row, ownerDigest)
   };
 }
 
-async function boardPostView(env, row, authUser, ownerDigest = "", comments = null) {
+async function boardPostView(env, row, authUser, ownerDigest = "", comments = null, viewContext = null) {
+  const context = viewContext || await boardViewContext(env);
   const commentRows = comments || await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(row.id).all();
   return {
     ...fromDbPost(row),
-    anonymousLabel: row.anonymous ? await anonymousAccountLabelForUserId(env, row.author_id) : null,
+    anonymousLabel: await anonymousAccountLabelForBoardRow(env, row, context),
     canDelete: canDeleteDbItem(authUser, row, ownerDigest),
-    comments: await Promise.all((commentRows.results || []).map((comment) => boardCommentView(env, comment, authUser, ownerDigest))),
+    comments: await Promise.all((commentRows.results || []).map((comment) => boardCommentView(env, comment, authUser, ownerDigest, context))),
     author: row.anonymous && authUser?.role !== "admin" ? null : await userView(env, await getUserById(env, row.author_id), authUser),
     adminAuthor: authUser?.role === "admin" ? await userView(env, await getUserById(env, row.author_id), authUser) : undefined
   };
@@ -2019,6 +2023,29 @@ async function ensureAnonymousAccountForUser(env, user) {
 async function anonymousAccountLabelForUserId(env, userId) {
   const number = await ensureAnonymousAccountForUser(env, await getUserById(env, userId));
   return number ? `Anonymous ${number}` : "Anonymous";
+}
+
+async function boardViewContext(env) {
+  const boardGuest = await getUserByEmail(env, PUBLIC_BOARD_USER_EMAIL);
+  return { boardGuestId: boardGuest?.id || "" };
+}
+
+function anonymousAccountLabelForOwnerDigest(ownerDigest) {
+  const digest = String(ownerDigest || "").trim();
+  if (!digest) return "Anonymous";
+  const seed = Number.parseInt(digest.slice(0, 12), 16);
+  if (!Number.isFinite(seed)) return "Anonymous";
+  const number = (seed % 9000) + 1000;
+  return `Anonymous ${number}`;
+}
+
+async function anonymousAccountLabelForBoardRow(env, row, viewContext = null) {
+  if (!row?.anonymous) return null;
+  const context = viewContext || await boardViewContext(env);
+  if (context.boardGuestId && row.author_id === context.boardGuestId && row.owner_token_digest) {
+    return anonymousAccountLabelForOwnerDigest(row.owner_token_digest);
+  }
+  return anonymousAccountLabelForUserId(env, row.author_id);
 }
 
 async function boardOwnerDigest(request) {

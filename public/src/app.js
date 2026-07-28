@@ -1133,10 +1133,16 @@ function bindEvents() {
     if (note) note.textContent = selectedPhotoSummary(composerPhotoFiles, "No photos selected");
   });
   document.querySelector("#composer-quote-search")?.addEventListener("input", (event) => {
+    const cursorStart = event.target.selectionStart;
+    const cursorEnd = event.target.selectionEnd;
     state.composerQuoteSearch = String(event.target.value || "");
     saveState();
     render();
-    document.querySelector("#composer-quote-search")?.focus();
+    const searchInput = document.querySelector("#composer-quote-search");
+    searchInput?.focus();
+    if (searchInput && cursorStart !== null && cursorEnd !== null) {
+      searchInput.setSelectionRange(cursorStart, cursorEnd);
+    }
   });
   document.querySelector("#thread-form")?.addEventListener("submit", submitThread);
   document.querySelectorAll("[data-reply-form]").forEach((form) => {

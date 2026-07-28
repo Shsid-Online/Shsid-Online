@@ -372,6 +372,28 @@ function anonymousAccountLabelForUserId(userId) {
   return number ? `Anonymous ${number}` : "Anonymous";
 }
 
+function anonymousAccountLabelForOwnerDigest(ownerDigest) {
+  const digest = String(ownerDigest || "").trim();
+  if (!digest) return "Anonymous";
+  const seed = Number.parseInt(digest.slice(0, 12), 16);
+  if (!Number.isFinite(seed)) return "Anonymous";
+  const number = (seed % 9000) + 1000;
+  return `Anonymous ${number}`;
+}
+
+function boardViewContext() {
+  return { boardActorId: getBoardActorId() || "" };
+}
+
+function anonymousAccountLabelForBoardItem(item, viewContext = null) {
+  if (!item?.anonymous) return null;
+  const context = viewContext || boardViewContext();
+  if (context.boardActorId && item.authorId === context.boardActorId && item.ownerTokenDigest) {
+    return anonymousAccountLabelForOwnerDigest(item.ownerTokenDigest);
+  }
+  return anonymousAccountLabelForUserId(item.authorId);
+}
+
 function boardOwnerDigest(req) {
   const raw = String(req.headers["x-board-owner-token"] || "").trim();
   return raw ? tokenDigest(raw) : "";
@@ -416,7 +438,7 @@ function sanitizeQuoteRef(value) {
   if (!targetPost) return null;
   const boardSlug = `/${String(targetPost.category || "board").trim().toLowerCase() || "board"}/`;
   const number = Number(targetPost.postNumber);
-  const label = `${boardSlug}${targetPost.anonymousLabel || anonymousAccountLabelForUserId(targetPost.authorId)}${Number.isInteger(number) ? `/No.${number}` : ""}`;
+  const label = `${boardSlug}${anonymousAccountLabelForBoardItem(targetPost) || "User"}${Number.isInteger(number) ? `/No.${number}` : ""}`;
   const excerptSource = targetPost.text || targetPost.title || targetPost.media?.[0]?.name;
   const excerpt = String(excerptSource || "").trim().replace(/\s+/g, " ").slice(0, 180);
   return { type: "post", postId, label, excerpt };
@@ -859,20 +881,22 @@ function userView(target, viewer, followIndexes = null) {
   return safe;
 }
 
-function boardCommentView(comment, viewer, ownerDigest = "") {
+function boardCommentView(comment, viewer, ownerDigest = "", viewContext = null) {
+  const context = viewContext || boardViewContext();
   return {
     ...withoutOwnerTokenDigest(comment),
-    anonymousLabel: comment.anonymous ? anonymousAccountLabelForUserId(comment.authorId) : null,
+    anonymousLabel: anonymousAccountLabelForBoardItem(comment, context),
     canDelete: canDeleteBoardItem(viewer, comment, ownerDigest)
   };
 }
 
-function boardPostView(post, viewer, ownerDigest = "", followIndexes = null) {
+function boardPostView(post, viewer, ownerDigest = "", followIndexes = null, viewContext = null) {
+  const context = viewContext || boardViewContext();
   return {
     ...withoutOwnerTokenDigest(post),
-    anonymousLabel: post.anonymous ? anonymousAccountLabelForUserId(post.authorId) : null,
+    anonymousLabel: anonymousAccountLabelForBoardItem(post, context),
     canDelete: canDeleteBoardItem(viewer, post, ownerDigest),
-    comments: (post.comments || []).map((comment) => boardCommentView(comment, viewer, ownerDigest)),
+    comments: (post.comments || []).map((comment) => boardCommentView(comment, viewer, ownerDigest, context)),
     author: post.anonymous && viewer?.role !== "admin" ? null : userView(store.findUserById(post.authorId), viewer, followIndexes),
     adminAuthor: viewer?.role === "admin" ? userView(store.findUserById(post.authorId), viewer, followIndexes) : undefined
   };
@@ -1187,7 +1211,8 @@ async function handleApi(req, res, url) {
       return String(post.category || "").trim().toLowerCase() === categoryFilter;
     });
     const { items, pagination } = paginate(visiblePosts, url, { limit: 25, maxLimit: 100 });
-    const posts = items.map((post) => boardPostView(post, user, ownerDigest, followIndexes));
+    const viewContext = boardViewContext();
+    const posts = items.map((post) => boardPostView(post, user, ownerDigest, followIndexes, viewContext));
     return sendJson(res, 200, { posts, pagination });
   }
 
