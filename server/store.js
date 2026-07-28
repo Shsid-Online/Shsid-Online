@@ -93,6 +93,7 @@ function createSeed() {
     conversations: [],
     notifications: [],
     auditLogs: [],
+    guestAliases: [],
     stories: [],
     reels: [],
     follows: [],
@@ -138,6 +139,7 @@ class Store {
     this.data.sessions ||= [];
     this.data.notifications ||= [];
     this.data.auditLogs ||= [];
+    this.data.guestAliases ||= [];
     this.data.stories ||= [];
     this.data.reels ||= [];
     this.data.follows ||= [];

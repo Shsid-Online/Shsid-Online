@@ -384,12 +384,36 @@ function anonymousAccountLabelForOwnerDigest(ownerDigest, reservedNumbers = new 
   return "Anonymous";
 }
 
+function ensureGuestAliasForOwnerDigest(ownerDigest) {
+  const digest = String(ownerDigest || "").trim();
+  if (!digest) return null;
+  store.data.guestAliases ||= [];
+  const existing = store.data.guestAliases.find((alias) => alias.ownerTokenDigest === digest);
+  if (existing?.anonymousAccountNumber) return Number(existing.anonymousAccountNumber);
+  const reservedNumbers = new Set([
+    ...(store.data.users || []).map((user) => Number(user.anonymousAccountNumber)),
+    ...(store.data.guestAliases || []).map((alias) => Number(alias.anonymousAccountNumber))
+  ].filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999));
+  const number = Number(anonymousAccountLabelForOwnerDigest(digest, reservedNumbers).replace(/\D/g, ""));
+  if (Number.isInteger(number) && number >= 1000 && number <= 9999 && !reservedNumbers.has(number)) {
+    store.data.guestAliases.push({ ownerTokenDigest: digest, anonymousAccountNumber: number, createdAt: now(), updatedAt: now() });
+    store.save();
+    return number;
+  }
+  return null;
+}
+
 function boardViewContext() {
-  const reservedAnonymousNumbers = new Set((store.data.users || [])
-    .map((user) => Number(user.anonymousAccountNumber))
+  const guestAliases = new Map((store.data.guestAliases || [])
+    .map((alias) => [String(alias.ownerTokenDigest || ""), Number(alias.anonymousAccountNumber)]));
+  const reservedAnonymousNumbers = new Set([
+    ...(store.data.users || []).map((user) => Number(user.anonymousAccountNumber)),
+    ...(store.data.guestAliases || []).map((alias) => Number(alias.anonymousAccountNumber))
+  ]
     .filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999));
   return {
     boardActorId: getBoardActorId() || "",
+    guestAliases,
     reservedAnonymousNumbers
   };
 }
@@ -398,7 +422,13 @@ function anonymousAccountLabelForBoardItem(item, viewContext = null) {
   if (!item?.anonymous) return null;
   const context = viewContext || boardViewContext();
   if (context.boardActorId && item.authorId === context.boardActorId && item.ownerTokenDigest) {
-    return anonymousAccountLabelForOwnerDigest(item.ownerTokenDigest, context.reservedAnonymousNumbers);
+    let number = context.guestAliases?.get(item.ownerTokenDigest);
+    if (!number) {
+      number = ensureGuestAliasForOwnerDigest(item.ownerTokenDigest);
+      if (number && context.guestAliases) context.guestAliases.set(item.ownerTokenDigest, number);
+      if (number) context.reservedAnonymousNumbers?.add(number);
+    }
+    return number ? `Anonymous ${number}` : anonymousAccountLabelForOwnerDigest(item.ownerTokenDigest, context.reservedAnonymousNumbers);
   }
   return anonymousAccountLabelForUserId(item.authorId);
 }

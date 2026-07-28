@@ -35,6 +35,7 @@ let hasCommentsOwnerTokenColumnCache = null;
 let hasCommentsLikesColumnCache = null;
 let hasPostsEngagementColumnsCache = null;
 let hasAdsTableCache = null;
+let hasBoardGuestAliasesTableCache = null;
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
@@ -2026,13 +2027,20 @@ async function anonymousAccountLabelForUserId(env, userId) {
 }
 
 async function boardViewContext(env) {
+  await hasBoardGuestAliasesTable(env);
   const boardGuest = await getUserByEmail(env, PUBLIC_BOARD_USER_EMAIL);
+  const aliasRows = await env.DB.prepare("select owner_token_digest, anonymous_account_number from board_guest_aliases").all();
   const rows = await env.DB.prepare("select anonymous_account_number from users where anonymous_account_number is not null").all();
-  const reservedAnonymousNumbers = new Set((rows.results || [])
-    .map((row) => Number(row.anonymous_account_number))
+  const guestAliases = new Map((aliasRows.results || [])
+    .map((row) => [String(row.owner_token_digest || ""), Number(row.anonymous_account_number)]));
+  const reservedAnonymousNumbers = new Set([
+    ...(rows.results || []).map((row) => Number(row.anonymous_account_number)),
+    ...(aliasRows.results || []).map((row) => Number(row.anonymous_account_number))
+  ]
     .filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999));
   return {
     boardGuestId: boardGuest?.id || "",
+    guestAliases,
     reservedAnonymousNumbers
   };
 }
@@ -2049,11 +2057,37 @@ function anonymousAccountLabelForOwnerDigest(ownerDigest, reservedNumbers = new 
   return "Anonymous";
 }
 
+async function ensureGuestAliasForOwnerDigest(env, ownerDigest, viewContext = null) {
+  const digest = String(ownerDigest || "").trim();
+  if (!digest) return null;
+  await hasBoardGuestAliasesTable(env);
+  const context = viewContext || await boardViewContext(env);
+  const existingNumber = context.guestAliases?.get(digest);
+  if (existingNumber) return existingNumber;
+  for (let attempt = 0; attempt < 9000; attempt += 1) {
+    const number = Number(anonymousAccountLabelForOwnerDigest(digest, context.reservedAnonymousNumbers).replace(/\D/g, ""));
+    if (!Number.isInteger(number) || number < 1000 || number > 9999) return null;
+    await env.DB.prepare("insert or ignore into board_guest_aliases (owner_token_digest, anonymous_account_number, created_at, updated_at) values (?, ?, ?, ?)")
+      .bind(digest, number, now(), now())
+      .run();
+    const row = await env.DB.prepare("select anonymous_account_number from board_guest_aliases where owner_token_digest=?").bind(digest).first();
+    const savedNumber = Number(row?.anonymous_account_number);
+    if (Number.isInteger(savedNumber) && savedNumber >= 1000 && savedNumber <= 9999) {
+      context.guestAliases?.set(digest, savedNumber);
+      context.reservedAnonymousNumbers?.add(savedNumber);
+      return savedNumber;
+    }
+    context.reservedAnonymousNumbers?.add(number);
+  }
+  return null;
+}
+
 async function anonymousAccountLabelForBoardRow(env, row, viewContext = null) {
   if (!row?.anonymous) return null;
   const context = viewContext || await boardViewContext(env);
   if (context.boardGuestId && row.author_id === context.boardGuestId && row.owner_token_digest) {
-    return anonymousAccountLabelForOwnerDigest(row.owner_token_digest, context.reservedAnonymousNumbers);
+    const number = await ensureGuestAliasForOwnerDigest(env, row.owner_token_digest, context);
+    return number ? `Anonymous ${number}` : anonymousAccountLabelForOwnerDigest(row.owner_token_digest, context.reservedAnonymousNumbers);
   }
   return anonymousAccountLabelForUserId(env, row.author_id);
 }
@@ -2194,6 +2228,26 @@ async function hasCommentsOwnerTokenColumn(env) {
     return true;
   } catch {
     hasCommentsOwnerTokenColumnCache = false;
+    return false;
+  }
+}
+
+async function hasBoardGuestAliasesTable(env) {
+  if (hasBoardGuestAliasesTableCache !== null) return hasBoardGuestAliasesTableCache;
+  try {
+    await env.DB.prepare(`
+      create table if not exists board_guest_aliases (
+        owner_token_digest text primary key,
+        anonymous_account_number integer not null unique,
+        created_at text not null,
+        updated_at text not null
+      )
+    `).run();
+    await env.DB.prepare("create unique index if not exists idx_board_guest_aliases_number on board_guest_aliases(anonymous_account_number)").run();
+    hasBoardGuestAliasesTableCache = true;
+    return true;
+  } catch {
+    hasBoardGuestAliasesTableCache = false;
     return false;
   }
 }

@@ -59,6 +59,13 @@ create table if not exists comments (
   created_at text not null
 );
 
+create table if not exists board_guest_aliases (
+  owner_token_digest text primary key,
+  anonymous_account_number integer not null unique,
+  created_at text not null,
+  updated_at text not null
+);
+
 create table if not exists follows (
   follower_id text not null references users(id),
   following_id text not null references users(id),
