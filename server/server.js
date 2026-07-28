@@ -859,6 +859,25 @@ function userView(target, viewer, followIndexes = null) {
   return safe;
 }
 
+function boardCommentView(comment, viewer, ownerDigest = "") {
+  return {
+    ...withoutOwnerTokenDigest(comment),
+    anonymousLabel: comment.anonymous ? anonymousAccountLabelForUserId(comment.authorId) : null,
+    canDelete: canDeleteBoardItem(viewer, comment, ownerDigest)
+  };
+}
+
+function boardPostView(post, viewer, ownerDigest = "", followIndexes = null) {
+  return {
+    ...withoutOwnerTokenDigest(post),
+    anonymousLabel: post.anonymous ? anonymousAccountLabelForUserId(post.authorId) : null,
+    canDelete: canDeleteBoardItem(viewer, post, ownerDigest),
+    comments: (post.comments || []).map((comment) => boardCommentView(comment, viewer, ownerDigest)),
+    author: post.anonymous && viewer?.role !== "admin" ? null : userView(store.findUserById(post.authorId), viewer, followIndexes),
+    adminAuthor: viewer?.role === "admin" ? userView(store.findUserById(post.authorId), viewer, followIndexes) : undefined
+  };
+}
+
 function pageParams(url, defaults = {}) {
   const limit = Math.min(Number(url.searchParams.get("limit") || defaults.limit || 50), defaults.maxLimit || 100);
   const offset = Math.max(Number(url.searchParams.get("offset") || 0), 0);
@@ -1168,18 +1187,7 @@ async function handleApi(req, res, url) {
       return String(post.category || "").trim().toLowerCase() === categoryFilter;
     });
     const { items, pagination } = paginate(visiblePosts, url, { limit: 25, maxLimit: 100 });
-    const posts = items.map((post) => ({
-      ...withoutOwnerTokenDigest(post),
-      anonymousLabel: post.anonymous ? anonymousAccountLabelForUserId(post.authorId) : null,
-      canDelete: canDeleteBoardItem(user, post, ownerDigest),
-      comments: (post.comments || []).map((comment) => ({
-        ...withoutOwnerTokenDigest(comment),
-        anonymousLabel: comment.anonymous ? anonymousAccountLabelForUserId(comment.authorId) : null,
-        canDelete: canDeleteBoardItem(user, comment, ownerDigest)
-      })),
-      author: post.anonymous && user?.role !== "admin" ? null : userView(store.findUserById(post.authorId), user, followIndexes),
-      adminAuthor: user?.role === "admin" ? userView(store.findUserById(post.authorId), user, followIndexes) : undefined
-    }));
+    const posts = items.map((post) => boardPostView(post, user, ownerDigest, followIndexes));
     return sendJson(res, 200, { posts, pagination });
   }
 
@@ -1239,7 +1247,7 @@ async function handleApi(req, res, url) {
       category
     });
     store.save();
-    return sendJson(res, 201, { post: withoutOwnerTokenDigest(post) });
+    return sendJson(res, 201, { post: boardPostView(post, user, ownerDigest) });
   }
 
   const postLikeMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/like$/);
@@ -1254,7 +1262,7 @@ async function handleApi(req, res, url) {
       store.data.notifications.push({ id: id("ntf"), userId: post.authorId, type: "post_like_private", body: `${user.englishName || "A student"} privately liked your post.`, readAt: null, createdAt: now() });
     }
     store.save();
-    return sendJson(res, 200, { post });
+    return sendJson(res, 200, { post: boardPostView(post, user, boardOwnerDigest(req)) });
   }
 
   const postHeartMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/heart$/);
@@ -1270,7 +1278,7 @@ async function handleApi(req, res, url) {
       store.data.notifications.push({ id: id("ntf"), userId: post.authorId, type: "post_heart_public", body: `${user.englishName || "A student"} hearted your post.`, readAt: null, createdAt: now() });
     }
     store.save();
-    return sendJson(res, 200, { post });
+    return sendJson(res, 200, { post: boardPostView(post, user, boardOwnerDigest(req)) });
   }
 
   const postSaveMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/save$/);
@@ -1282,7 +1290,7 @@ async function handleApi(req, res, url) {
     post.savedBy ||= [];
     post.savedBy = post.savedBy.includes(user.id) ? post.savedBy.filter((item) => item !== user.id) : [...post.savedBy, user.id];
     store.save();
-    return sendJson(res, 200, { post });
+    return sendJson(res, 200, { post: boardPostView(post, user, boardOwnerDigest(req)) });
   }
 
   const postCommentMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/comments$/);
@@ -1328,7 +1336,7 @@ async function handleApi(req, res, url) {
       replyTo: comment.replyTo || null
     });
     store.save();
-    return sendJson(res, 201, { comment: withoutOwnerTokenDigest(comment) });
+    return sendJson(res, 201, { comment: boardCommentView(comment, user, ownerDigest) });
   }
 
   const postCommentLikeMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/comments\/([^/]+)\/like$/);
@@ -1343,7 +1351,8 @@ async function handleApi(req, res, url) {
     const wasLiked = comment.likes.includes(user.id);
     comment.likes = wasLiked ? comment.likes.filter((item) => item !== user.id) : [...comment.likes, user.id];
     store.save();
-    return sendJson(res, 200, { post, comment });
+    const ownerDigest = boardOwnerDigest(req);
+    return sendJson(res, 200, { post: boardPostView(post, user, ownerDigest), comment: boardCommentView(comment, user, ownerDigest) });
   }
 
   const postCommentDeleteMatch = url.pathname.match(/^\/api\/posts\/([^/]+)\/comments\/([^/]+)$/);
@@ -1385,7 +1394,7 @@ async function handleApi(req, res, url) {
     if (body.sticky !== undefined) post.sticky = Boolean(body.sticky);
     store.audit(user.id, "post_updated", { postId: post.id, sticky: post.sticky });
     store.save();
-    return sendJson(res, 200, { post });
+    return sendJson(res, 200, { post: boardPostView(post, user, boardOwnerDigest(req)) });
   }
 
   if (method === "POST" && url.pathname === "/api/reports") {

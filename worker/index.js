@@ -578,19 +578,7 @@ async function handleApi(request, env, url, route) {
     const posts = [];
     for (const post of postRows.results || []) {
       const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
-      const commentViews = await Promise.all((comments.results || []).map(async (comment) => ({
-        ...fromDbComment(comment),
-        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null,
-        canDelete: canDeleteDbItem(authUser, comment, ownerDigest)
-      })));
-      posts.push({
-        ...fromDbPost(post),
-        anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
-        canDelete: canDeleteDbItem(authUser, post, ownerDigest),
-        comments: commentViews,
-        author: post.anonymous && authUser?.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
-        adminAuthor: authUser?.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
-      });
+      posts.push(await boardPostView(env, post, authUser, ownerDigest, comments));
     }
     const total = Number(totalRow?.count || 0);
     return json({ posts, pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null } }, 200);
@@ -603,20 +591,8 @@ async function handleApi(request, env, url, route) {
     const post = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postByIdMatch[1]).first();
     if (!post) return json({ error: "Not found" }, 404);
     const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
-    const commentViews = await Promise.all((comments.results || []).map(async (comment) => ({
-      ...fromDbComment(comment),
-      anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null,
-      canDelete: canDeleteDbItem(authUser, comment, ownerDigest)
-    })));
     return json({
-      post: {
-        ...fromDbPost(post),
-        anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
-        canDelete: canDeleteDbItem(authUser, post, ownerDigest),
-        comments: commentViews,
-        author: post.anonymous && authUser.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
-        adminAuthor: authUser.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
-      }
+      post: await boardPostView(env, post, authUser, ownerDigest, comments)
     }, 200);
   }
 
@@ -690,17 +666,14 @@ async function handleApi(request, env, url, route) {
     await audit(env, actor.id, "post_created", { postId: post.id }, request);
 
     return json({
-      post: {
-        ...fromDbPost(post),
-        anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
-        canDelete: Boolean(authUser || ownerDigest)
-      }
+      post: await boardPostView(env, post, authUser, ownerDigest, { results: [] })
     }, 201);
   }
 
   const postLikeMatch = route.match(/^\/posts\/([^/]+)\/like$/);
   if (method === "POST" && postLikeMatch) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
+    const ownerDigest = await boardOwnerDigest(request);
     const row = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postLikeMatch[1]).first();
     if (!row) return json({ error: "Not found" }, 404);
     const likes = jsonArray(row.likes);
@@ -710,12 +683,13 @@ async function handleApi(request, env, url, route) {
     if (!likes.includes(authUser.id) && row.author_id && row.author_id !== authUser.id) {
       await createNotification(env, row.author_id, "post_like_private", `${notificationActorName(authUser)} privately liked your post.`);
     }
-    return json({ post: fromDbPost(row) }, 200);
+    return json({ post: await boardPostView(env, row, authUser, ownerDigest) }, 200);
   }
 
   const postHeartMatch = route.match(/^\/posts\/([^/]+)\/heart$/);
   if (method === "POST" && postHeartMatch) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
+    const ownerDigest = await boardOwnerDigest(request);
     const row = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postHeartMatch[1]).first();
     if (!row) return json({ error: "Not found" }, 404);
     await hasPostsEngagementColumns(env);
@@ -726,12 +700,13 @@ async function handleApi(request, env, url, route) {
     if (!hearts.includes(authUser.id) && row.author_id && row.author_id !== authUser.id) {
       await createNotification(env, row.author_id, "post_heart_public", `${notificationActorName(authUser)} hearted your post.`);
     }
-    return json({ post: fromDbPost(row) }, 200);
+    return json({ post: await boardPostView(env, row, authUser, ownerDigest) }, 200);
   }
 
   const postSaveMatch = route.match(/^\/posts\/([^/]+)\/save$/);
   if (method === "POST" && postSaveMatch) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
+    const ownerDigest = await boardOwnerDigest(request);
     const row = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postSaveMatch[1]).first();
     if (!row) return json({ error: "Not found" }, 404);
     await hasPostsEngagementColumns(env);
@@ -739,7 +714,7 @@ async function handleApi(request, env, url, route) {
     const nextSavedBy = savedBy.includes(authUser.id) ? savedBy.filter((v) => v !== authUser.id) : [...savedBy, authUser.id];
     await env.DB.prepare("update posts set saved_by=? where id=?").bind(JSON.stringify(nextSavedBy), row.id).run();
     row.saved_by = JSON.stringify(nextSavedBy);
-    return json({ post: fromDbPost(row) }, 200);
+    return json({ post: await boardPostView(env, row, authUser, ownerDigest) }, 200);
   }
 
   const postCommentMatch = route.match(/^\/posts\/([^/]+)\/comments$/);
@@ -820,11 +795,7 @@ async function handleApi(request, env, url, route) {
     }
 
     return json({
-      comment: {
-        ...fromDbComment(comment),
-        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null,
-        canDelete: Boolean(authUser || ownerDigest)
-      }
+      comment: await boardCommentView(env, comment, authUser, ownerDigest)
     }, 201);
   }
 
@@ -843,25 +814,10 @@ async function handleApi(request, env, url, route) {
     const post = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postId).first();
     if (!post) return json({ error: "Not found" }, 404);
     const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
-    const commentViews = await Promise.all((comments.results || []).map(async (row) => ({
-      ...fromDbComment(row),
-      anonymousLabel: row.anonymous ? await anonymousAccountLabelForUserId(env, row.author_id) : null,
-      canDelete: Boolean(authUser && (authUser.role === "admin" || row.author_id === authUser.id))
-    })));
+    const ownerDigest = await boardOwnerDigest(request);
     return json({
-      post: {
-        ...fromDbPost(post),
-        anonymousLabel: post.anonymous ? await anonymousAccountLabelForUserId(env, post.author_id) : null,
-        canDelete: Boolean(authUser && (authUser.role === "admin" || post.author_id === authUser.id)),
-        comments: commentViews,
-        author: post.anonymous && authUser.role !== "admin" ? null : await userView(env, await getUserById(env, post.author_id), authUser),
-        adminAuthor: authUser.role === "admin" ? await userView(env, await getUserById(env, post.author_id), authUser) : undefined
-      },
-      comment: {
-        ...fromDbComment(comment),
-        anonymousLabel: comment.anonymous ? await anonymousAccountLabelForUserId(env, comment.author_id) : null,
-        canDelete: Boolean(authUser && (authUser.role === "admin" || comment.author_id === authUser.id))
-      }
+      post: await boardPostView(env, post, authUser, ownerDigest, comments),
+      comment: await boardCommentView(env, comment, authUser, ownerDigest)
     }, 200);
   }
 
@@ -895,7 +851,7 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("update posts set sticky=? where id=?").bind(body.sticky ? 1 : 0, row.id).run();
     row.sticky = body.sticky ? 1 : 0;
     await audit(env, authUser.id, "post_sticky_updated", { postId: row.id, sticky: Boolean(row.sticky) }, request);
-    return json({ post: fromDbPost(row) }, 200);
+    return json({ post: await boardPostView(env, row, authUser, ownerDigest) }, 200);
   }
 
   if (method === "POST" && route === "/reports") {
@@ -1816,6 +1772,26 @@ function fromDbComment(row) {
     anonymous: Boolean(row.anonymous),
     deletedAt: row.deleted_at,
     createdAt: row.created_at
+  };
+}
+
+async function boardCommentView(env, row, authUser, ownerDigest = "") {
+  return {
+    ...fromDbComment(row),
+    anonymousLabel: row.anonymous ? await anonymousAccountLabelForUserId(env, row.author_id) : null,
+    canDelete: canDeleteDbItem(authUser, row, ownerDigest)
+  };
+}
+
+async function boardPostView(env, row, authUser, ownerDigest = "", comments = null) {
+  const commentRows = comments || await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(row.id).all();
+  return {
+    ...fromDbPost(row),
+    anonymousLabel: row.anonymous ? await anonymousAccountLabelForUserId(env, row.author_id) : null,
+    canDelete: canDeleteDbItem(authUser, row, ownerDigest),
+    comments: await Promise.all((commentRows.results || []).map((comment) => boardCommentView(env, comment, authUser, ownerDigest))),
+    author: row.anonymous && authUser?.role !== "admin" ? null : await userView(env, await getUserById(env, row.author_id), authUser),
+    adminAuthor: authUser?.role === "admin" ? await userView(env, await getUserById(env, row.author_id), authUser) : undefined
   };
 }
 
