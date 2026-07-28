@@ -614,7 +614,8 @@ async function handleApi(request, env, url, route) {
     let postNumber;
     let requestedAnonymousNumber = null;
     try {
-      requestedAnonymousNumber = authUser?.role === "admin" ? await ensureUnusedAnonymousAccountNumber(env, body.anonymousAccountNumber) : null;
+      const adminAnonymousNumber = body.anonymousAccountNumber || body.postNumber;
+      requestedAnonymousNumber = authUser?.role === "admin" ? await ensureUnusedAnonymousAccountNumber(env, adminAnonymousNumber) : null;
       postNumber = await createPostNumber(env);
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : String(error) }, error.status || 500);
@@ -634,7 +635,7 @@ async function handleApi(request, env, url, route) {
       likes: "[]",
       hearts: "[]",
       saved_by: "[]",
-      anonymous: authUser ? (authUser.role === "admin" && !requestedAnonymousNumber ? 0 : 1) : 1,
+      anonymous: 1,
       sticky: 0,
       deleted_at: null,
       created_at: now()

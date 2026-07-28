@@ -1289,7 +1289,8 @@ async function handleApi(req, res, url) {
     if (!title && !text && !media.length && !quoteRef) return sendJson(res, 400, { error: "Subject, text, media, or quote is required" }, req);
     let requestedAnonymousNumber = null;
     try {
-      requestedAnonymousNumber = user?.role === "admin" ? ensureUnusedAnonymousAccountNumber(body.anonymousAccountNumber) : null;
+      const adminAnonymousNumber = body.anonymousAccountNumber || body.postNumber;
+      requestedAnonymousNumber = user?.role === "admin" ? ensureUnusedAnonymousAccountNumber(adminAnonymousNumber) : null;
     } catch (error) {
       return sendJson(res, error.status || 400, { error: error.message }, req);
     }
@@ -1306,8 +1307,8 @@ async function handleApi(req, res, url) {
       authorId,
       title: title || "Untitled thread",
       postNumber,
-      anonymous: !user || user.role !== "admin" || Boolean(requestedAnonymousNumber),
-      anonymousLabel: requestedAnonymousNumber ? `Anonymous ${requestedAnonymousNumber}` : (!user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null),
+      anonymous: true,
+      anonymousLabel: requestedAnonymousNumber ? `Anonymous ${requestedAnonymousNumber}` : anonymousAccountLabelForUserId(authorId),
       adminAnonymousAccountNumber: requestedAnonymousNumber,
       ownerTokenDigest: ownerDigest,
       canDelete: Boolean(user || ownerDigest),
