@@ -119,6 +119,20 @@ function currentUser() {
   return state.currentUser || null;
 }
 
+function currentDirectoryBoard() {
+  return state.board !== "all" && boardByCategory.has(state.board) ? state.board : "";
+}
+
+function defaultComposerBoard() {
+  return state.composerBoard || currentDirectoryBoard() || "school";
+}
+
+function syncComposerBoardToCurrentDirectory() {
+  const currentBoard = currentDirectoryBoard();
+  if (currentBoard) state.composerBoard = currentBoard;
+  else state.composerBoard ||= "school";
+}
+
 function userCanLike(post) {
   const me = currentUser();
   if (!me) return false;
@@ -616,7 +630,7 @@ async function submitThread(event) {
   if (threadSubmitting) return;
   const title = String(document.querySelector("#composer-title")?.value || "").trim();
   const body = String(document.querySelector("#composer-body")?.value || "").trim();
-  const category = String(document.querySelector("#composer-board")?.value || state.composerBoard || "school").trim().toLowerCase();
+  const category = String(document.querySelector("#composer-board")?.value || defaultComposerBoard()).trim().toLowerCase();
   const photoFiles = composerPhotos();
   const anonymousAccountNumber = currentUser()?.role === "admin"
     ? String(document.querySelector("#composer-anonymous-number")?.value || "").trim()
@@ -1006,7 +1020,7 @@ function render() {
           <div class="form-row">
             <label for="composer-board">Board</label>
             <select id="composer-board">
-              ${BOARDS.map((board) => `<option value="${escapeHtml(board.category)}"${(state.composerBoard || state.board || "school") === board.category ? " selected" : ""}>${escapeHtml(board.slug)}</option>`).join("")}
+              ${BOARDS.map((board) => `<option value="${escapeHtml(board.category)}"${defaultComposerBoard() === board.category ? " selected" : ""}>${escapeHtml(board.slug)}</option>`).join("")}
             </select>
           </div>
           <div class="form-row quote-search-row">
@@ -1198,6 +1212,7 @@ function bindEvents() {
         return;
       }
       if (action === "open-composer") {
+        syncComposerBoardToCurrentDirectory();
         state.composerOpen = true;
         saveState();
         render();
