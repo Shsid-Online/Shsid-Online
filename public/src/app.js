@@ -16,6 +16,7 @@ const initialState = {
   token: "",
   currentUser: null,
   posts: [],
+  adminAnonymousNumbers: [],
   board: "all",
   sort: "recent",
   search: "",
@@ -28,6 +29,7 @@ const initialState = {
   composerOpen: false,
   boardOwnerToken: "",
   replyDrafts: {},
+  replyAnonymousNumbers: {},
   authOpen: false,
   authMode: "login",
   authStep: "email",
@@ -76,6 +78,7 @@ function loadState() {
   base.composerQuote = null;
   base.composerQuoteSearch = "";
   base.replyDrafts = {};
+  base.replyAnonymousNumbers = {};
   return base;
 }
 
@@ -163,6 +166,7 @@ function toast(message) {
 
 function hasUnsavedReplyDrafts() {
   if (Object.values(state.replyDrafts || {}).some((value) => String(value || "").trim())) return true;
+  if (Object.values(state.replyAnonymousNumbers || {}).some((value) => String(value || "").trim())) return true;
   if ([...replyPhotoFilesByPostId.values()].some((files) => files.length)) return true;
   return [...document.querySelectorAll("[id^='reply-photo-']")].some((input) => input.files?.length);
 }
@@ -244,6 +248,7 @@ function normalizePost(post) {
     authorId,
     title: String(post.title || "").trim() || "Untitled thread",
     postNumber: Number.isInteger(postNumber) && postNumber > 0 ? postNumber : null,
+    adminAnonymousAccountNumber: Number.isInteger(Number(post.adminAnonymousAccountNumber)) ? Number(post.adminAnonymousAccountNumber) : null,
     anonymous,
     anonymousLabel: String(post.anonymousLabel || "").trim(),
     authorLabel,
@@ -263,6 +268,7 @@ function normalizePost(post) {
       authorId: String(comment.authorId || ""),
       text: String(comment.text || "").trim(),
       anonymousLabel: String(comment.anonymousLabel || "Anonymous").trim(),
+      adminAnonymousAccountNumber: Number.isInteger(Number(comment.adminAnonymousAccountNumber)) ? Number(comment.adminAnonymousAccountNumber) : null,
       canDelete: Boolean(comment.canDelete || (viewerId && String(comment.authorId || "") === viewerId)),
       media: Array.isArray(comment.media) ? comment.media : [],
       likes: Array.isArray(comment.likes) ? comment.likes : [],
@@ -276,6 +282,9 @@ function normalizePost(post) {
 async function fetchPosts() {
   const result = await apiRequest("/posts?limit=100", { auth: false, optionalAuth: true });
   const posts = Array.isArray(result.posts) ? result.posts.map(normalizePost) : [];
+  state.adminAnonymousNumbers = Array.isArray(result.adminAnonymousNumbers)
+    ? result.adminAnonymousNumbers.map(Number).filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999)
+    : [];
   state.posts = posts.sort((a, b) => {
     if (a.sticky !== b.sticky) return Number(b.sticky) - Number(a.sticky);
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -349,6 +358,22 @@ function composerPhotos() {
 function replyPhotos(postId) {
   const inputFiles = document.querySelector(`#reply-photo-${CSS.escape(postId)}`)?.files || [];
   return inputFiles.length ? [...inputFiles] : (replyPhotoFilesByPostId.get(postId) || []);
+}
+
+function adminAnonymousNumberOptions() {
+  const numbers = new Set();
+  const addNumber = (value) => {
+    const number = Number(value);
+    if (Number.isInteger(number) && number >= 1000 && number <= 9999) numbers.add(number);
+  };
+  for (const number of state.adminAnonymousNumbers || []) addNumber(number);
+  for (const post of state.posts || []) {
+    addNumber(post.adminAnonymousAccountNumber);
+    for (const comment of post.comments || []) {
+      addNumber(comment.adminAnonymousAccountNumber);
+    }
+  }
+  return [...numbers].sort((left, right) => left - right);
 }
 
 function quoteLabelForPost(post) {
@@ -673,13 +698,16 @@ async function submitReply(postId) {
   const text = String(document.querySelector(`#${replyKey}`)?.value || "").trim();
   const photoInput = document.querySelector(`#reply-photo-${CSS.escape(postId)}`);
   const photoFiles = replyPhotos(postId);
+  const anonymousAccountNumber = currentUser()?.role === "admin"
+    ? String(document.querySelector(`#reply-anonymous-number-${CSS.escape(postId)}`)?.value || "").trim()
+    : "";
   if (!text && !photoFiles.length) return toast("Please write a reply or add a photo");
   replySubmittingPostIds.add(postId);
   try {
     const media = await uploadPhotos(photoFiles, 5);
     const result = await apiRequest(`/posts/${postId}/comments`, {
       method: "POST",
-      body: { text, media },
+      body: { text, media, ...(anonymousAccountNumber ? { anonymousAccountNumber } : {}) },
       auth: false,
       optionalAuth: true
     });
@@ -689,6 +717,7 @@ async function submitReply(postId) {
         id: result.comment.id,
         text: String(result.comment.text || "").trim(),
         anonymousLabel: String(result.comment.anonymousLabel || "Anonymous").trim(),
+        adminAnonymousAccountNumber: Number.isInteger(Number(result.comment.adminAnonymousAccountNumber)) ? Number(result.comment.adminAnonymousAccountNumber) : null,
         authorId: String(result.comment.authorId || ""),
         canDelete: Boolean(result.comment.canDelete || result.comment.authorId === currentUser()?.id),
         media: Array.isArray(result.comment.media) ? result.comment.media : [],
@@ -700,6 +729,7 @@ async function submitReply(postId) {
       }
     }
     state.replyDrafts[postId] = "";
+    state.replyAnonymousNumbers[postId] = "";
     replyPhotoFilesByPostId.delete(postId);
     openReplies.add(postId);
     if (openReplyPostId === postId) openReplyPostId = "";
@@ -790,6 +820,7 @@ function renderThreadCard(post, index) {
   const repliesOpen = openReplies.has(post.id);
   const replySubmitting = replySubmittingPostIds.has(post.id);
   const replyPhotoSummary = selectedPhotoSummary(replyPhotoFilesByPostId.get(post.id) || [], "No photos selected");
+  const replyAnonymousNumber = state.replyAnonymousNumbers?.[post.id] || "";
   const activityLabel = replyCount ? "last bump" : "posted";
   const displayNumber = Number.isInteger(post.postNumber) ? post.postNumber : 5000 + index;
   return `
@@ -856,6 +887,12 @@ function renderThreadCard(post, index) {
             Photos
             <input id="reply-photo-${escapeHtml(post.id)}" type="file" accept="image/*" multiple>
           </label>
+          ${adminMode ? `
+            <label class="reply-photo-row">
+              Anonymous No.
+              <input id="reply-anonymous-number-${escapeHtml(post.id)}" type="number" min="1000" max="9999" list="admin-anonymous-options" value="${escapeHtml(replyAnonymousNumber)}" placeholder="Reuse admin alias">
+            </label>
+          ` : ""}
           <div class="selected-photo-note" id="reply-photo-note-${escapeHtml(post.id)}">${escapeHtml(replyPhotoSummary)}</div>
           <div class="form-note">At most 5 photos per reply.</div>
           <div class="reply-actions">
@@ -981,6 +1018,7 @@ function render() {
   const quoteResults = quoteSearchResults();
   const composerOpen = Boolean(state.composerOpen || hasUnsavedComposerDraft());
   const composerPhotoSummary = selectedPhotoSummary(composerPhotoFiles, "No photos selected");
+  const adminAnonymousOptions = adminAnonymousNumberOptions();
   app.innerHTML = `
     <div class="page">
       <header class="site-header">
@@ -1056,7 +1094,7 @@ function render() {
           ${adminComposer ? `
             <div class="form-row">
               <label for="composer-anonymous-number">Anonymous No. (admin)</label>
-              <input id="composer-anonymous-number" type="number" min="1000" max="9999" value="${escapeHtml(state.composerAnonymousNumber || "")}" placeholder="Unused anonymous number">
+              <input id="composer-anonymous-number" type="number" min="1000" max="9999" list="admin-anonymous-options" value="${escapeHtml(state.composerAnonymousNumber || "")}" placeholder="Reuse or enter admin alias">
             </div>
           ` : ""}
           <div class="form-actions">
@@ -1093,6 +1131,11 @@ function render() {
           ? posts.map((post, index) => renderThreadCard(post, index)).join("")
           : `<div class="empty-state">No threads matched that search.</div>`}
       </main>
+      ${adminComposer ? `
+        <datalist id="admin-anonymous-options">
+          ${adminAnonymousOptions.map((number) => `<option value="${number}">Anonymous ${number}</option>`).join("")}
+        </datalist>
+      ` : ""}
     </div>
     ${state.toast ? `<div class="toast">${escapeHtml(state.toast)}</div>` : ""}
     ${renderAuthModal()}
@@ -1171,6 +1214,13 @@ function bindEvents() {
     input.addEventListener("input", (event) => {
       const id = String(event.target.id || "").replace(/^reply-/, "");
       state.replyDrafts[id] = String(event.target.value || "");
+      saveState();
+    });
+  });
+  document.querySelectorAll("[id^='reply-anonymous-number-']").forEach((input) => {
+    input.addEventListener("input", (event) => {
+      const id = String(event.target.id || "").replace(/^reply-anonymous-number-/, "");
+      state.replyAnonymousNumbers[id] = String(event.target.value || "");
       saveState();
     });
   });

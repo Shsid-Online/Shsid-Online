@@ -33,6 +33,7 @@ let hasPostsOwnerTokenColumnCache = null;
 let hasCommentsReplyToColumnCache = null;
 let hasCommentsMediaColumnCache = null;
 let hasCommentsOwnerTokenColumnCache = null;
+let hasCommentsAdminAnonymousNumberColumnCache = null;
 let hasCommentsLikesColumnCache = null;
 let hasPostsEngagementColumnsCache = null;
 let hasAdsTableCache = null;
@@ -584,7 +585,11 @@ async function handleApi(request, env, url, route) {
       posts.push(await boardPostView(env, post, authUser, ownerDigest, comments, viewContext));
     }
     const total = Number(totalRow?.count || 0);
-    return json({ posts, pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null } }, 200);
+    return json({
+      posts,
+      pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null },
+      ...(authUser?.role === "admin" ? { adminAnonymousNumbers: await adminAnonymousNumbersView(env) } : {})
+    }, 200);
   }
 
   const postByIdMatch = route.match(/^\/posts\/([^/]+)$/);
@@ -615,7 +620,7 @@ async function handleApi(request, env, url, route) {
     let requestedAnonymousNumber = null;
     try {
       const adminAnonymousNumber = body.anonymousAccountNumber || body.postNumber;
-      requestedAnonymousNumber = authUser?.role === "admin" ? await ensureUnusedAnonymousAccountNumber(env, adminAnonymousNumber) : null;
+      requestedAnonymousNumber = authUser?.role === "admin" ? await ensureUsableAdminAnonymousAccountNumber(env, adminAnonymousNumber) : null;
       postNumber = await createPostNumber(env);
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : String(error) }, error.status || 500);
@@ -743,6 +748,12 @@ async function handleApi(request, env, url, route) {
       const target = await env.DB.prepare("select id from comments where id=? and post_id=? and deleted_at is null").bind(replyTo, post.id).first();
       if (!target) return json({ error: "Reply target not found" }, 400);
     }
+    let requestedAnonymousNumber = null;
+    try {
+      requestedAnonymousNumber = authUser?.role === "admin" ? await ensureUsableAdminAnonymousAccountNumber(env, body.anonymousAccountNumber) : null;
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : String(error) }, error.status || 500);
+    }
     const comment = {
       id: id("cmt"),
       post_id: post.id,
@@ -750,19 +761,21 @@ async function handleApi(request, env, url, route) {
       text: text.slice(0, MAX_TEXT_LEN),
       media: JSON.stringify(media),
       owner_token_digest: ownerDigest,
+      admin_anonymous_account_number: requestedAnonymousNumber,
       likes: "[]",
       reply_to: replyTo || null,
-      anonymous: authUser ? (authUser.role === "admin" ? 0 : 1) : 1,
+      anonymous: 1,
       deleted_at: null,
       created_at: now()
     };
     const hasReplyTo = await hasCommentsReplyToColumn(env);
     const hasMedia = await hasCommentsMediaColumn(env);
     const hasOwnerToken = await hasCommentsOwnerTokenColumn(env);
+    const hasAdminAnonymousNumber = await hasCommentsAdminAnonymousNumberColumn(env);
     const hasLikes = await hasCommentsLikesColumn(env);
-    if (hasReplyTo && hasMedia && hasOwnerToken && hasLikes) {
-      await env.DB.prepare("insert into comments (id, post_id, author_id, text, media, owner_token_digest, likes, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.media, comment.owner_token_digest, comment.likes, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
+    if (hasReplyTo && hasMedia && hasOwnerToken && hasAdminAnonymousNumber && hasLikes) {
+      await env.DB.prepare("insert into comments (id, post_id, author_id, text, media, owner_token_digest, admin_anonymous_account_number, likes, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(comment.id, comment.post_id, comment.author_id, comment.text, comment.media, comment.owner_token_digest, comment.admin_anonymous_account_number, comment.likes, comment.reply_to, comment.anonymous, comment.deleted_at, comment.created_at)
         .run();
     } else if (hasReplyTo && hasMedia && hasLikes) {
       await env.DB.prepare("insert into comments (id, post_id, author_id, text, media, likes, reply_to, anonymous, deleted_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -1777,6 +1790,7 @@ function fromDbComment(row) {
     authorId: row.author_id,
     text: row.text,
     media: jsonArray(row.media),
+    adminAnonymousAccountNumber: Number.isInteger(Number(row.admin_anonymous_account_number)) ? Number(row.admin_anonymous_account_number) : null,
     likes: jsonArray(row.likes),
     replyTo: row.reply_to || null,
     anonymous: Boolean(row.anonymous),
@@ -1805,6 +1819,19 @@ async function boardPostView(env, row, authUser, ownerDigest = "", comments = nu
     author: row.anonymous && authUser?.role !== "admin" ? null : await userView(env, await getUserById(env, row.author_id), authUser),
     adminAuthor: authUser?.role === "admin" ? await userView(env, await getUserById(env, row.author_id), authUser) : undefined
   };
+}
+
+async function adminAnonymousNumbersView(env) {
+  await hasPostsAdminAnonymousNumberColumn(env);
+  await hasCommentsAdminAnonymousNumberColumn(env);
+  const [postRows, commentRows] = await Promise.all([
+    env.DB.prepare("select admin_anonymous_account_number as number from posts where admin_anonymous_account_number is not null").all(),
+    env.DB.prepare("select admin_anonymous_account_number as number from comments where admin_anonymous_account_number is not null").all()
+  ]);
+  const numbers = new Set([...(postRows.results || []), ...(commentRows.results || [])]
+    .map((row) => Number(row.number))
+    .filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999));
+  return [...numbers].sort((left, right) => left - right);
 }
 
 async function maybeAuthUser(request, env) {
@@ -2157,12 +2184,12 @@ async function hasPostsAdminAnonymousNumberColumn(env) {
     const rows = await env.DB.prepare("pragma table_info(posts)").all();
     const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
     if (names.includes("admin_anonymous_account_number")) {
-      await env.DB.prepare("create unique index if not exists idx_posts_admin_anonymous_account_number on posts(admin_anonymous_account_number)").run();
+      await env.DB.prepare("drop index if exists idx_posts_admin_anonymous_account_number").run();
       hasPostsAdminAnonymousNumberColumnCache = true;
       return true;
     }
     await env.DB.prepare("alter table posts add column admin_anonymous_account_number integer").run();
-    await env.DB.prepare("create unique index if not exists idx_posts_admin_anonymous_account_number on posts(admin_anonymous_account_number)").run();
+    await env.DB.prepare("drop index if exists idx_posts_admin_anonymous_account_number").run();
     hasPostsAdminAnonymousNumberColumnCache = true;
     return true;
   } catch {
@@ -2257,6 +2284,24 @@ async function hasCommentsOwnerTokenColumn(env) {
     return true;
   } catch {
     hasCommentsOwnerTokenColumnCache = false;
+    return false;
+  }
+}
+
+async function hasCommentsAdminAnonymousNumberColumn(env) {
+  if (hasCommentsAdminAnonymousNumberColumnCache !== null) return hasCommentsAdminAnonymousNumberColumnCache;
+  try {
+    const rows = await env.DB.prepare("pragma table_info(comments)").all();
+    const names = (rows.results || []).map((row) => String(row.name || "").toLowerCase());
+    if (names.includes("admin_anonymous_account_number")) {
+      hasCommentsAdminAnonymousNumberColumnCache = true;
+      return true;
+    }
+    await env.DB.prepare("alter table comments add column admin_anonymous_account_number integer").run();
+    hasCommentsAdminAnonymousNumberColumnCache = true;
+    return true;
+  } catch {
+    hasCommentsAdminAnonymousNumberColumnCache = false;
     return false;
   }
 }
@@ -2603,7 +2648,7 @@ async function createPostNumber(env, preferredValue = null) {
   throw new Error("No unused post numbers are available");
 }
 
-async function ensureUnusedAnonymousAccountNumber(env, value) {
+async function ensureUsableAdminAnonymousAccountNumber(env, value) {
   const number = normalizeAnonymousAccountNumber(value);
   if (number === null) return null;
   await hasUsersAnonymousAccountColumn(env);
@@ -2611,9 +2656,8 @@ async function ensureUnusedAnonymousAccountNumber(env, value) {
   await hasPostsAdminAnonymousNumberColumn(env);
   const userRow = await env.DB.prepare("select id from users where anonymous_account_number=? limit 1").bind(number).first();
   const guestRow = await env.DB.prepare("select owner_token_digest from board_guest_aliases where anonymous_account_number=? limit 1").bind(number).first();
-  const postRow = await env.DB.prepare("select id from posts where admin_anonymous_account_number=? limit 1").bind(number).first();
-  if (userRow || guestRow || postRow) {
-    const error = new Error("That anonymous number is already used");
+  if (userRow || guestRow) {
+    const error = new Error("That anonymous number belongs to another user");
     error.status = 409;
     throw error;
   }

@@ -367,8 +367,7 @@ function ensureUnusedAnonymousAccountNumber(number) {
   if (candidate === null) return null;
   const usedByUser = (store.data.users || []).some((user) => Number(user.anonymousAccountNumber) === candidate);
   const usedByGuest = (store.data.guestAliases || []).some((alias) => Number(alias.anonymousAccountNumber) === candidate);
-  const usedByAdminPost = (store.data.posts || []).some((post) => Number(post.adminAnonymousAccountNumber) === candidate);
-  if (usedByUser || usedByGuest || usedByAdminPost) throw new HttpError(409, "That anonymous number is already used");
+  if (usedByUser || usedByGuest) throw new HttpError(409, "That anonymous number belongs to another user");
   return candidate;
 }
 
@@ -960,6 +959,19 @@ function boardPostView(post, viewer, ownerDigest = "", followIndexes = null, vie
   };
 }
 
+function adminAnonymousNumbersView() {
+  const numbers = new Set();
+  for (const post of store.data.posts || []) {
+    const postNumber = Number(post.adminAnonymousAccountNumber);
+    if (Number.isInteger(postNumber) && postNumber >= 1000 && postNumber <= 9999) numbers.add(postNumber);
+    for (const comment of post.comments || []) {
+      const commentNumber = Number(comment.adminAnonymousAccountNumber);
+      if (Number.isInteger(commentNumber) && commentNumber >= 1000 && commentNumber <= 9999) numbers.add(commentNumber);
+    }
+  }
+  return [...numbers].sort((left, right) => left - right);
+}
+
 function pageParams(url, defaults = {}) {
   const limit = Math.min(Number(url.searchParams.get("limit") || defaults.limit || 50), defaults.maxLimit || 100);
   const offset = Math.max(Number(url.searchParams.get("offset") || 0), 0);
@@ -1271,7 +1283,7 @@ async function handleApi(req, res, url) {
     const { items, pagination } = paginate(visiblePosts, url, { limit: 25, maxLimit: 100 });
     const viewContext = boardViewContext();
     const posts = items.map((post) => boardPostView(post, user, ownerDigest, followIndexes, viewContext));
-    return sendJson(res, 200, { posts, pagination });
+    return sendJson(res, 200, { posts, pagination, ...(user?.role === "admin" ? { adminAnonymousNumbers: adminAnonymousNumbersView() } : {}) });
   }
 
   if (method === "POST" && url.pathname === "/api/posts") {
@@ -1396,11 +1408,18 @@ async function handleApi(req, res, url) {
     if (replyTo && !post.comments.some((item) => item.id === replyTo && !item.deletedAt)) {
       return sendJson(res, 400, { error: "Reply target not found" }, req);
     }
+    let requestedAnonymousNumber = null;
+    try {
+      requestedAnonymousNumber = user?.role === "admin" ? ensureUnusedAnonymousAccountNumber(body.anonymousAccountNumber) : null;
+    } catch (error) {
+      return sendJson(res, error.status || 400, { error: error.message }, req);
+    }
     const comment = {
       id: id("cmt"),
       authorId,
-      anonymous: !user || user.role !== "admin",
-      anonymousLabel: !user || user.role !== "admin" ? anonymousAccountLabelForUserId(authorId) : null,
+      anonymous: true,
+      anonymousLabel: requestedAnonymousNumber ? `Anonymous ${requestedAnonymousNumber}` : anonymousAccountLabelForUserId(authorId),
+      adminAnonymousAccountNumber: requestedAnonymousNumber,
       ownerTokenDigest: ownerDigest,
       canDelete: Boolean(user || ownerDigest),
       text: text.slice(0, MAX_TEXT_LEN),
