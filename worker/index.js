@@ -406,10 +406,8 @@ async function handleApi(request, env, url, route) {
     const codeHash = await sha256Hex(code);
     if (codeHash !== record.codeHash) return json({ error: "Invalid verification code" }, 400);
 
-    const duplicateUsername = await env.DB.prepare("select id from users where id != ? and lower(trim(coalesce(english_name, ''))) = lower(?) limit 1")
-      .bind(user.id, username)
-      .first();
-    if (duplicateUsername) return json({ error: "That username is already taken" }, 409);
+    const usernameError = await validateStudentUsername(env, username, user);
+    if (usernameError) return json({ error: usernameError.error }, usernameError.status);
 
     const passwordHash = await hashPassword(password);
     await env.DB.prepare("update users set password_hash = ?, english_name = ?, updated_at = ? where id = ?").bind(passwordHash, username, now(), user.id).run();
@@ -499,7 +497,7 @@ async function handleApi(request, env, url, route) {
 
   if (method === "PATCH" && route === "/me/profile") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
-    const englishName = String(body.englishName || "").trim().slice(0, MAX_NAME_LEN);
+    const englishName = normalizeUsername(body.englishName);
     const chineseName = String(body.chineseName || "").trim().slice(0, MAX_NAME_LEN);
     const grade = Number(body.grade);
     const classNo = Number(body.classNo);
@@ -508,6 +506,8 @@ async function handleApi(request, env, url, route) {
     if (!englishName || !Number.isInteger(grade) || grade < 1 || grade > 12 || !Number.isInteger(classNo) || classNo < 1 || classNo > 13) {
       return json({ error: "Please complete the missing profile details before saving" }, 400);
     }
+    const profileNameError = await validateStudentUsername(env, englishName, authUser);
+    if (profileNameError) return json({ error: profileNameError.error }, profileNameError.status);
     if (await hasUsersProfilePhotoColumn(env)) {
       await env.DB.prepare("update users set english_name=?, chinese_name=?, grade=?, class_no=?, bio=?, profile_photo=?, updated_at=? where id=?")
         .bind(englishName, chineseName, grade, classNo, bio, profilePhoto, now(), authUser.id)
@@ -530,12 +530,10 @@ async function handleApi(request, env, url, route) {
       return json({ error: "Please choose a username" }, 400);
     }
 
-    const duplicate = await env.DB.prepare("select id from users where id != ? and lower(trim(coalesce(english_name, ''))) = lower(?) limit 1")
-      .bind(authUser.id, username)
-      .first();
-    if (duplicate) {
-      await audit(env, authUser.id, "profile_complete_failed", { reason: "duplicate_username", duplicateUserId: duplicate.id }, request);
-      return json({ error: "That username is already taken" }, 409);
+    const usernameError = await validateStudentUsername(env, username, authUser);
+    if (usernameError) {
+      await audit(env, authUser.id, "profile_complete_failed", { reason: usernameError.duplicate ? "duplicate_username" : "reserved_username", duplicateUserId: usernameError.duplicate?.id || null }, request);
+      return json({ error: usernameError.error }, usernameError.status);
     }
 
     await env.DB.prepare("update users set english_name=?, updated_at=? where id=?")
@@ -695,7 +693,7 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("update posts set likes=? where id=?").bind(JSON.stringify(nextLikes), row.id).run();
     row.likes = JSON.stringify(nextLikes);
     if (!likes.includes(authUser.id) && row.author_id && row.author_id !== authUser.id) {
-      await createNotification(env, row.author_id, "post_like_private", `${notificationActorName(authUser)} privately liked your post.`);
+      await createNotification(env, row.author_id, "post_bump", `${notificationActorName(authUser)} bumped your post.`);
     }
     return json({ post: await boardPostView(env, row, authUser, ownerDigest) }, 200);
   }
@@ -741,12 +739,13 @@ async function handleApi(request, env, url, route) {
     if (hasTooManyMediaItems(body.media, 5)) return json({ error: "Replies can include at most 5 photos" }, 400);
     const media = sanitizeMediaItems(body.media, 5);
     if (!text && media.length === 0) return json({ error: "Comment text or media is required" }, 400);
-    const post = await env.DB.prepare("select id from posts where id=? and deleted_at is null").bind(postCommentMatch[1]).first();
+    const post = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postCommentMatch[1]).first();
     if (!post) return json({ error: "Not found" }, 404);
     const replyTo = String(body.replyTo || "").trim();
+    let targetComment = null;
     if (replyTo) {
-      const target = await env.DB.prepare("select id from comments where id=? and post_id=? and deleted_at is null").bind(replyTo, post.id).first();
-      if (!target) return json({ error: "Reply target not found" }, 400);
+      targetComment = await env.DB.prepare("select * from comments where id=? and post_id=? and deleted_at is null").bind(replyTo, post.id).first();
+      if (!targetComment) return json({ error: "Reply target not found" }, 400);
     }
     let requestedAnonymousNumber = null;
     try {
@@ -811,10 +810,7 @@ async function handleApi(request, env, url, route) {
         .run();
     }
     await audit(env, actor.id, "comment_created", { postId: post.id, commentId: comment.id }, request);
-    const postOwner = await env.DB.prepare("select author_id from posts where id=?").bind(post.id).first();
-    if (authUser && postOwner?.author_id && postOwner.author_id !== authUser.id) {
-      await createNotification(env, postOwner.author_id, "post_comment", `${notificationActorName(authUser)} commented on your post.`);
-    }
+    await notifyBoardComment(env, post, comment, targetComment, authUser);
 
     return json({
       comment: await boardCommentView(env, comment, authUser, ownerDigest)
@@ -1948,7 +1944,36 @@ function hasAnonymousFeatureAccess(user) {
 }
 
 function normalizeUsername(value) {
-  return String(value || "").trim().slice(0, MAX_NAME_LEN);
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LEN);
+}
+
+function usernameKey(value) {
+  return normalizeUsername(value).toLowerCase();
+}
+
+function isReservedStudentUsername(value) {
+  const key = usernameKey(value);
+  if (!key) return false;
+  if (/^anonymous(?:\s*\d{4})?$/.test(key)) return true;
+  if (key.includes("admin") || key.includes("moderator")) return true;
+  if (/(^|\s)mod(\s|$)/.test(key)) return true;
+  return new Set(["system", "guest", "board guest", "shsid", "shsid online"]).has(key);
+}
+
+async function usernameTakenByAnotherUser(env, username, userId) {
+  return env.DB.prepare("select id from users where id != ? and lower(trim(coalesce(english_name, ''))) = lower(?) limit 1")
+    .bind(userId, normalizeUsername(username))
+    .first();
+}
+
+async function validateStudentUsername(env, username, user) {
+  if (!username) return { error: "Please choose a username", status: 400 };
+  if (user?.role !== "admin" && isReservedStudentUsername(username)) {
+    return { error: "Please choose a username that is different from admin or system labels", status: 400 };
+  }
+  const duplicate = await usernameTakenByAnotherUser(env, username, user?.id);
+  if (duplicate) return { error: "That username is already taken", status: 409, duplicate };
+  return null;
 }
 
 async function userView(env, target, viewer) {
@@ -2738,9 +2763,43 @@ async function createNotification(env, userId, type, body) {
     .run();
 }
 
+async function createNotifications(env, userIds, type, body) {
+  const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+  for (const userId of uniqueUserIds) {
+    await createNotification(env, userId, type, body);
+  }
+}
+
+async function notifyBoardComment(env, post, comment, targetComment, actorUser) {
+  const actorId = comment.author_id;
+  const actorLabel = notificationActorName(actorUser);
+  const directRecipients = new Set();
+  if (post.author_id && post.author_id !== actorId) directRecipients.add(post.author_id);
+  if (targetComment?.author_id && targetComment.author_id !== actorId) directRecipients.add(targetComment.author_id);
+
+  for (const userId of directRecipients) {
+    const isReplyToComment = targetComment?.author_id === userId;
+    await createNotification(
+      env,
+      userId,
+      isReplyToComment ? "comment_reply_direct" : "post_reply_direct",
+      isReplyToComment ? `${actorLabel} replied to your reply.` : `${actorLabel} replied to your post.`
+    );
+  }
+
+  const postLikes = jsonArray(post.likes);
+  const comments = await env.DB.prepare("select author_id from comments where post_id=? and deleted_at is null").bind(post.id).all();
+  const activityRecipients = new Set([
+    ...postLikes,
+    ...(comments.results || []).map((row) => row.author_id)
+  ]);
+  const notifyUserIds = [...activityRecipients].filter((userId) => userId && userId !== actorId && !directRecipients.has(userId));
+  await createNotifications(env, notifyUserIds, "thread_activity", `${actorLabel} replied to a thread you bumped or joined.`);
+}
+
 function notificationActorName(user) {
-  const raw = String(user?.english_name || user?.email || "A student").trim();
-  return raw.slice(0, 80) || "A student";
+  const raw = String(user?.english_name || user?.email || "Anonymous").trim();
+  return raw.slice(0, 80) || "Anonymous";
 }
 
 function requireUploadSigningSecret(env) {

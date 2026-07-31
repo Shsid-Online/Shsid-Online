@@ -893,7 +893,34 @@ function hasCompletedStudentProfile(user) {
 }
 
 function normalizeUsername(value) {
-  return String(value || "").trim().slice(0, MAX_NAME_LEN);
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LEN);
+}
+
+function usernameKey(value) {
+  return normalizeUsername(value).toLowerCase();
+}
+
+function isReservedStudentUsername(value) {
+  const key = usernameKey(value);
+  if (!key) return false;
+  if (/^anonymous(?:\s*\d{4})?$/.test(key)) return true;
+  if (key.includes("admin") || key.includes("moderator")) return true;
+  if (/(^|\s)mod(\s|$)/.test(key)) return true;
+  return new Set(["system", "guest", "board guest", "shsid", "shsid online"]).has(key);
+}
+
+function usernameTakenByAnotherUser(username, userId) {
+  const key = usernameKey(username);
+  return store.data.users.find((item) => (
+    item.id !== userId && usernameKey(item.englishName) === key
+  ));
+}
+
+function validateStudentUsername(username, user) {
+  if (!username) return "Please choose a username";
+  if (user?.role !== "admin" && isReservedStudentUsername(username)) return "Please choose a username that is different from admin or system labels";
+  if (usernameTakenByAnotherUser(username, user?.id)) return "That username is already taken";
+  return "";
 }
 
 function hasAnonymousFeatureAccess(user) {
@@ -970,6 +997,51 @@ function adminAnonymousNumbersView() {
     }
   }
   return [...numbers].sort((left, right) => left - right);
+}
+
+function notificationActorLabel(user) {
+  return String(user?.englishName || user?.email || "Anonymous").trim() || "Anonymous";
+}
+
+function pushNotification(userId, type, body) {
+  if (!userId || !store.findUserById(userId)) return;
+  store.data.notifications.push({
+    id: id("ntf"),
+    userId,
+    type,
+    body,
+    readAt: null,
+    createdAt: now()
+  });
+}
+
+function notifyBoardComment(post, comment, actorUser) {
+  const actorId = comment.authorId;
+  const actorLabel = notificationActorLabel(actorUser);
+  const directRecipients = new Set();
+  if (post.authorId && post.authorId !== actorId) directRecipients.add(post.authorId);
+  const targetComment = comment.replyTo
+    ? (post.comments || []).find((item) => item.id === comment.replyTo && !item.deletedAt)
+    : null;
+  if (targetComment?.authorId && targetComment.authorId !== actorId) directRecipients.add(targetComment.authorId);
+
+  for (const userId of directRecipients) {
+    const isReplyToComment = targetComment?.authorId === userId;
+    pushNotification(
+      userId,
+      isReplyToComment ? "comment_reply_direct" : "post_reply_direct",
+      isReplyToComment ? `${actorLabel} replied to your reply.` : `${actorLabel} replied to your post.`
+    );
+  }
+
+  const activityRecipients = new Set([
+    ...(Array.isArray(post.likes) ? post.likes : []),
+    ...(post.comments || []).map((item) => item.authorId)
+  ]);
+  for (const userId of activityRecipients) {
+    if (!userId || userId === actorId || directRecipients.has(userId)) continue;
+    pushNotification(userId, "thread_activity", `${actorLabel} replied to a thread you bumped or joined.`);
+  }
 }
 
 function pageParams(url, defaults = {}) {
@@ -1152,9 +1224,8 @@ async function handleApi(req, res, url) {
     }
     if (!body.password || String(body.password).length < 8) return sendJson(res, 400, { error: "Password must be at least 8 characters" }, req);
     if (String(body.password).length > 128) return sendJson(res, 400, { error: "Password too long" }, req);
-    if (!username) return sendJson(res, 400, { error: "Please choose a username" }, req);
-    const duplicateUsername = store.data.users.find((item) => item.id !== user.id && String(item.englishName || "").trim().toLowerCase() === username.toLowerCase());
-    if (duplicateUsername) return sendJson(res, 409, { error: "That username is already taken" }, req);
+    const usernameError = validateStudentUsername(username, user);
+    if (usernameError) return sendJson(res, usernameError.includes("taken") ? 409 : 400, { error: usernameError }, req);
     user.passwordHash = hashPassword(String(body.password));
     user.englishName = username;
     delete user.emailVerification;
@@ -1218,16 +1289,17 @@ async function handleApi(req, res, url) {
     const user = requireAuth(req, res);
     if (!user) return;
     const username = normalizeUsername(body.englishName || body.username || user.englishName);
-    if (!username) {
+    const usernameError = validateStudentUsername(username, user);
+    if (usernameError === "Please choose a username") {
       store.audit(user.id, "profile_complete_failed", { reason: "missing_username" });
       store.save();
       return sendJson(res, 400, { error: "Please choose a username" }, req);
     }
-    const duplicate = store.data.users.find((item) => item.id !== user.id && String(item.englishName || "").trim().toLowerCase() === username.toLowerCase());
-    if (duplicate) {
-      store.audit(user.id, "profile_complete_failed", { reason: "duplicate_username", duplicateUserId: duplicate.id });
+    if (usernameError) {
+      const duplicate = usernameTakenByAnotherUser(username, user.id);
+      store.audit(user.id, "profile_complete_failed", { reason: duplicate ? "duplicate_username" : "reserved_username", duplicateUserId: duplicate?.id || null });
       store.save();
-      return sendJson(res, 409, { error: "That username is already taken" }, req);
+      return sendJson(res, duplicate ? 409 : 400, { error: usernameError }, req);
     }
     Object.assign(user, {
       englishName: username,
@@ -1356,7 +1428,7 @@ async function handleApi(req, res, url) {
     const wasLiked = post.likes.includes(user.id);
     post.likes = wasLiked ? post.likes.filter((item) => item !== user.id) : [...post.likes, user.id];
     if (!wasLiked && post.authorId && post.authorId !== user.id) {
-      store.data.notifications.push({ id: id("ntf"), userId: post.authorId, type: "post_like_private", body: `${user.englishName || "A student"} privately liked your post.`, readAt: null, createdAt: now() });
+      pushNotification(post.authorId, "post_bump", `${notificationActorLabel(user)} bumped your post.`);
     }
     store.save();
     return sendJson(res, 200, { post: boardPostView(post, user, boardOwnerDigest(req)) });
@@ -1430,9 +1502,7 @@ async function handleApi(req, res, url) {
       deletedAt: null
     };
     post.comments.push(comment);
-    if (user && post.authorId && post.authorId !== user.id) {
-      store.data.notifications.push({ id: id("ntf"), userId: post.authorId, type: "post_comment", body: `${user.englishName || "A student"} commented on your post.`, readAt: null, createdAt: now() });
-    }
+    notifyBoardComment(post, comment, user);
     store.audit(authorId, "comment_created", {
       postId: post.id,
       commentId: comment.id,

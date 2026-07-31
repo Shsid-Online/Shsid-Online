@@ -90,6 +90,86 @@ a {
   color: var(--muted);
 }
 
+.account-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.notification-wrap {
+  position: relative;
+}
+
+.notification-bell {
+  position: relative;
+  width: 34px;
+  height: 30px;
+  border: 1px solid #999999;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.notification-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #cc1105;
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.notification-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: min(320px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 10px;
+}
+
+.notification-panel-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.notification-list {
+  display: grid;
+  gap: 6px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.notification-item {
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.notification-item.read {
+  opacity: 0.72;
+}
+
+.notification-item time,
+.notification-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .site-header h1 {
   margin: 0;
   color: var(--accent);
@@ -281,13 +361,26 @@ a {
 }
 
 .thread-board {
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--green);
   font-weight: 700;
+  text-decoration: none;
 }
 
 .thread-author {
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--green);
   font-weight: 700;
+  text-decoration: underline;
+}
+
+.thread-board:hover,
+.thread-author:hover {
+  color: var(--accent);
 }
 
 .thread-separator {
@@ -323,6 +416,91 @@ a {
   object-fit: contain;
   border: 1px solid var(--line);
   background: #ffffff;
+}
+
+.active-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  margin: -4px 0 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--muted);
+}
+
+.profile-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(135deg, rgba(17, 119, 67, 0.08), rgba(128, 0, 0, 0.06)),
+    var(--panel);
+}
+
+.profile-kicker {
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.profile-card h2 {
+  margin: 0;
+  color: var(--accent-ink);
+  font-size: 26px;
+}
+
+.profile-card p {
+  margin: 2px 0 0;
+  color: var(--muted);
+}
+
+.profile-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.profile-stats div {
+  min-width: 92px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.profile-stats strong,
+.profile-stats span {
+  display: block;
+}
+
+.profile-stats strong {
+  color: var(--accent);
+  font-size: 20px;
+}
+
+.profile-stats span,
+.profile-boards {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.profile-boards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.profile-boards span {
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--green);
+  font-weight: 700;
 }
 
 .quote-card {
@@ -443,6 +621,42 @@ a {
   font-weight: 700;
 }
 
+.reply-identity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.reply-identity time {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.reply-author {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.reply.profile-match {
+  border-color: var(--accent);
+  background: #f0efd8;
+}
+
+.reply-target {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .reply-head-actions {
   display: flex;
   flex-wrap: wrap;
@@ -453,6 +667,10 @@ a {
 .reply-body {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.reply-inline-actions {
+  margin-top: 6px;
 }
 
 .reply-media {
@@ -473,6 +691,20 @@ a {
 
 .reply-form {
   margin-top: 12px;
+}
+
+.replying-to-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.replying-to-note .inline-admin-link {
+  margin-left: 0;
 }
 
 .reply-toggle {

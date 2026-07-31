@@ -20,6 +20,7 @@ const initialState = {
   board: "all",
   sort: "recent",
   search: "",
+  authorFilter: "",
   composerBoard: "school",
   composerTitle: "",
   composerBody: "",
@@ -30,12 +31,15 @@ const initialState = {
   boardOwnerToken: "",
   replyDrafts: {},
   replyAnonymousNumbers: {},
+  replyTargets: {},
   authOpen: false,
   authMode: "login",
   authStep: "email",
   pendingEmail: "",
   pendingCode: "",
   pendingUsername: "",
+  notifications: [],
+  notificationsOpen: false,
   toast: ""
 };
 
@@ -79,6 +83,7 @@ function loadState() {
   base.composerQuoteSearch = "";
   base.replyDrafts = {};
   base.replyAnonymousNumbers = {};
+  base.replyTargets = {};
   return base;
 }
 
@@ -89,6 +94,7 @@ function saveState() {
     board: state.board,
     sort: state.sort,
     search: state.search,
+    authorFilter: state.authorFilter,
     composerBoard: state.composerBoard,
     boardOwnerToken: state.boardOwnerToken,
     authOpen: state.authOpen,
@@ -122,6 +128,33 @@ function currentUser() {
   return state.currentUser || null;
 }
 
+function userTagLabel(item) {
+  return String(item?.authorLabel || item?.anonymousLabel || "Anonymous").trim() || "Anonymous";
+}
+
+function userTagKey(item) {
+  return userTagLabel(item).toLowerCase();
+}
+
+function normalizeUsernameInput(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function reservedUsernameMessage(value) {
+  const key = normalizeUsernameInput(value).toLowerCase();
+  if (!key) return "Please choose a username";
+  if (/^anonymous(?:\s*\d{4})?$/.test(key)) return "Please choose a username that is different from anonymous tags";
+  if (key.includes("admin") || key.includes("moderator") || /(^|\s)mod(\s|$)/.test(key)) return "Please choose a username that is different from admin";
+  if (new Set(["system", "guest", "board guest", "shsid", "shsid online"]).has(key)) return "Please choose a different username";
+  return "";
+}
+
+function postMatchesUserTag(post, tagKey) {
+  if (!tagKey) return true;
+  if (userTagKey(post) === tagKey) return true;
+  return (post.comments || []).some((comment) => userTagKey(comment) === tagKey);
+}
+
 function currentDirectoryBoard() {
   return state.board !== "all" && boardByCategory.has(state.board) ? state.board : "";
 }
@@ -151,6 +184,79 @@ function timeAgo(value) {
   if (diffHours < 24) return `${diffHours}h ago`;
   const diffDays = Math.round(diffHours / 24);
   return `${diffDays}d ago`;
+}
+
+function commentTimestamp(value) {
+  const date = new Date(value || Date.now());
+  if (!Number.isFinite(date.getTime())) return "just now";
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const year = String(date.getFullYear()).slice(-2);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${month}/${day}/${year} ${hours}:${minutes}`;
+}
+
+function normalizeNotification(notification) {
+  return {
+    id: String(notification.id || crypto.randomUUID()),
+    type: String(notification.type || "notice"),
+    text: String(notification.text || notification.body || "").trim(),
+    read: Boolean(notification.read),
+    createdAt: notification.createdAt || new Date().toISOString()
+  };
+}
+
+function groupedNotifications() {
+  const notifications = Array.isArray(state.notifications) ? state.notifications : [];
+  const bumpNotifications = notifications.filter((item) => ["post_bump", "post_like_private"].includes(item.type));
+  const otherNotifications = notifications.filter((item) => !["post_bump", "post_like_private"].includes(item.type));
+  const grouped = [];
+  if (bumpNotifications.length) {
+    const unreadCount = bumpNotifications.filter((item) => !item.read).length;
+    const latest = bumpNotifications.reduce((current, item) => (
+      new Date(item.createdAt).getTime() > new Date(current.createdAt).getTime() ? item : current
+    ), bumpNotifications[0]);
+    grouped.push({
+      id: "bump-summary",
+      type: "post_bump_summary",
+      text: `${bumpNotifications.length} bump${bumpNotifications.length === 1 ? "" : "s"} on your posts.`,
+      read: unreadCount === 0,
+      createdAt: latest.createdAt,
+      count: unreadCount || bumpNotifications.length
+    });
+  }
+  return [...grouped, ...otherNotifications]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+function notificationBadgeCount() {
+  return groupedNotifications().filter((item) => !item.read).length;
+}
+
+async function fetchNotifications({ rerender = false } = {}) {
+  if (!state.token || !state.currentUser) {
+    state.notifications = [];
+    return;
+  }
+  try {
+    const result = await apiRequest("/notifications", { optionalAuth: true });
+    state.notifications = Array.isArray(result.notifications) ? result.notifications.map(normalizeNotification) : [];
+    if (rerender) render();
+  } catch {
+    state.notifications = [];
+  }
+}
+
+async function markNotificationsRead() {
+  if (!state.token || !state.currentUser) return;
+  try {
+    await apiRequest("/notifications/read-all", { method: "POST", body: {} });
+    state.notifications = state.notifications.map((item) => ({ ...item, read: true }));
+    render();
+  } catch (error) {
+    toast(error.message || "Could not mark notifications read");
+  }
 }
 
 function toast(message) {
@@ -235,9 +341,7 @@ function normalizePost(post) {
   const anonymous = Boolean(post.anonymous);
   const viewerId = currentUser()?.id || "";
   const authorId = String(post.authorId || "");
-  const realAuthorLabel = post.adminAuthor?.englishName
-    || post.author?.englishName
-    || (post.adminAuthor?.role === "admin" || post.author?.role === "admin" ? "Admin" : "");
+  const realAuthorLabel = post.adminAuthor?.englishName || post.author?.englishName || "";
   const authorLabel = String(
     post.anonymousLabel
       || (anonymous ? "Anonymous" : realAuthorLabel)
@@ -272,6 +376,7 @@ function normalizePost(post) {
       canDelete: Boolean(comment.canDelete || (viewerId && String(comment.authorId || "") === viewerId)),
       media: Array.isArray(comment.media) ? comment.media : [],
       likes: Array.isArray(comment.likes) ? comment.likes : [],
+      replyTo: comment.replyTo ? String(comment.replyTo) : null,
       createdAt: comment.createdAt
     })) : [],
     createdAt: post.createdAt,
@@ -455,6 +560,7 @@ async function likePost(postId) {
   }
   const result = await apiRequest(`/posts/${postId}/like`, { method: "POST" });
   if (result.post) mergePost(result.post);
+  await fetchNotifications();
   saveState();
   render();
 }
@@ -488,6 +594,7 @@ async function finishAuthFlow() {
   state.authOpen = false;
   authReason = "";
   resetAuthDraft({ keepEmail: false });
+  await fetchNotifications();
   saveState();
   render();
   if (queuedLikePostId) {
@@ -561,9 +668,10 @@ async function submitPassword(event) {
   render();
   try {
     if (state.authMode === "register") {
-      const username = String(document.querySelector("#auth-username")?.value || "").trim();
+      const username = normalizeUsernameInput(document.querySelector("#auth-username")?.value || "");
       const confirm = String(document.querySelector("#auth-password-confirm")?.value || "");
-      if (!username) throw new Error("Please choose a username");
+      const usernameError = reservedUsernameMessage(username);
+      if (usernameError) throw new Error(usernameError);
       if (!confirm) throw new Error("Please confirm your password");
       if (confirm !== password) throw new Error("Passwords do not match");
       state.pendingUsername = username;
@@ -613,8 +721,9 @@ async function submitPassword(event) {
 async function submitProfile(event) {
   event.preventDefault();
   if (authBusy) return;
-  const username = String(document.querySelector("#reg-username")?.value || "").trim();
-  if (!username) return toast("Please choose a username");
+  const username = normalizeUsernameInput(document.querySelector("#reg-username")?.value || "");
+  const usernameError = reservedUsernameMessage(username);
+  if (usernameError) return toast(usernameError);
   authBusy = true;
   render();
   try {
@@ -645,6 +754,8 @@ async function logout() {
   }
   state.token = "";
   state.currentUser = null;
+  state.notifications = [];
+  state.notificationsOpen = false;
   clearQueuedLike();
   saveState();
   render();
@@ -698,6 +809,7 @@ async function submitReply(postId) {
   const text = String(document.querySelector(`#${replyKey}`)?.value || "").trim();
   const photoInput = document.querySelector(`#reply-photo-${CSS.escape(postId)}`);
   const photoFiles = replyPhotos(postId);
+  const replyTo = String(state.replyTargets?.[postId] || "").trim();
   const anonymousAccountNumber = currentUser()?.role === "admin"
     ? String(document.querySelector(`#reply-anonymous-number-${CSS.escape(postId)}`)?.value || "").trim()
     : "";
@@ -707,7 +819,7 @@ async function submitReply(postId) {
     const media = await uploadPhotos(photoFiles, 5);
     const result = await apiRequest(`/posts/${postId}/comments`, {
       method: "POST",
-      body: { text, media, ...(anonymousAccountNumber ? { anonymousAccountNumber } : {}) },
+      body: { text, media, ...(replyTo ? { replyTo } : {}), ...(anonymousAccountNumber ? { anonymousAccountNumber } : {}) },
       auth: false,
       optionalAuth: true
     });
@@ -722,6 +834,7 @@ async function submitReply(postId) {
         canDelete: Boolean(result.comment.canDelete || result.comment.authorId === currentUser()?.id),
         media: Array.isArray(result.comment.media) ? result.comment.media : [],
         likes: Array.isArray(result.comment.likes) ? result.comment.likes : [],
+        replyTo: result.comment.replyTo ? String(result.comment.replyTo) : null,
         createdAt: result.comment.createdAt
       };
       if (!(target.comments || []).some((comment) => comment.id === nextComment.id)) {
@@ -730,11 +843,13 @@ async function submitReply(postId) {
     }
     state.replyDrafts[postId] = "";
     state.replyAnonymousNumbers[postId] = "";
+    state.replyTargets[postId] = "";
     replyPhotoFilesByPostId.delete(postId);
     openReplies.add(postId);
     if (openReplyPostId === postId) openReplyPostId = "";
     if (photoInput) photoInput.value = "";
     saveState();
+    await fetchNotifications();
     render();
     toast("Reply posted");
   } catch (error) {
@@ -779,56 +894,106 @@ async function deleteComment(postId, commentId) {
 
 function filteredPosts() {
   const query = String(state.search || "").trim().toLowerCase();
+  const authorFilter = String(state.authorFilter || "").trim().toLowerCase();
   const posts = state.posts.filter((post) => {
     const matchesBoard = state.board === "all" || post.category === state.board;
     if (!matchesBoard) return false;
+    if (authorFilter && !postMatchesUserTag(post, authorFilter)) return false;
     if (!query) return true;
     const haystack = [
       post.title,
       post.text,
+      post.authorLabel,
+      post.anonymousLabel,
+      post.adminAnonymousAccountNumber ? `anonymous ${post.adminAnonymousAccountNumber}` : "",
+      post.adminAnonymousAccountNumber ? String(post.adminAnonymousAccountNumber) : "",
       boardMeta(post.category).name,
       boardMeta(post.category).slug,
-      ...(post.comments || []).map((comment) => comment.text)
+      ...(post.comments || []).flatMap((comment) => [
+        comment.text,
+        comment.anonymousLabel,
+        comment.adminAnonymousAccountNumber ? `anonymous ${comment.adminAnonymousAccountNumber}` : "",
+        comment.adminAnonymousAccountNumber ? String(comment.adminAnonymousAccountNumber) : ""
+      ])
     ].join(" ").toLowerCase();
     return haystack.includes(query);
   });
   return posts.sort((left, right) => {
     if (left.sticky !== right.sticky) return Number(right.sticky) - Number(left.sticky);
     if (state.sort === "trending") {
-      const scoreDiff = trendingScore(right) - trendingScore(left);
-      if (scoreDiff) return scoreDiff;
+      const replyDiff = replyCountForPost(right) - replyCountForPost(left);
+      if (replyDiff) return replyDiff;
+      const bumpDiff = bumpCountForPost(right) - bumpCountForPost(left);
+      if (bumpDiff) return bumpDiff;
     }
     return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
   });
 }
 
-function trendingScore(post) {
-  const likes = Array.isArray(post.likes) ? post.likes.length : 0;
-  const replies = Array.isArray(post.comments) ? post.comments.length : 0;
-  const createdAt = new Date(post.createdAt || Date.now()).getTime();
-  const ageHours = Math.max(1, (Date.now() - createdAt) / 3600000);
-  return (likes * 4) + (replies * 3) - (ageHours * 0.35);
+function replyCountForPost(post) {
+  return Array.isArray(post.comments) ? post.comments.length : 0;
 }
 
-function renderThreadCard(post, index) {
+function bumpCountForPost(post) {
+  return Array.isArray(post.likes) ? post.likes.length : 0;
+}
+
+function userProfileStats(posts, tagKey) {
+  const profilePosts = posts.filter((post) => postMatchesUserTag(post, tagKey));
+  const threadCount = profilePosts.filter((post) => userTagKey(post) === tagKey).length;
+  const replyCount = profilePosts.reduce((count, post) => (
+    count + (post.comments || []).filter((comment) => userTagKey(comment) === tagKey).length
+  ), 0);
+  const boards = new Set(profilePosts.map((post) => boardMeta(post.category).slug));
+  return { profilePosts, threadCount, replyCount, boards: [...boards] };
+}
+
+function renderUserProfileHeader() {
+  const tag = String(state.authorFilter || "").trim();
+  if (!tag) return "";
+  const tagKey = tag.toLowerCase();
+  const stats = userProfileStats(state.posts, tagKey);
+  return `
+    <section class="profile-card">
+      <div>
+        <div class="profile-kicker">User profile</div>
+        <h2>${escapeHtml(tag)}</h2>
+        <p>Showing this tag's threads plus threads where they replied.</p>
+      </div>
+      <div class="profile-stats">
+        <div><strong>${stats.threadCount}</strong><span>posts</span></div>
+        <div><strong>${stats.replyCount}</strong><span>replies</span></div>
+        <div><strong>${stats.boards.length}</strong><span>boards</span></div>
+      </div>
+      ${stats.boards.length ? `<div class="profile-boards">${stats.boards.map((board) => `<span>${escapeHtml(board)}</span>`).join("")}</div>` : ""}
+      <button class="board-button small muted" type="button" data-action="clear-author-filter">Back to all users</button>
+    </section>
+  `;
+}
+
+function renderThreadCard(post, index, options = {}) {
   const board = boardMeta(post.category);
   const liked = userCanLike(post);
   const adminMode = currentUser()?.role === "admin";
   const canDeletePost = adminMode || Boolean(post.canDelete);
   const replyOpen = openReplyPostId === post.id;
   const replyCount = (post.comments || []).length;
-  const repliesOpen = openReplies.has(post.id);
+  const profileTagKey = String(options.profileTagKey || "").trim().toLowerCase();
+  const profileMode = Boolean(profileTagKey);
+  const repliesOpen = openReplies.has(post.id) || (profileMode && replyCount > 0);
   const replySubmitting = replySubmittingPostIds.has(post.id);
   const replyPhotoSummary = selectedPhotoSummary(replyPhotoFilesByPostId.get(post.id) || [], "No photos selected");
   const replyAnonymousNumber = state.replyAnonymousNumbers?.[post.id] || "";
-  const activityLabel = replyCount ? "last bump" : "posted";
+  const replyTargetId = String(state.replyTargets?.[post.id] || "");
+  const commentsById = new Map((post.comments || []).map((comment) => [comment.id, comment]));
+  const replyTarget = replyTargetId ? commentsById.get(replyTargetId) : null;
   const displayNumber = Number.isInteger(post.postNumber) ? post.postNumber : 5000 + index;
   return `
     <article class="thread-card">
       <div class="thread-head">
         <div class="thread-topline">
-          <span class="thread-board">${escapeHtml(board.slug)}</span>
-          <span class="thread-author">${escapeHtml(post.authorLabel || "Anonymous")}</span>
+          <button class="thread-board" type="button" data-action="enter-board" data-board="${escapeHtml(board.category)}">${escapeHtml(board.slug)}</button>
+          <button class="thread-author" type="button" data-action="filter-author" data-author="${escapeHtml(userTagLabel(post))}">${escapeHtml(userTagLabel(post))}</button>
           <span class="thread-separator">/</span>
           <span class="thread-id">No.${displayNumber}</span>
           ${canDeletePost ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
@@ -849,8 +1014,8 @@ function renderThreadCard(post, index) {
       <div class="thread-foot">
         <span>${escapeHtml(board.name)}</span>
         <span>${replyCount} repl${replyCount === 1 ? "y" : "ies"}</span>
-        <span>${activityLabel} ${escapeHtml(timeAgo(post.createdAt))}</span>
-        ${replyCount ? `<button class="plain-board-action" type="button" data-action="${repliesOpen ? "hide-replies" : "show-replies"}" data-id="${escapeHtml(post.id)}">${repliesOpen ? "Hide replies" : "Show replies"}</button>` : ""}
+        <span>posted ${escapeHtml(timeAgo(post.createdAt))}</span>
+        ${replyCount && !profileMode ? `<button class="plain-board-action" type="button" data-action="${repliesOpen ? "hide-replies" : "show-replies"}" data-id="${escapeHtml(post.id)}">${repliesOpen ? "Hide replies" : "Show replies"}</button>` : ""}
         <button class="vote-button ${liked ? "liked" : ""}" data-action="like-post" data-id="${escapeHtml(post.id)}">
           ${liked ? "▲" : "△"} ${Array.isArray(post.likes) ? post.likes.length : 0}
         </button>
@@ -858,13 +1023,22 @@ function renderThreadCard(post, index) {
       ${replyCount && repliesOpen ? `
         <div class="reply-list">
           ${(post.comments || []).map((comment, commentIndex) => `
-            <div class="reply">
+            <div class="reply ${profileTagKey && userTagKey(comment) === profileTagKey ? "profile-match" : ""}">
               <div class="reply-head">
-                <span>${escapeHtml(comment.anonymousLabel || "Anonymous")}</span>
+                <div class="reply-identity">
+                  <button class="reply-author" type="button" data-action="filter-author" data-author="${escapeHtml(userTagLabel(comment))}">${escapeHtml(userTagLabel(comment))}</button>
+                  <time datetime="${escapeHtml(comment.createdAt || "")}" title="${escapeHtml(timeAgo(comment.createdAt))}">${escapeHtml(commentTimestamp(comment.createdAt))}</time>
+                </div>
                 <div class="reply-head-actions">
                   ${(adminMode || comment.canDelete) ? `<button class="inline-admin-link" data-action="delete-comment" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Delete</button>` : ""}
                 </div>
               </div>
+              ${comment.replyTo && commentsById.has(comment.replyTo) ? `
+                <div class="reply-target">
+                  replying to ${escapeHtml(commentsById.get(comment.replyTo).anonymousLabel || "Anonymous")}
+                  <time datetime="${escapeHtml(commentsById.get(comment.replyTo).createdAt || "")}" title="${escapeHtml(timeAgo(commentsById.get(comment.replyTo).createdAt))}">${escapeHtml(commentTimestamp(commentsById.get(comment.replyTo).createdAt))}</time>
+                </div>
+              ` : ""}
               ${comment.text ? `<p class="reply-body">${escapeHtml(comment.text)}</p>` : ""}
               ${(comment.media || []).length ? `
                 <div class="reply-media">
@@ -873,14 +1047,23 @@ function renderThreadCard(post, index) {
                   `).join("")}
                 </div>
               ` : ""}
+              <div class="reply-inline-actions">
+                <button class="plain-board-action" type="button" data-action="open-comment-reply" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Reply</button>
+              </div>
             </div>
           `).join("")}
         </div>
       ` : ""}
       ${replyOpen ? `
         <form class="reply-form" data-reply-form="${escapeHtml(post.id)}">
+          ${replyTarget ? `
+            <div class="replying-to-note">
+              Replying to ${escapeHtml(replyTarget.anonymousLabel || "Anonymous")}
+              <button class="inline-admin-link" type="button" data-action="clear-reply-target" data-id="${escapeHtml(post.id)}">Reply to thread instead</button>
+            </div>
+          ` : ""}
           <label>
-            Reply
+            ${replyTarget ? "Reply to reply" : "Reply"}
             <textarea id="reply-${escapeHtml(post.id)}" class="reply-input" rows="3" maxlength="280" placeholder="Post a public reply">${escapeHtml(state.replyDrafts[post.id] || "")}</textarea>
           </label>
           <label class="reply-photo-row">
@@ -1009,6 +1192,39 @@ function renderAuthModal() {
   `;
 }
 
+function renderNotificationBell() {
+  const signedInUser = currentUser();
+  if (!signedInUser) return "";
+  const notifications = groupedNotifications();
+  const unreadCount = notificationBadgeCount();
+  return `
+    <div class="notification-wrap">
+      <button class="notification-bell" type="button" data-action="toggle-notifications" aria-label="Notifications">
+        <span aria-hidden="true">&#128276;</span>
+        ${unreadCount ? `<span class="notification-badge">${unreadCount > 99 ? "99+" : unreadCount}</span>` : ""}
+      </button>
+      ${state.notificationsOpen ? `
+        <div class="notification-panel">
+          <div class="notification-panel-head">
+            <strong>Notifications</strong>
+            ${notifications.some((item) => !item.read) ? `<button class="inline-admin-link" type="button" data-action="mark-notifications-read">Mark read</button>` : ""}
+          </div>
+          ${notifications.length ? `
+            <div class="notification-list">
+              ${notifications.map((item) => `
+                <div class="notification-item ${item.read ? "read" : "unread"}">
+                  <div>${escapeHtml(item.text || "New notification")}</div>
+                  <time datetime="${escapeHtml(item.createdAt || "")}">${escapeHtml(timeAgo(item.createdAt))}</time>
+                </div>
+              `).join("")}
+            </div>
+          ` : `<div class="notification-empty">No notifications yet.</div>`}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
 function render() {
   const app = document.querySelector("#app");
   const posts = filteredPosts();
@@ -1019,6 +1235,7 @@ function render() {
   const composerOpen = Boolean(state.composerOpen || hasUnsavedComposerDraft());
   const composerPhotoSummary = selectedPhotoSummary(composerPhotoFiles, "No photos selected");
   const adminAnonymousOptions = adminAnonymousNumberOptions();
+  const profileTagKey = String(state.authorFilter || "").trim().toLowerCase();
   app.innerHTML = `
     <div class="page">
       <header class="site-header">
@@ -1030,7 +1247,7 @@ function render() {
           </div>
           <div class="account-actions">
             ${signedInUser
-              ? `<button class="board-button small" data-action="logout">Log out</button>`
+              ? `${renderNotificationBell()}<button class="board-button small" data-action="logout">Log out</button>`
               : `<button class="board-button small primary" data-action="open-auth">Sign in / Create account</button>`}
           </div>
         </div>
@@ -1108,7 +1325,7 @@ function render() {
       <section class="thread-controls">
         <label class="control">
           <span>Search</span>
-          <input id="search-input" type="search" value="${escapeHtml(state.search || "")}" placeholder="search threads and replies">
+          <input id="search-input" type="search" value="${escapeHtml(state.search || "")}" placeholder="search threads, replies, or users">
         </label>
         <label class="control">
           <span>Board</span>
@@ -1125,10 +1342,17 @@ function render() {
           </select>
         </label>
       </section>
+      ${state.authorFilter ? `
+        <div class="active-filter">
+          Showing posts by <strong>${escapeHtml(state.authorFilter)}</strong>
+          <button class="plain-board-action" type="button" data-action="clear-author-filter">Show everyone</button>
+        </div>
+      ` : ""}
+      ${state.authorFilter ? renderUserProfileHeader() : ""}
 
       <main class="thread-list">
         ${posts.length
-          ? posts.map((post, index) => renderThreadCard(post, index)).join("")
+          ? posts.map((post, index) => renderThreadCard(post, index, { profileTagKey })).join("")
           : `<div class="empty-state">No threads matched that search.</div>`}
       </main>
       ${adminComposer ? `
@@ -1257,6 +1481,40 @@ function bindEvents() {
         await logout();
         return;
       }
+      if (action === "enter-board") {
+        const board = button.dataset.board || "all";
+        state.board = boardByCategory.has(board) ? board : "all";
+        state.authorFilter = "";
+        saveState();
+        render();
+        document.querySelector("#boards")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      if (action === "filter-author") {
+        state.authorFilter = String(button.dataset.author || "").trim();
+        state.board = "all";
+        state.search = "";
+        saveState();
+        render();
+        document.querySelector(".thread-controls")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      if (action === "clear-author-filter") {
+        state.authorFilter = "";
+        saveState();
+        render();
+        return;
+      }
+      if (action === "toggle-notifications") {
+        state.notificationsOpen = !state.notificationsOpen;
+        if (state.notificationsOpen) await fetchNotifications();
+        render();
+        return;
+      }
+      if (action === "mark-notifications-read") {
+        await markNotificationsRead();
+        return;
+      }
       if (action === "like-post") {
         await likePost(id);
         return;
@@ -1288,6 +1546,24 @@ function bindEvents() {
       }
       if (action === "open-reply") {
         openReplyPostId = id;
+        state.replyTargets[id] = "";
+        saveState();
+        render();
+        document.querySelector(`#reply-${CSS.escape(id)}`)?.focus();
+        return;
+      }
+      if (action === "open-comment-reply") {
+        openReplyPostId = id;
+        openReplies.add(id);
+        state.replyTargets[id] = commentId;
+        saveState();
+        render();
+        document.querySelector(`#reply-${CSS.escape(id)}`)?.focus();
+        return;
+      }
+      if (action === "clear-reply-target") {
+        state.replyTargets[id] = "";
+        saveState();
         render();
         document.querySelector(`#reply-${CSS.escape(id)}`)?.focus();
         return;
@@ -1339,6 +1615,7 @@ async function initialize() {
   });
   await fetchCurrentUser();
   await fetchPosts();
+  await fetchNotifications();
   saveState();
   render();
 }
