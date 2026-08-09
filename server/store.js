@@ -99,7 +99,8 @@ function createSeed() {
     follows: [],
     qna: [],
     suggestions: [],
-    bans: []
+    bans: [],
+    autopostJob: null
   };
 }
 
@@ -146,6 +147,7 @@ class Store {
     this.data.qna ||= [];
     this.data.suggestions ||= [];
     this.data.bans ||= [];
+    this.data.autopostJob ||= null;
     this.data.conversations ||= [];
     for (const conversation of this.data.conversations) {
       if (conversation.participants && !conversation.members) {

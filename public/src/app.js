@@ -16,6 +16,8 @@ const initialState = {
   token: "",
   currentUser: null,
   posts: [],
+  autopostJob: null,
+  autopostDirty: false,
   adminAnonymousNumbers: [],
   board: "all",
   sort: "recent",
@@ -49,9 +51,11 @@ let authBusy = false;
 let queuedLikePostId = "";
 let authReason = "";
 let toastTimer = null;
+let autopostCountdownTimer = null;
 let openReplyPostId = "";
 let threadSubmitting = false;
 let composerPhotoFiles = [];
+let notificationOutsideClickBound = false;
 const replySubmittingPostIds = new Set();
 const replyPhotoFilesByPostId = new Map();
 const openReplies = new Set();
@@ -104,6 +108,12 @@ function saveState() {
     pendingCode: state.pendingCode,
     pendingUsername: state.pendingUsername
   }));
+}
+
+function clearAutopostCountdownTimer() {
+  if (!autopostCountdownTimer) return;
+  clearInterval(autopostCountdownTimer);
+  autopostCountdownTimer = null;
 }
 
 function escapeHtml(value) {
@@ -220,7 +230,9 @@ function groupedNotifications() {
     grouped.push({
       id: "bump-summary",
       type: "post_bump_summary",
-      text: `${bumpNotifications.length} bump${bumpNotifications.length === 1 ? "" : "s"} on your posts.`,
+      text: bumpNotifications.length === 1
+        ? latest.text || "1 bump on your post."
+        : `${bumpNotifications.length} bumps. Latest: ${latest.text || "someone bumped your post."}`,
       read: unreadCount === 0,
       createdAt: latest.createdAt,
       count: unreadCount || bumpNotifications.length
@@ -245,6 +257,49 @@ async function fetchNotifications({ rerender = false } = {}) {
     if (rerender) render();
   } catch {
     state.notifications = [];
+  }
+}
+
+function normalizeAutopostJob(job) {
+  if (!job || typeof job !== "object") return null;
+  return {
+    id: String(job.id || ""),
+    category: String(job.category || "school").trim().toLowerCase() || "school",
+    active: Boolean(job.active),
+    nextIndex: Number.isInteger(Number(job.nextIndex)) ? Number(job.nextIndex) : 0,
+    nextPostAt: String(job.nextPostAt || "").trim(),
+    countdownMs: Number.isFinite(Number(job.countdownMs)) ? Number(job.countdownMs) : null,
+    minDelayMinutes: Math.max(1, Number(job.minDelayMinutes || 60)),
+    maxDelayMinutes: Math.max(1, Number(job.maxDelayMinutes || 360)),
+    finishedAt: String(job.finishedAt || "").trim(),
+    lastPostId: String(job.lastPostId || "").trim(),
+    pendingCount: Number.isInteger(Number(job.pendingCount)) ? Number(job.pendingCount) : 0,
+    postedCount: Number.isInteger(Number(job.postedCount)) ? Number(job.postedCount) : 0,
+    entries: Array.isArray(job.entries) ? job.entries.map((entry, index) => ({
+      id: String(entry?.id || `apq_${index + 1}`),
+      text: String(entry?.text || ""),
+      postedAt: entry?.postedAt ? String(entry.postedAt) : "",
+      postId: entry?.postId ? String(entry.postId) : "",
+      postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
+      anonymousNumber: Number.isInteger(Number(entry?.anonymousNumber)) ? Number(entry.anonymousNumber) : null
+    })) : []
+  };
+}
+
+async function fetchAutopostJob() {
+  if (currentUser()?.role !== "admin") {
+    state.autopostJob = null;
+    state.autopostDirty = false;
+    clearAutopostCountdownTimer();
+    return;
+  }
+  try {
+    const result = await apiRequest("/admin/autopost");
+    state.autopostJob = normalizeAutopostJob(result.job);
+    state.autopostDirty = false;
+  } catch (error) {
+    state.autopostJob = null;
+    toast(error.message || "Could not load admin queue");
   }
 }
 
@@ -501,6 +556,118 @@ function quoteRefForPost(post) {
   };
 }
 
+function autopostCountdownLabel(value) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms)) return "Not scheduled";
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+function renderAutopostAdminPanel() {
+  const job = state.autopostJob;
+  if (!currentUser() || currentUser().role !== "admin") return "";
+  if (!job) {
+    return `
+      <section class="post-box">
+        <div class="post-box-head">
+          <div>
+            <h2>Admin Queue</h2>
+            <p class="post-box-copy">Loading staged posts…</p>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+  return `
+    <section class="post-box admin-queue-box">
+      <div class="post-box-head">
+        <div>
+          <h2>Admin Queue</h2>
+          <p class="post-box-copy">Edit the staged list, save it, then start the countdown when you want posting to begin.</p>
+        </div>
+        <div class="account-actions">
+          <button class="board-button small muted" type="button" data-action="autopost-reset">Reset progress</button>
+          <button class="board-button small muted" type="button" data-action="autopost-reload">Reload</button>
+        </div>
+      </div>
+      <div class="thread-controls">
+        <label class="control">
+          <span>Board</span>
+          <select id="autopost-category">
+            ${BOARDS.map((board) => `<option value="${escapeHtml(board.category)}"${job.category === board.category ? " selected" : ""}>${escapeHtml(board.slug)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="control">
+          <span>Min delay (minutes)</span>
+          <input id="autopost-min-delay" type="number" min="1" max="10080" value="${escapeHtml(job.minDelayMinutes)}">
+        </label>
+        <label class="control">
+          <span>Max delay (minutes)</span>
+          <input id="autopost-max-delay" type="number" min="1" max="10080" value="${escapeHtml(job.maxDelayMinutes)}">
+        </label>
+      </div>
+      <div class="active-filter">
+        ${job.active
+          ? `Queue is active. Next post in <strong class="autopost-countdown" data-next-post-at="${escapeHtml(job.nextPostAt || "")}">${escapeHtml(autopostCountdownLabel(job.countdownMs))}</strong>`
+          : job.finishedAt
+            ? `Queue finished on <strong>${escapeHtml(commentTimestamp(job.finishedAt))}</strong>.`
+            : "Queue is paused and nothing new has been posted yet."}
+      </div>
+      <div class="active-filter">
+        <span><strong>${job.pendingCount}</strong> pending</span>
+        <span><strong>${job.postedCount}</strong> posted</span>
+        <span>Thread No. values are already random. Queue posts also get fresh random Anonymous #### numbers.</span>
+      </div>
+      <div class="form-actions">
+        <button class="board-button primary" type="button" data-action="autopost-save">Save queue</button>
+        <button class="board-button ${job.active ? "muted" : "primary"}" type="button" data-action="${job.active ? "autopost-pause" : "autopost-start"}">${job.active ? "Pause countdown" : "Start countdown"}</button>
+        <button class="board-button small" type="button" data-action="autopost-add-entry">Add draft</button>
+        ${state.autopostDirty ? `<span class="form-note">Unsaved changes</span>` : `<span class="form-note">Saved</span>`}
+      </div>
+      <div class="thread-list">
+        ${job.entries.map((entry, index) => `
+          <article class="thread-card">
+            <div class="thread-meta">
+              <strong>#${index + 1}</strong>
+              <span>${entry.postedAt ? "posted" : "pending"}</span>
+              ${entry.postedAt ? `<span>${escapeHtml(commentTimestamp(entry.postedAt))}</span>` : ""}
+              ${entry.postNumber ? `<span>No.${entry.postNumber}</span>` : ""}
+              ${entry.anonymousNumber ? `<span>Anonymous ${entry.anonymousNumber}</span>` : ""}
+            </div>
+            <div class="form-row form-row-textarea">
+              <label for="autopost-entry-${escapeHtml(entry.id)}">Post</label>
+              <textarea id="autopost-entry-${escapeHtml(entry.id)}" data-autopost-text="${escapeHtml(entry.id)}" rows="${entry.text.length > 240 ? 6 : 3}" ${entry.postedAt ? "readonly" : ""}>${escapeHtml(entry.text)}</textarea>
+            </div>
+            ${entry.postedAt ? "" : `
+              <div class="form-actions">
+                <button class="plain-board-action" type="button" data-action="autopost-remove-entry" data-id="${escapeHtml(entry.id)}">Remove</button>
+              </div>
+            `}
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function bindAutopostCountdown() {
+  clearAutopostCountdownTimer();
+  const countdown = document.querySelector(".autopost-countdown");
+  const nextPostAt = countdown?.dataset.nextPostAt || "";
+  if (!countdown || !nextPostAt) return;
+  const target = Date.parse(nextPostAt);
+  if (!Number.isFinite(target)) return;
+  const update = () => {
+    const remaining = Math.max(0, target - Date.now());
+    countdown.textContent = autopostCountdownLabel(remaining);
+  };
+  update();
+  autopostCountdownTimer = setInterval(update, 1000);
+}
+
 function startPostQuote(quoteRef) {
   if (!quoteRef) return;
   state.composerQuote = quoteRef;
@@ -595,6 +762,7 @@ async function finishAuthFlow() {
   authReason = "";
   resetAuthDraft({ keepEmail: false });
   await fetchNotifications();
+  await fetchAutopostJob();
   saveState();
   render();
   if (queuedLikePostId) {
@@ -754,8 +922,11 @@ async function logout() {
   }
   state.token = "";
   state.currentUser = null;
+  state.autopostJob = null;
+  state.autopostDirty = false;
   state.notifications = [];
   state.notificationsOpen = false;
+  clearAutopostCountdownTimer();
   clearQueuedLike();
   saveState();
   render();
@@ -1322,6 +1493,8 @@ function render() {
         ` : ""}
       </section>
 
+      ${adminComposer ? renderAutopostAdminPanel() : ""}
+
       <section class="thread-controls">
         <label class="control">
           <span>Search</span>
@@ -1364,10 +1537,22 @@ function render() {
     ${state.toast ? `<div class="toast">${escapeHtml(state.toast)}</div>` : ""}
     ${renderAuthModal()}
   `;
+  bindAutopostCountdown();
   bindEvents();
 }
 
+function handleNotificationOutsideClick(event) {
+  if (!state.notificationsOpen) return;
+  if (event.target?.closest?.(".notification-wrap")) return;
+  state.notificationsOpen = false;
+  render();
+}
+
 function bindEvents() {
+  if (!notificationOutsideClickBound) {
+    notificationOutsideClickBound = true;
+    document.addEventListener("click", handleNotificationOutsideClick);
+  }
   document.querySelectorAll("[data-board]").forEach((button) => {
     button.addEventListener("click", () => {
       state.board = button.dataset.board || "all";
@@ -1383,9 +1568,16 @@ function bindEvents() {
   });
 
   document.querySelector("#search-input")?.addEventListener("input", (event) => {
+    const cursorStart = event.target.selectionStart;
+    const cursorEnd = event.target.selectionEnd;
     state.search = String(event.target.value || "");
     saveState();
     render();
+    const searchInput = document.querySelector("#search-input");
+    searchInput?.focus();
+    if (searchInput && cursorStart !== null && cursorEnd !== null) {
+      searchInput.setSelectionRange(cursorStart, cursorEnd);
+    }
   });
 
   document.querySelector("#sort-filter")?.addEventListener("change", (event) => {
@@ -1414,6 +1606,32 @@ function bindEvents() {
     composerPhotoFiles = [...(event.target.files || [])];
     const note = document.querySelector("#composer-photo-note");
     if (note) note.textContent = selectedPhotoSummary(composerPhotoFiles, "No photos selected");
+  });
+  document.querySelector("#autopost-category")?.addEventListener("change", (event) => {
+    if (!state.autopostJob) return;
+    state.autopostJob.category = String(event.target.value || "school");
+    state.autopostDirty = true;
+    render();
+  });
+  document.querySelector("#autopost-min-delay")?.addEventListener("input", (event) => {
+    if (!state.autopostJob) return;
+    state.autopostJob.minDelayMinutes = Math.max(1, Number(event.target.value || 60));
+    state.autopostDirty = true;
+  });
+  document.querySelector("#autopost-max-delay")?.addEventListener("input", (event) => {
+    if (!state.autopostJob) return;
+    state.autopostJob.maxDelayMinutes = Math.max(1, Number(event.target.value || 360));
+    state.autopostDirty = true;
+  });
+  document.querySelectorAll("[data-autopost-text]").forEach((input) => {
+    input.addEventListener("input", (event) => {
+      if (!state.autopostJob) return;
+      const entryId = String(event.target.dataset.autopostText || "");
+      const entry = (state.autopostJob.entries || []).find((item) => item.id === entryId);
+      if (!entry || entry.postedAt) return;
+      entry.text = String(event.target.value || "");
+      state.autopostDirty = true;
+    });
   });
   document.querySelector("#composer-quote-search")?.addEventListener("input", (event) => {
     const cursorStart = event.target.selectionStart;
@@ -1589,6 +1807,77 @@ function bindEvents() {
       }
       if (action === "delete-comment") {
         await deleteComment(id, commentId);
+        return;
+      }
+      if (action === "autopost-add-entry") {
+        if (!state.autopostJob) return;
+        state.autopostJob.entries.push({
+          id: `apq_local_${crypto.randomUUID()}`,
+          text: "",
+          postedAt: "",
+          postId: "",
+          postNumber: null,
+          anonymousNumber: null
+        });
+        state.autopostDirty = true;
+        render();
+        return;
+      }
+      if (action === "autopost-remove-entry") {
+        if (!state.autopostJob) return;
+        state.autopostJob.entries = (state.autopostJob.entries || []).filter((entry) => entry.id !== id);
+        state.autopostDirty = true;
+        render();
+        return;
+      }
+      if (action === "autopost-reload") {
+        await fetchAutopostJob();
+        render();
+        return;
+      }
+      if (action === "autopost-save") {
+        if (!state.autopostJob) return;
+        try {
+          const result = await apiRequest("/admin/autopost", {
+            method: "POST",
+            body: {
+              category: state.autopostJob.category,
+              minDelayMinutes: state.autopostJob.minDelayMinutes,
+              maxDelayMinutes: state.autopostJob.maxDelayMinutes,
+              entries: state.autopostJob.entries
+            }
+          });
+          state.autopostJob = normalizeAutopostJob(result.job);
+          state.autopostDirty = false;
+          render();
+          toast("Queue saved");
+        } catch (error) {
+          toast(error.message || "Could not save queue");
+        }
+        return;
+      }
+      if (action === "autopost-start" || action === "autopost-pause" || action === "autopost-reset") {
+        const path = action === "autopost-start"
+          ? "/admin/autopost/start"
+          : action === "autopost-pause"
+            ? "/admin/autopost/pause"
+            : "/admin/autopost/reset";
+        try {
+          const result = await apiRequest(path, { method: "POST", body: {} });
+          state.autopostJob = normalizeAutopostJob(result.job);
+          state.autopostDirty = false;
+          render();
+          toast(
+            action === "autopost-start"
+              ? "Countdown started"
+              : action === "autopost-pause"
+                ? "Queue paused"
+                : "Queue reset"
+          );
+        } catch (error) {
+          toast(error.message || "Could not update queue");
+        }
+        return;
       }
     });
   });
@@ -1616,6 +1905,7 @@ async function initialize() {
   await fetchCurrentUser();
   await fetchPosts();
   await fetchNotifications();
+  await fetchAutopostJob();
   saveState();
   render();
 }

@@ -59,6 +59,81 @@ const REPORT_TARGET_TYPES = new Set(["post", "conversation", "comment", "user"])
 const REPORT_STATUSES = new Set(["pending", "dismissed", "actioned", "resolved"]);
 const VERIFICATION_DECISIONS = new Set(["approve", "reject"]);
 const PUBLIC_BOARD_USER_EMAIL = "board-guest@system.local";
+const AUTPOST_JOB_ID = "board-synthetic-seed-v1";
+const AUTPOST_MIN_DELAY_MINUTES = 60;
+const AUTPOST_MAX_DELAY_MINUTES = 360;
+const AUTPOST_CATEGORY = "school";
+const AUTPOST_QUEUE = [
+  "i want a bf so bad",
+  "why is everyone getting into talking stages except me",
+  "i think i still like my ex and its actually disgusting",
+  "there r no cute guys in our grade be honest",
+  "can ppl stop spreading rumors when they literally know nothing",
+  "i hate when ppl purposely leave others out and act like they didnt do anything",
+  "why do they text like they like u and then act blind in school",
+  "some ppl here are weirdly proud of being mean",
+  "i cant tell if they like me or if theyre just nice to everybody",
+  "stop vagueposting abt ppl only u know",
+  "i need new friends so bad",
+  "some of yall need to learn how to shut up about other ppl",
+  "who is dating who rn",
+  "i used to think i was over it but every time i see them at school i start thinking abt everything again and its so stupid bc nothing even happened between us like actually nothing. we were never together never had a real thing never even talked that much but somehow i still care and i hate that my mood can still get ruined just by seeing them",
+  "why do they text like they like u and then act blind in school",
+  "i want a gf so bad",
+  "some ppl here are too comfortable being nasty",
+  "stop posting abt ppl only ur friend group knows",
+  "i seriously need better friends",
+  "i want someone to like me back immediately",
+  "i think i still miss my ex which is humiliating",
+  "i hate when ppl make someone feel left out on purpose",
+  "why do they flirt in text and ignore u in person",
+  "some ppl here act mean like its a flex",
+  "i cant tell if theyre interested or just bored",
+  "i need a new friend group so bad",
+  "some of yall need to mind ur own business",
+  "i want a relationship so bad",
+  "i still think abt my ex and its annoying",
+  "there r no cute ppl left im sorry",
+  "why do they give mixed signals for no reason",
+  "some ppl here love being mean too much",
+  "stop vagueposting like just say it",
+  "i need friends that are actually my friends",
+  "whos secretly dating rn",
+  "i want someone to obsess over me a little",
+  "can people stop repeating things they heard once",
+  "i hate when ppl exclude u in tiny ways and act like it doesnt count",
+  "why do they text first and then act uninterested later",
+  "some ppl here are mean and proud of it",
+  "i cant tell if they smile at everyone like that",
+  "i need to meet completely new ppl",
+  "some of yall really dont know when to stop talking",
+  "whos in a talking stage rn",
+  "why is everyone either heartbroken or in love",
+  "there r no ppl worth liking here",
+  "who is everyones school crush rn",
+  "i want a bf but only a good one",
+  "why does everyone else get attention so easily",
+  "i hate when ppl do mean shit and then call it a joke",
+  "some ppl here are actually just rude",
+  "i need new ppl in my life",
+  "who is lowkey together rn",
+  "some of yall talk abt other ppl like its ur job",
+  "why is everybody in some almost thing except me",
+  "stop being mysterious and just name names",
+  "some ppl here are way too pleased with themselves",
+  "i cant tell if theyre flirting or just weird",
+  "why is everyone having lore except me",
+  "can ppl stop acting messy and calling it fun",
+  "i hate when ppl do hurtful things and play dumb after",
+  "stop posting abt cryptic drama nobody asked for",
+  "why do they show interest and then act random",
+  "some ppl here are just fake nice",
+  "some ppl here are mean in the most boring way",
+  "who is everybody stalking rn",
+  "some ppl here really love talking shit",
+  "who has the messiest love life rn",
+  "why do they make u feel special and then act like nothing happened"
+];
 const ALLOWED_UPLOAD_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -350,6 +425,18 @@ function createPostNumber(preferredNumber = null) {
   throw new HttpError(500, "No unused post numbers are available");
 }
 
+function createRandomAdminAnonymousAccountNumber() {
+  const used = new Set([
+    ...(store.data.posts || []).map((post) => Number(post.adminAnonymousAccountNumber)),
+    ...(store.data.posts || []).flatMap((post) => (post.comments || []).map((comment) => Number(comment.adminAnonymousAccountNumber)))
+  ].filter((value) => Number.isInteger(value) && value >= 1000 && value <= 9999));
+  for (let attempt = 0; attempt < 10000; attempt += 1) {
+    const candidate = crypto.randomInt(1000, 10000);
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new HttpError(500, "No unused anonymous numbers are available");
+}
+
 function createAnonymousAccountNumber(preferredUserId = "") {
   const used = new Set((store.data.users || [])
     .filter((user) => user?.id !== preferredUserId)
@@ -419,6 +506,226 @@ function ensureGuestAliasForOwnerDigest(ownerDigest) {
   return null;
 }
 
+function defaultAutopostQueueEntries() {
+  return AUTPOST_QUEUE.map((text, index) => ({
+    id: `apq_${index + 1}`,
+    text: String(text || "").trim(),
+    postedAt: null,
+    postId: null,
+    postNumber: null,
+    anonymousNumber: null
+  }));
+}
+
+function autopostEntriesFromJob(job) {
+  return Array.isArray(job?.entries) ? job.entries.map((entry, index) => ({
+    id: String(entry?.id || `apq_${index + 1}`),
+    text: String(entry?.text || "").trim(),
+    postedAt: entry?.postedAt ? String(entry.postedAt) : null,
+    postId: entry?.postId ? String(entry.postId) : null,
+    postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
+    anonymousNumber: Number.isInteger(Number(entry?.anonymousNumber)) ? Number(entry.anonymousNumber) : null
+  })) : [];
+}
+
+function ensureAutopostJob() {
+  if (store.data.autopostJob?.id === AUTPOST_JOB_ID) return store.data.autopostJob;
+  store.data.autopostJob = {
+    id: AUTPOST_JOB_ID,
+    category: AUTPOST_CATEGORY,
+    entries: defaultAutopostQueueEntries(),
+    nextIndex: 0,
+    nextPostAt: "",
+    ownerTokenDigest: tokenDigest(`autopost:${AUTPOST_JOB_ID}`),
+    active: false,
+    minDelayMinutes: AUTPOST_MIN_DELAY_MINUTES,
+    maxDelayMinutes: AUTPOST_MAX_DELAY_MINUTES,
+    lastPostId: "",
+    createdAt: now(),
+    updatedAt: now(),
+    finishedAt: ""
+  };
+  store.save();
+  return store.data.autopostJob;
+}
+
+function autopostJobView(job, nowMs = Date.now()) {
+  const entries = autopostEntriesFromJob(job);
+  const nextPostAt = String(job?.nextPostAt || "").trim();
+  const countdownMs = nextPostAt ? Math.max(0, new Date(nextPostAt).getTime() - nowMs) : null;
+  return {
+    id: String(job?.id || AUTPOST_JOB_ID),
+    category: String(job?.category || AUTPOST_CATEGORY),
+    active: Boolean(job?.active),
+    nextIndex: Number(job?.nextIndex || 0),
+    nextPostAt,
+    countdownMs,
+    minDelayMinutes: Number(job?.minDelayMinutes || AUTPOST_MIN_DELAY_MINUTES),
+    maxDelayMinutes: Number(job?.maxDelayMinutes || AUTPOST_MAX_DELAY_MINUTES),
+    finishedAt: String(job?.finishedAt || ""),
+    lastPostId: String(job?.lastPostId || ""),
+    pendingCount: entries.filter((entry) => !entry.postedAt).length,
+    postedCount: entries.filter((entry) => entry.postedAt).length,
+    entries
+  };
+}
+
+function clampAutopostDelay(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(1, Math.min(7 * 24 * 60, Math.round(number)));
+}
+
+function randomDelayMs(minMinutes, maxMinutes) {
+  const min = Math.max(1, Number(minMinutes || AUTPOST_MIN_DELAY_MINUTES));
+  const max = Math.max(min, Number(maxMinutes || AUTPOST_MAX_DELAY_MINUTES));
+  return (crypto.randomInt(min, max + 1)) * 60 * 1000;
+}
+
+function sanitizeAutopostDraftEntries(entries) {
+  return (Array.isArray(entries) ? entries : [])
+    .map((entry, index) => ({
+      id: String(entry?.id || `apq_${index + 1}`).trim() || `apq_${index + 1}`,
+      text: String(entry?.text || "").trim().slice(0, MAX_TEXT_LEN),
+      postedAt: entry?.postedAt ? String(entry.postedAt) : null,
+      postId: entry?.postId ? String(entry.postId) : null,
+      postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
+      anonymousNumber: Number.isInteger(Number(entry?.anonymousNumber)) ? Number(entry.anonymousNumber) : null
+    }))
+    .filter((entry) => entry.text);
+}
+
+function saveAutopostJobFromBody(job, body) {
+  const postedEntries = autopostEntriesFromJob(job).slice(0, Number(job.nextIndex || 0));
+  const pendingEntries = sanitizeAutopostDraftEntries(body.entries).filter((entry) => !entry.postedAt).map((entry, index) => ({
+    id: entry.id || `apq_pending_${index + 1}`,
+    text: entry.text,
+    postedAt: null,
+    postId: null,
+    postNumber: null,
+    anonymousNumber: null
+  }));
+  job.entries = [...postedEntries, ...pendingEntries];
+  job.category = sanitizeCategory(body.category || job.category || AUTPOST_CATEGORY);
+  job.minDelayMinutes = clampAutopostDelay(body.minDelayMinutes, AUTPOST_MIN_DELAY_MINUTES);
+  job.maxDelayMinutes = Math.max(job.minDelayMinutes, clampAutopostDelay(body.maxDelayMinutes, AUTPOST_MAX_DELAY_MINUTES));
+  job.nextIndex = postedEntries.length;
+  job.finishedAt = job.nextIndex >= job.entries.length && job.entries.length ? now() : "";
+  job.active = job.finishedAt ? false : Boolean(job.active);
+  job.nextPostAt = job.active
+    ? (String(job.nextPostAt || "").trim() || new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString())
+    : "";
+  job.updatedAt = now();
+  store.save();
+  return job;
+}
+
+function startAutopostJob(job) {
+  job.active = Number(job.nextIndex || 0) < autopostEntriesFromJob(job).length;
+  job.finishedAt = job.active ? "" : (job.finishedAt || now());
+  job.nextPostAt = job.active ? new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString() : "";
+  job.updatedAt = now();
+  store.save();
+  return job;
+}
+
+function pauseAutopostJob(job) {
+  job.active = false;
+  job.nextPostAt = "";
+  job.updatedAt = now();
+  store.save();
+  return job;
+}
+
+function resetAutopostJob(job) {
+  job.entries = autopostEntriesFromJob(job).map((entry, index) => ({
+    id: entry.id || `apq_${index + 1}`,
+    text: entry.text,
+    postedAt: null,
+    postId: null,
+    postNumber: null,
+    anonymousNumber: null
+  }));
+  job.nextIndex = 0;
+  job.active = false;
+  job.nextPostAt = "";
+  job.lastPostId = "";
+  job.finishedAt = "";
+  job.updatedAt = now();
+  store.save();
+  return job;
+}
+
+function tickAutopostJob() {
+  const job = ensureAutopostJob();
+  if (!job.active || job.finishedAt) return;
+  const entries = autopostEntriesFromJob(job);
+  if (Number(job.nextIndex || 0) >= entries.length) {
+    job.active = false;
+    job.finishedAt = now();
+    job.nextPostAt = "";
+    job.updatedAt = now();
+    store.save();
+    return;
+  }
+  const dueAt = new Date(job.nextPostAt || "").getTime();
+  if (!Number.isFinite(dueAt) || dueAt > Date.now()) return;
+  const entry = entries[job.nextIndex];
+  if (!entry?.text) {
+    job.nextIndex += 1;
+    job.nextPostAt = job.nextIndex >= entries.length ? "" : new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString();
+    job.active = job.nextIndex < entries.length;
+    job.finishedAt = job.active ? "" : now();
+    job.updatedAt = now();
+    job.entries = entries;
+    store.save();
+    return;
+  }
+  const actorId = getBoardActorId();
+  const actor = store.findUserById(actorId);
+  if (!actorId || !actor) return;
+  const adminAnonymousNumber = createRandomAdminAnonymousAccountNumber();
+  const post = {
+    id: id("pst"),
+    authorId: actorId,
+    title: "Untitled thread",
+    postNumber: createPostNumber(),
+    anonymous: true,
+    anonymousLabel: `Anonymous ${adminAnonymousNumber}`,
+    adminAnonymousAccountNumber: adminAnonymousNumber,
+    ownerTokenDigest: job.ownerTokenDigest,
+    canDelete: true,
+    category: sanitizeCategory(job.category),
+    text: entry.text,
+    media: [],
+    quoteRef: null,
+    likes: [],
+    hearts: [],
+    savedBy: [],
+    comments: [],
+    sticky: false,
+    createdAt: now(),
+    deletedAt: null
+  };
+  store.data.posts.unshift(post);
+  entries[job.nextIndex] = {
+    ...entry,
+    postedAt: post.createdAt,
+    postId: post.id,
+    postNumber: post.postNumber,
+    anonymousNumber: post.adminAnonymousAccountNumber
+  };
+  job.entries = entries;
+  job.nextIndex += 1;
+  job.lastPostId = post.id;
+  job.active = job.nextIndex < entries.length;
+  job.nextPostAt = job.active ? new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString() : "";
+  job.finishedAt = job.active ? "" : now();
+  job.updatedAt = now();
+  store.audit(actor.id, "autopost_created", { autopostJobId: job.id, postId: post.id, postNumber: post.postNumber, category: post.category });
+  store.save();
+}
+
 function boardViewContext() {
   const guestAliases = new Map((store.data.guestAliases || [])
     .map((alias) => [String(alias.ownerTokenDigest || ""), Number(alias.anonymousAccountNumber)]));
@@ -472,6 +779,26 @@ function withoutOwnerTokenDigest(item) {
 function sanitizeCategory(value) {
   const category = String(value || "school").trim().toLowerCase().slice(0, MAX_CATEGORY_LEN);
   return category || "school";
+}
+
+const BOARD_SLUGS = {
+  school: "/campus/",
+  academic: "/study/",
+  lifestyle: "/teacher/",
+  gaming: "/club/",
+  shitpost: "/random/"
+};
+
+function boardSlugForCategory(category) {
+  const key = String(category || "").trim().toLowerCase();
+  return BOARD_SLUGS[key] || `/${key || "board"}/`;
+}
+
+function notificationPostLabel(post) {
+  const number = Number(post?.postNumber ?? post?.post_number);
+  const title = String(post?.title || "Untitled thread").trim().replace(/\s+/g, " ").slice(0, 80) || "Untitled thread";
+  const prefix = Number.isInteger(number) && number > 0 ? `No.${number}` : boardSlugForCategory(post?.category);
+  return `${prefix} "${title}"`;
 }
 
 function sanitizeMediaItems(value, limit = 20) {
@@ -1018,6 +1345,7 @@ function pushNotification(userId, type, body) {
 function notifyBoardComment(post, comment, actorUser) {
   const actorId = comment.authorId;
   const actorLabel = notificationActorLabel(actorUser);
+  const postLabel = notificationPostLabel(post);
   const directRecipients = new Set();
   if (post.authorId && post.authorId !== actorId) directRecipients.add(post.authorId);
   const targetComment = comment.replyTo
@@ -1030,7 +1358,7 @@ function notifyBoardComment(post, comment, actorUser) {
     pushNotification(
       userId,
       isReplyToComment ? "comment_reply_direct" : "post_reply_direct",
-      isReplyToComment ? `${actorLabel} replied to your reply.` : `${actorLabel} replied to your post.`
+      isReplyToComment ? `${actorLabel} replied to your reply on ${postLabel}.` : `${actorLabel} replied to your post ${postLabel}.`
     );
   }
 
@@ -1040,7 +1368,7 @@ function notifyBoardComment(post, comment, actorUser) {
   ]);
   for (const userId of activityRecipients) {
     if (!userId || userId === actorId || directRecipients.has(userId)) continue;
-    pushNotification(userId, "thread_activity", `${actorLabel} replied to a thread you bumped or joined.`);
+    pushNotification(userId, "thread_activity", `${actorLabel} replied to ${postLabel}, a thread you bumped or joined.`);
   }
 }
 
@@ -1428,7 +1756,7 @@ async function handleApi(req, res, url) {
     const wasLiked = post.likes.includes(user.id);
     post.likes = wasLiked ? post.likes.filter((item) => item !== user.id) : [...post.likes, user.id];
     if (!wasLiked && post.authorId && post.authorId !== user.id) {
-      pushNotification(post.authorId, "post_bump", `${notificationActorLabel(user)} bumped your post.`);
+      pushNotification(post.authorId, "post_bump", `${notificationActorLabel(user)} bumped your post ${notificationPostLabel(post)}.`);
     }
     store.save();
     return sendJson(res, 200, { post: boardPostView(post, user, boardOwnerDigest(req)) });
@@ -1948,6 +2276,48 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { suggestions: items, pagination });
   }
 
+  if (method === "GET" && url.pathname === "/api/admin/autopost") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    return sendJson(res, 200, { job: autopostJobView(ensureAutopostJob()) });
+  }
+
+  if (method === "POST" && url.pathname === "/api/admin/autopost") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const job = saveAutopostJobFromBody(ensureAutopostJob(), body || {});
+    store.audit(admin.id, "autopost_saved", { jobId: job.id, queueLength: autopostEntriesFromJob(job).length });
+    store.save();
+    return sendJson(res, 200, { job: autopostJobView(job) });
+  }
+
+  if (method === "POST" && url.pathname === "/api/admin/autopost/start") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const job = startAutopostJob(ensureAutopostJob());
+    store.audit(admin.id, "autopost_started", { jobId: job.id });
+    store.save();
+    return sendJson(res, 200, { job: autopostJobView(job) });
+  }
+
+  if (method === "POST" && url.pathname === "/api/admin/autopost/pause") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const job = pauseAutopostJob(ensureAutopostJob());
+    store.audit(admin.id, "autopost_paused", { jobId: job.id });
+    store.save();
+    return sendJson(res, 200, { job: autopostJobView(job) });
+  }
+
+  if (method === "POST" && url.pathname === "/api/admin/autopost/reset") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const job = resetAutopostJob(ensureAutopostJob());
+    store.audit(admin.id, "autopost_reset", { jobId: job.id });
+    store.save();
+    return sendJson(res, 200, { job: autopostJobView(job) });
+  }
+
   if (method === "GET" && url.pathname === "/api/ads") {
     const user = requireAuth(req, res);
     if (!user) return;
@@ -2328,6 +2698,14 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, status, { error: message }, req);
   }
 });
+
+setInterval(() => {
+  try {
+    tickAutopostJob();
+  } catch (error) {
+    console.error("Autopost tick failed", error);
+  }
+}, 60 * 1000);
 
 server.listen(PORT, HOST, () => {
   console.log(`SHSID Social running at http://${HOST}:${PORT}`);

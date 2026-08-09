@@ -182,6 +182,22 @@ create table if not exists ads (
   created_at text not null
 );
 
+create table if not exists autopost_jobs (
+  id text primary key,
+  category text not null default 'school',
+  queue_json text not null default '[]',
+  next_index integer not null default 0,
+  next_post_at text,
+  owner_token_digest text not null default '',
+  active integer not null default 1,
+  min_delay_minutes integer not null default 60,
+  max_delay_minutes integer not null default 360,
+  last_post_id text,
+  created_at text not null,
+  updated_at text not null,
+  finished_at text
+);
+
 create index if not exists idx_users_email on users(email);
 create index if not exists idx_users_status on users(status);
 create index if not exists idx_posts_author on posts(author_id);
@@ -195,3 +211,4 @@ create index if not exists idx_reports_status on reports(status);
 create index if not exists idx_audit_logs_actor on audit_logs(actor_id);
 create index if not exists idx_audit_logs_created on audit_logs(created_at desc);
 create index if not exists idx_qna_profile on qna(profile_id);
+create index if not exists idx_autopost_jobs_active on autopost_jobs(active, next_post_at);
