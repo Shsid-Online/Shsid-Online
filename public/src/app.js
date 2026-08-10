@@ -60,7 +60,6 @@ let autopostListCollapsed = false;
 const replySubmittingPostIds = new Set();
 const replyPhotoFilesByPostId = new Map();
 const openReplies = new Set();
-const openAutopostEditors = new Set();
 
 function loadState() {
   const base = structuredClone(initialState);
@@ -568,12 +567,6 @@ function autopostCountdownLabel(value) {
   return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
 }
 
-function autopostEntryPreviewTitle(entry) {
-  const text = String(entry?.text || "").trim();
-  if (!text) return "Untitled staged post";
-  return text.length > 72 ? `${text.slice(0, 72).trimEnd()}...` : text;
-}
-
 function renderAutopostAdminPanel() {
   const job = state.autopostJob;
   if (!currentUser() || currentUser().role !== "admin") return "";
@@ -643,33 +636,39 @@ function renderAutopostAdminPanel() {
       </div>
       <div class="thread-list${autopostListCollapsed ? " is-collapsed" : ""}">
         ${job.entries.map((entry, index) => `
-          <article class="thread-card autopost-thread-card">
-            <div class="thread-head">
-              <div class="thread-topline">
-                <span class="thread-board">${escapeHtml(boardMeta(job.category).slug)}</span>
-                <span class="thread-author">${entry.anonymousNumber ? `Anonymous ${escapeHtml(entry.anonymousNumber)}` : "Anonymous ####"}</span>
-                <span class="thread-separator">/</span>
-                <span class="thread-id">${entry.postNumber ? `No.${escapeHtml(entry.postNumber)}` : "No.random"}</span>
-                <span class="autopost-status-chip ${entry.postedAt ? "is-posted" : "is-pending"}">${entry.postedAt ? "Posted" : `Queued #${index + 1}`}</span>
-                ${entry.postedAt ? "" : `<button class="inline-admin-link" type="button" data-action="autopost-toggle-editor" data-id="${escapeHtml(entry.id)}">${openAutopostEditors.has(entry.id) ? "Hide editor" : "Edit"}</button>`}
+          <article class="post-box autopost-entry-box">
+            <div class="post-box-head">
+              <div>
+                <h2>Queued Post #${index + 1}</h2>
+                <p class="post-box-copy">
+                  ${entry.postedAt
+                    ? `Posted ${escapeHtml(commentTimestamp(entry.postedAt))}${entry.postNumber ? ` as No.${escapeHtml(entry.postNumber)}` : ""}${entry.anonymousNumber ? ` by Anonymous ${escapeHtml(entry.anonymousNumber)}` : ""}.`
+                    : `Board ${escapeHtml(boardMeta(job.category).slug)}. This draft is waiting for the countdown.`}
+                </p>
               </div>
-              <div class="thread-title">${escapeHtml(autopostEntryPreviewTitle(entry))}</div>
+              ${entry.postedAt ? `<span class="autopost-status-chip is-posted">Posted</span>` : `<span class="autopost-status-chip is-pending">Pending</span>`}
             </div>
-            ${entry.text ? `<p class="thread-body">${escapeHtml(entry.text)}</p>` : `<p class="thread-body autopost-empty-copy">Empty draft</p>`}
-            <div class="thread-foot">
-              <span>${escapeHtml(boardMeta(job.category).name)}</span>
-              <span>${entry.postedAt ? `posted ${escapeHtml(timeAgo(entry.postedAt))}` : "waiting to post"}</span>
-              ${entry.postedAt ? `<span>${escapeHtml(commentTimestamp(entry.postedAt))}</span>` : `<span>posts after countdown finishes</span>`}
+            <div class="thread-form autopost-entry-form">
+              <div class="form-row">
+                <label>Board</label>
+                <div class="autopost-form-value">${escapeHtml(boardMeta(job.category).slug)}</div>
+              </div>
+              <div class="form-row">
+                <label>Status</label>
+                <div class="autopost-form-value">
+                  ${entry.postedAt ? "Posted" : "Pending"}
+                  ${entry.postNumber ? ` / No.${escapeHtml(entry.postNumber)}` : ""}
+                  ${entry.anonymousNumber ? ` / Anonymous ${escapeHtml(entry.anonymousNumber)}` : ""}
+                </div>
+              </div>
+              <div class="form-row form-row-textarea">
+                <label for="autopost-entry-${escapeHtml(entry.id)}">Comment (optional)</label>
+                <textarea id="autopost-entry-${escapeHtml(entry.id)}" data-autopost-text="${escapeHtml(entry.id)}" rows="${entry.text.length > 240 ? 6 : 5}" ${entry.postedAt ? "readonly" : ""} placeholder="Write your thread if you want">${escapeHtml(entry.text)}</textarea>
+              </div>
             </div>
             ${entry.postedAt ? "" : `
-              <div class="autopost-editor${openAutopostEditors.has(entry.id) ? " is-open" : ""}">
-                <div class="form-row form-row-textarea">
-                  <label for="autopost-entry-${escapeHtml(entry.id)}">Edit staged post</label>
-                  <textarea id="autopost-entry-${escapeHtml(entry.id)}" data-autopost-text="${escapeHtml(entry.id)}" rows="${entry.text.length > 240 ? 6 : 4}">${escapeHtml(entry.text)}</textarea>
-                </div>
-                <div class="form-actions">
-                  <button class="plain-board-action" type="button" data-action="autopost-remove-entry" data-id="${escapeHtml(entry.id)}">Remove</button>
-                </div>
+              <div class="form-actions">
+                <button class="plain-board-action" type="button" data-action="autopost-remove-entry" data-id="${escapeHtml(entry.id)}">Remove</button>
               </div>
             `}
           </article>
@@ -1847,7 +1846,6 @@ function bindEvents() {
           anonymousNumber: null
         });
         autopostListCollapsed = false;
-        openAutopostEditors.add(newEntryId);
         state.autopostDirty = true;
         render();
         return;
@@ -1857,17 +1855,9 @@ function bindEvents() {
         render();
         return;
       }
-      if (action === "autopost-toggle-editor") {
-        if (!id) return;
-        if (openAutopostEditors.has(id)) openAutopostEditors.delete(id);
-        else openAutopostEditors.add(id);
-        render();
-        return;
-      }
       if (action === "autopost-remove-entry") {
         if (!state.autopostJob) return;
         state.autopostJob.entries = (state.autopostJob.entries || []).filter((entry) => entry.id !== id);
-        openAutopostEditors.delete(id);
         state.autopostDirty = true;
         render();
         return;

@@ -340,10 +340,6 @@ a {
   padding: 12px;
 }
 
-.autopost-thread-card {
-  gap: 0;
-}
-
 .autopost-status-chip {
   padding: 2px 6px;
   border: 1px solid var(--line);
@@ -366,15 +362,21 @@ a {
   font-style: italic;
 }
 
-.autopost-editor {
-  display: none;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--line);
+.autopost-entry-box {
+  margin-bottom: 0;
 }
 
-.autopost-editor.is-open {
-  display: block;
+.autopost-entry-form {
+  margin-top: 14px;
+}
+
+.autopost-form-value {
+  display: table-cell;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #999999;
+  background: #ffffff;
+  color: var(--ink);
 }
 
 .thread-head {
