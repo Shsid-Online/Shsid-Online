@@ -59,6 +59,7 @@ let notificationOutsideClickBound = false;
 let autopostListCollapsed = false;
 const replySubmittingPostIds = new Set();
 const replyPhotoFilesByPostId = new Map();
+const autopostPhotoFilesByEntryId = new Map();
 const openReplies = new Set();
 
 function loadState() {
@@ -263,6 +264,17 @@ async function fetchNotifications({ rerender = false } = {}) {
 
 function normalizeAutopostJob(job) {
   if (!job || typeof job !== "object") return null;
+  const normalizeEntry = (entry, index) => ({
+    id: String(entry?.id || `apq_${index + 1}`),
+    title: String(entry?.title || ""),
+    text: String(entry?.text || ""),
+    media: Array.isArray(entry?.media) ? entry.media : [],
+    requestedAnonymousNumber: Number.isInteger(Number(entry?.requestedAnonymousNumber)) ? Number(entry.requestedAnonymousNumber) : null,
+    postedAt: entry?.postedAt ? String(entry.postedAt) : "",
+    postId: entry?.postId ? String(entry.postId) : "",
+    postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
+    anonymousNumber: Number.isInteger(Number(entry?.anonymousNumber)) ? Number(entry.anonymousNumber) : null
+  });
   return {
     id: String(job.id || ""),
     category: String(job.category || "school").trim().toLowerCase() || "school",
@@ -276,14 +288,8 @@ function normalizeAutopostJob(job) {
     lastPostId: String(job.lastPostId || "").trim(),
     pendingCount: Number.isInteger(Number(job.pendingCount)) ? Number(job.pendingCount) : 0,
     postedCount: Number.isInteger(Number(job.postedCount)) ? Number(job.postedCount) : 0,
-    entries: Array.isArray(job.entries) ? job.entries.map((entry, index) => ({
-      id: String(entry?.id || `apq_${index + 1}`),
-      text: String(entry?.text || ""),
-      postedAt: entry?.postedAt ? String(entry.postedAt) : "",
-      postId: entry?.postId ? String(entry.postId) : "",
-      postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
-      anonymousNumber: Number.isInteger(Number(entry?.anonymousNumber)) ? Number(entry.anonymousNumber) : null
-    })) : []
+    entries: Array.isArray(job.entries) ? job.entries.map(normalizeEntry) : [],
+    defaultEntries: Array.isArray(job.defaultEntries) ? job.defaultEntries.map(normalizeEntry) : []
   };
 }
 
@@ -511,6 +517,34 @@ function selectedPhotoSummary(files, emptyText = "") {
   return `${selected.length} photo${selected.length === 1 ? "" : "s"} selected${preview ? `: ${preview}${extra}` : ""}`;
 }
 
+function autopostEntryPhotoSummary(entry) {
+  const selected = autopostPhotoFilesByEntryId.get(entry.id) || [];
+  if (selected.length) return selectedPhotoSummary(selected, "No photos selected");
+  if (Array.isArray(entry.media) && entry.media.length) {
+    return `${entry.media.length} saved photo${entry.media.length === 1 ? "" : "s"}`;
+  }
+  return "No photos selected";
+}
+
+async function prepareAutopostEntriesForSave(entries) {
+  const prepared = [];
+  for (const entry of (entries || [])) {
+    const queuedFiles = autopostPhotoFilesByEntryId.get(entry.id) || [];
+    let media = Array.isArray(entry.media) ? [...entry.media] : [];
+    if (queuedFiles.length) {
+      if (media.length + queuedFiles.length > 9) {
+        throw new Error("Queued posts can include at most 9 photos");
+      }
+      media = [...media, ...(await uploadPhotos(queuedFiles, 9 - media.length))];
+    }
+    prepared.push({
+      ...entry,
+      media
+    });
+  }
+  return prepared;
+}
+
 function composerPhotos() {
   const inputFiles = document.querySelector("#composer-photo")?.files || [];
   return inputFiles.length ? [...inputFiles] : composerPhotoFiles;
@@ -570,6 +604,7 @@ function autopostCountdownLabel(value) {
 function renderAutopostAdminPanel() {
   const job = state.autopostJob;
   if (!currentUser() || currentUser().role !== "admin") return "";
+  const board = boardMeta(job?.category || "school");
   if (!job) {
     return `
       <section class="post-box">
@@ -620,12 +655,13 @@ function renderAutopostAdminPanel() {
       <div class="active-filter">
         <span><strong>${job.pendingCount}</strong> pending</span>
         <span><strong>${job.postedCount}</strong> posted</span>
-        <span>Thread No. values are already random. Queue posts also get fresh random Anonymous #### numbers.</span>
+        <span>Thread No. values are random. Leave Anonymous No. blank for random or type one you want to use.</span>
       </div>
       <div class="form-actions">
         <button class="board-button primary" type="button" data-action="autopost-save">Save queue</button>
         <button class="board-button ${job.active ? "muted" : "primary"}" type="button" data-action="${job.active ? "autopost-pause" : "autopost-start"}">${job.active ? "Pause countdown" : "Start countdown"}</button>
         <button class="board-button small" type="button" data-action="autopost-add-entry">Add draft</button>
+        <button class="board-button small" type="button" data-action="autopost-load-defaults">Load starter posts</button>
         <button class="board-button small muted" type="button" data-action="autopost-toggle-list">${autopostListCollapsed ? "Show staged posts" : "Hide staged posts"}</button>
         ${state.autopostDirty ? `<span class="form-note">Unsaved changes</span>` : `<span class="form-note">Saved</span>`}
       </div>
@@ -643,7 +679,7 @@ function renderAutopostAdminPanel() {
                 <p class="post-box-copy">
                   ${entry.postedAt
                     ? `Posted ${escapeHtml(commentTimestamp(entry.postedAt))}${entry.postNumber ? ` as No.${escapeHtml(entry.postNumber)}` : ""}${entry.anonymousNumber ? ` by Anonymous ${escapeHtml(entry.anonymousNumber)}` : ""}.`
-                    : `Board ${escapeHtml(boardMeta(job.category).slug)}. This draft is waiting for the countdown.`}
+                    : `Board ${escapeHtml(board.slug)}. This draft is waiting for the countdown.`}
                 </p>
               </div>
               ${entry.postedAt ? `<span class="autopost-status-chip is-posted">Posted</span>` : `<span class="autopost-status-chip is-pending">Pending</span>`}
@@ -651,23 +687,52 @@ function renderAutopostAdminPanel() {
             <div class="thread-form autopost-entry-form">
               <div class="form-row">
                 <label>Board</label>
-                <div class="autopost-form-value">${escapeHtml(boardMeta(job.category).slug)}</div>
+                <div class="autopost-form-value">${escapeHtml(board.slug)}</div>
               </div>
               <div class="form-row">
                 <label>Status</label>
                 <div class="autopost-form-value">
                   ${entry.postedAt ? "Posted" : "Pending"}
                   ${entry.postNumber ? ` / No.${escapeHtml(entry.postNumber)}` : ""}
-                  ${entry.anonymousNumber ? ` / Anonymous ${escapeHtml(entry.anonymousNumber)}` : ""}
+                  ${entry.anonymousNumber
+                    ? ` / Anonymous ${escapeHtml(entry.anonymousNumber)}`
+                    : entry.requestedAnonymousNumber
+                      ? ` / will use Anonymous ${escapeHtml(entry.requestedAnonymousNumber)}`
+                      : ""}
                 </div>
+              </div>
+              <div class="form-row">
+                <label for="autopost-title-${escapeHtml(entry.id)}">Subject (optional)</label>
+                <input id="autopost-title-${escapeHtml(entry.id)}" data-autopost-title="${escapeHtml(entry.id)}" type="text" maxlength="90" value="${escapeHtml(entry.title || "")}" ${entry.postedAt ? "readonly" : ""} placeholder="Add a subject if you want">
               </div>
               <div class="form-row form-row-textarea">
                 <label for="autopost-entry-${escapeHtml(entry.id)}">Comment (optional)</label>
                 <textarea id="autopost-entry-${escapeHtml(entry.id)}" data-autopost-text="${escapeHtml(entry.id)}" rows="${entry.text.length > 240 ? 6 : 5}" ${entry.postedAt ? "readonly" : ""} placeholder="Write your thread if you want">${escapeHtml(entry.text)}</textarea>
               </div>
+              <div class="form-row">
+                <label for="autopost-photo-${escapeHtml(entry.id)}">Photos</label>
+                <input id="autopost-photo-${escapeHtml(entry.id)}" data-autopost-photo="${escapeHtml(entry.id)}" type="file" accept="image/*" multiple ${entry.postedAt ? "disabled" : ""}>
+              </div>
+              <div class="form-row form-row-note">
+                <span></span>
+                <span class="selected-photo-note" id="autopost-photo-note-${escapeHtml(entry.id)}">${escapeHtml(autopostEntryPhotoSummary(entry))}</span>
+              </div>
+              ${Array.isArray(entry.media) && entry.media.length ? `
+                <div class="autopost-entry-media">
+                  ${entry.media.map((item) => `
+                    <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.name || entry.title || "Queued photo")}" loading="lazy">
+                  `).join("")}
+                </div>
+              ` : ""}
+              <div class="form-row">
+                <label for="autopost-anonymous-number-${escapeHtml(entry.id)}">Anonymous No. (admin)</label>
+                <input id="autopost-anonymous-number-${escapeHtml(entry.id)}" data-autopost-anonymous-number="${escapeHtml(entry.id)}" type="number" min="1000" max="9999" list="admin-anonymous-options" value="${escapeHtml(entry.requestedAnonymousNumber || "")}" ${entry.postedAt ? "readonly" : ""} placeholder="Leave blank for random">
+              </div>
             </div>
             ${entry.postedAt ? "" : `
               <div class="form-actions">
+                <button class="board-button primary" type="button" data-action="autopost-save">Save queued post</button>
+                ${Array.isArray(entry.media) && entry.media.length ? `<button class="plain-board-action" type="button" data-action="autopost-clear-entry-media" data-id="${escapeHtml(entry.id)}">Clear photos</button>` : ""}
                 <button class="plain-board-action" type="button" data-action="autopost-remove-entry" data-id="${escapeHtml(entry.id)}">Remove</button>
               </div>
             `}
@@ -1648,6 +1713,16 @@ function bindEvents() {
     state.autopostJob.maxDelayMinutes = Math.max(1, Number(event.target.value || 360));
     state.autopostDirty = true;
   });
+  document.querySelectorAll("[data-autopost-title]").forEach((input) => {
+    input.addEventListener("input", (event) => {
+      if (!state.autopostJob) return;
+      const entryId = String(event.target.dataset.autopostTitle || "");
+      const entry = (state.autopostJob.entries || []).find((item) => item.id === entryId);
+      if (!entry || entry.postedAt) return;
+      entry.title = String(event.target.value || "");
+      state.autopostDirty = true;
+    });
+  });
   document.querySelectorAll("[data-autopost-text]").forEach((input) => {
     input.addEventListener("input", (event) => {
       if (!state.autopostJob) return;
@@ -1655,6 +1730,27 @@ function bindEvents() {
       const entry = (state.autopostJob.entries || []).find((item) => item.id === entryId);
       if (!entry || entry.postedAt) return;
       entry.text = String(event.target.value || "");
+      state.autopostDirty = true;
+    });
+  });
+  document.querySelectorAll("[data-autopost-anonymous-number]").forEach((input) => {
+    input.addEventListener("input", (event) => {
+      if (!state.autopostJob) return;
+      const entryId = String(event.target.dataset.autopostAnonymousNumber || "");
+      const entry = (state.autopostJob.entries || []).find((item) => item.id === entryId);
+      if (!entry || entry.postedAt) return;
+      const raw = String(event.target.value || "").trim();
+      entry.requestedAnonymousNumber = /^\d{4}$/.test(raw) ? Number(raw) : null;
+      state.autopostDirty = true;
+    });
+  });
+  document.querySelectorAll("[data-autopost-photo]").forEach((input) => {
+    input.addEventListener("change", (event) => {
+      const entryId = String(event.target.dataset.autopostPhoto || "");
+      autopostPhotoFilesByEntryId.set(entryId, [...(event.target.files || [])]);
+      const entry = (state.autopostJob?.entries || []).find((item) => item.id === entryId);
+      const note = document.getElementById(`autopost-photo-note-${entryId}`);
+      if (note && entry) note.textContent = autopostEntryPhotoSummary(entry);
       state.autopostDirty = true;
     });
   });
@@ -1839,7 +1935,10 @@ function bindEvents() {
         const newEntryId = `apq_local_${crypto.randomUUID()}`;
         state.autopostJob.entries.push({
           id: newEntryId,
+          title: "",
           text: "",
+          media: [],
+          requestedAnonymousNumber: null,
           postedAt: "",
           postId: "",
           postNumber: null,
@@ -1855,31 +1954,68 @@ function bindEvents() {
         render();
         return;
       }
+      if (action === "autopost-load-defaults") {
+        if (!state.autopostJob) return;
+        const postedEntries = (state.autopostJob.entries || []).filter((entry) => entry.postedAt);
+        const pendingEntries = (state.autopostJob.defaultEntries || []).map((entry, index) => ({
+          id: entry.id || `apq_seed_${index + 1}`,
+          title: entry.title || "",
+          text: entry.text || "",
+          media: Array.isArray(entry.media) ? [...entry.media] : [],
+          requestedAnonymousNumber: Number.isInteger(Number(entry.requestedAnonymousNumber)) ? Number(entry.requestedAnonymousNumber) : null,
+          postedAt: "",
+          postId: "",
+          postNumber: null,
+          anonymousNumber: null
+        }));
+        state.autopostJob.entries = [...postedEntries, ...pendingEntries];
+        autopostPhotoFilesByEntryId.clear();
+        autopostListCollapsed = false;
+        state.autopostDirty = true;
+        render();
+        return;
+      }
+      if (action === "autopost-clear-entry-media") {
+        if (!state.autopostJob) return;
+        const entry = (state.autopostJob.entries || []).find((item) => item.id === id);
+        if (!entry || entry.postedAt) return;
+        entry.media = [];
+        autopostPhotoFilesByEntryId.delete(id);
+        const input = document.querySelector(`#autopost-photo-${CSS.escape(id)}`);
+        if (input) input.value = "";
+        state.autopostDirty = true;
+        render();
+        return;
+      }
       if (action === "autopost-remove-entry") {
         if (!state.autopostJob) return;
         state.autopostJob.entries = (state.autopostJob.entries || []).filter((entry) => entry.id !== id);
+        autopostPhotoFilesByEntryId.delete(id);
         state.autopostDirty = true;
         render();
         return;
       }
       if (action === "autopost-reload") {
         await fetchAutopostJob();
+        autopostPhotoFilesByEntryId.clear();
         render();
         return;
       }
       if (action === "autopost-save") {
         if (!state.autopostJob) return;
         try {
+          const entries = await prepareAutopostEntriesForSave(state.autopostJob.entries);
           const result = await apiRequest("/admin/autopost", {
             method: "POST",
             body: {
               category: state.autopostJob.category,
               minDelayMinutes: state.autopostJob.minDelayMinutes,
               maxDelayMinutes: state.autopostJob.maxDelayMinutes,
-              entries: state.autopostJob.entries
+              entries
             }
           });
           state.autopostJob = normalizeAutopostJob(result.job);
+          autopostPhotoFilesByEntryId.clear();
           state.autopostDirty = false;
           render();
           toast("Queue saved");
@@ -1897,6 +2033,7 @@ function bindEvents() {
         try {
           const result = await apiRequest(path, { method: "POST", body: {} });
           state.autopostJob = normalizeAutopostJob(result.job);
+          if (action === "autopost-reset") autopostPhotoFilesByEntryId.clear();
           state.autopostDirty = false;
           render();
           toast(

@@ -509,7 +509,10 @@ function ensureGuestAliasForOwnerDigest(ownerDigest) {
 function defaultAutopostQueueEntries() {
   return AUTPOST_QUEUE.map((text, index) => ({
     id: `apq_${index + 1}`,
+    title: "",
     text: String(text || "").trim(),
+    media: [],
+    requestedAnonymousNumber: null,
     postedAt: null,
     postId: null,
     postNumber: null,
@@ -520,7 +523,10 @@ function defaultAutopostQueueEntries() {
 function autopostEntriesFromJob(job) {
   return Array.isArray(job?.entries) ? job.entries.map((entry, index) => ({
     id: String(entry?.id || `apq_${index + 1}`),
+    title: String(entry?.title || "").trim(),
     text: String(entry?.text || "").trim(),
+    media: sanitizeMediaItems(entry?.media, 9),
+    requestedAnonymousNumber: Number.isInteger(Number(entry?.requestedAnonymousNumber)) ? Number(entry.requestedAnonymousNumber) : null,
     postedAt: entry?.postedAt ? String(entry.postedAt) : null,
     postId: entry?.postId ? String(entry.postId) : null,
     postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
@@ -566,7 +572,8 @@ function autopostJobView(job, nowMs = Date.now()) {
     lastPostId: String(job?.lastPostId || ""),
     pendingCount: entries.filter((entry) => !entry.postedAt).length,
     postedCount: entries.filter((entry) => entry.postedAt).length,
-    entries
+    entries,
+    defaultEntries: defaultAutopostQueueEntries()
   };
 }
 
@@ -586,20 +593,26 @@ function sanitizeAutopostDraftEntries(entries) {
   return (Array.isArray(entries) ? entries : [])
     .map((entry, index) => ({
       id: String(entry?.id || `apq_${index + 1}`).trim() || `apq_${index + 1}`,
+      title: String(entry?.title || "").trim().slice(0, MAX_TITLE_LEN),
       text: String(entry?.text || "").trim().slice(0, MAX_TEXT_LEN),
+      media: sanitizeMediaItems(entry?.media, 9),
+      requestedAnonymousNumber: ensureUnusedAnonymousAccountNumber(entry?.requestedAnonymousNumber),
       postedAt: entry?.postedAt ? String(entry.postedAt) : null,
       postId: entry?.postId ? String(entry.postId) : null,
       postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
       anonymousNumber: Number.isInteger(Number(entry?.anonymousNumber)) ? Number(entry.anonymousNumber) : null
     }))
-    .filter((entry) => entry.text);
+    .filter((entry) => entry.title || entry.text || entry.media.length);
 }
 
 function saveAutopostJobFromBody(job, body) {
   const postedEntries = autopostEntriesFromJob(job).slice(0, Number(job.nextIndex || 0));
   const pendingEntries = sanitizeAutopostDraftEntries(body.entries).filter((entry) => !entry.postedAt).map((entry, index) => ({
     id: entry.id || `apq_pending_${index + 1}`,
+    title: entry.title,
     text: entry.text,
+    media: entry.media,
+    requestedAnonymousNumber: entry.requestedAnonymousNumber,
     postedAt: null,
     postId: null,
     postNumber: null,
@@ -640,7 +653,10 @@ function pauseAutopostJob(job) {
 function resetAutopostJob(job) {
   job.entries = autopostEntriesFromJob(job).map((entry, index) => ({
     id: entry.id || `apq_${index + 1}`,
+    title: entry.title,
     text: entry.text,
+    media: entry.media,
+    requestedAnonymousNumber: entry.requestedAnonymousNumber,
     postedAt: null,
     postId: null,
     postNumber: null,
@@ -671,7 +687,7 @@ function tickAutopostJob() {
   const dueAt = new Date(job.nextPostAt || "").getTime();
   if (!Number.isFinite(dueAt) || dueAt > Date.now()) return;
   const entry = entries[job.nextIndex];
-  if (!entry?.text) {
+  if (!entry?.title && !entry?.text && !(entry?.media || []).length) {
     job.nextIndex += 1;
     job.nextPostAt = job.nextIndex >= entries.length ? "" : new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString();
     job.active = job.nextIndex < entries.length;
@@ -684,11 +700,11 @@ function tickAutopostJob() {
   const actorId = getBoardActorId();
   const actor = store.findUserById(actorId);
   if (!actorId || !actor) return;
-  const adminAnonymousNumber = createRandomAdminAnonymousAccountNumber();
+  const adminAnonymousNumber = entry.requestedAnonymousNumber || createRandomAdminAnonymousAccountNumber();
   const post = {
     id: id("pst"),
     authorId: actorId,
-    title: "Untitled thread",
+    title: entry.title || "Untitled thread",
     postNumber: createPostNumber(),
     anonymous: true,
     anonymousLabel: `Anonymous ${adminAnonymousNumber}`,
@@ -697,7 +713,7 @@ function tickAutopostJob() {
     canDelete: true,
     category: sanitizeCategory(job.category),
     text: entry.text,
-    media: [],
+    media: sanitizeMediaItems(entry.media, 9),
     quoteRef: null,
     likes: [],
     hearts: [],

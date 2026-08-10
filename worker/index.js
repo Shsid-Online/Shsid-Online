@@ -2049,8 +2049,10 @@ async function runAutopostCron(env, scheduledTime = Date.now()) {
   if (Number.isFinite(dueAt) && dueAt > scheduledTime) return;
 
   const entry = queue[nextIndex] || null;
+  const postTitle = String(entry?.title || "").trim();
   const postText = String(entry?.text || "").trim();
-  if (!postText) {
+  const postMedia = sanitizeMediaItems(entry?.media, 9);
+  if (!postTitle && !postText && postMedia.length === 0) {
     await advanceAutopostJob(env, job, null, null, null, scheduledTime);
     return;
   }
@@ -2058,7 +2060,10 @@ async function runAutopostCron(env, scheduledTime = Date.now()) {
   const post = await createAutopostBoardThread(env, {
     category: String(job.category || AUTPOST_CATEGORY).trim().toLowerCase() || AUTPOST_CATEGORY,
     ownerTokenDigest: String(job.owner_token_digest || ""),
-    text: postText
+    title: postTitle,
+    text: postText,
+    media: postMedia,
+    requestedAnonymousNumber: entry?.requestedAnonymousNumber
   });
   await advanceAutopostJob(
     env,
@@ -2070,7 +2075,7 @@ async function runAutopostCron(env, scheduledTime = Date.now()) {
   );
 }
 
-async function createAutopostBoardThread(env, { category, ownerTokenDigest, text }) {
+async function createAutopostBoardThread(env, { category, ownerTokenDigest, title, text, media, requestedAnonymousNumber }) {
   const actor = await ensureBoardGuestUser(env);
   await hasPostsTitleColumn(env);
   await hasPostsNumberColumn(env);
@@ -2079,16 +2084,16 @@ async function createAutopostBoardThread(env, { category, ownerTokenDigest, text
   await hasPostsOwnerTokenColumn(env);
   await hasPostsEngagementColumns(env);
   const postNumber = await createPostNumber(env);
-  const adminAnonymousNumber = await createRandomAdminAnonymousAccountNumber(env);
+  const adminAnonymousNumber = requestedAnonymousNumber || await createRandomAdminAnonymousAccountNumber(env);
   const post = {
     id: id("pst"),
     author_id: actor.id,
-    title: "",
+    title: String(title || "").trim().slice(0, MAX_TITLE_LEN),
     post_number: postNumber,
     admin_anonymous_account_number: adminAnonymousNumber,
     category: sanitizeCategory(category),
     text: String(text || "").trim().slice(0, MAX_TEXT_LEN),
-    media: "[]",
+    media: JSON.stringify(sanitizeMediaItems(media, 9)),
     quote_ref: "",
     owner_token_digest: ownerTokenDigest,
     likes: "[]",
@@ -2183,7 +2188,10 @@ function isoFromMs(ms) {
 function defaultAutopostQueueEntries() {
   return AUTPOST_QUEUE.map((text, index) => ({
     id: `apq_${index + 1}`,
+    title: "",
     text: String(text || "").trim(),
+    media: [],
+    requestedAnonymousNumber: null,
     postedAt: null,
     postId: null,
     postNumber: null,
@@ -2194,7 +2202,10 @@ function defaultAutopostQueueEntries() {
 function autopostEntriesFromJob(job) {
   return jsonArray(job?.queue_json).map((entry, index) => ({
     id: String(entry?.id || `apq_${index + 1}`),
+    title: String(entry?.title || "").trim(),
     text: String(entry?.text || "").trim(),
+    media: sanitizeMediaItems(entry?.media, 9),
+    requestedAnonymousNumber: Number.isInteger(Number(entry?.requestedAnonymousNumber)) ? Number(entry.requestedAnonymousNumber) : null,
     postedAt: entry?.postedAt ? String(entry.postedAt) : null,
     postId: entry?.postId ? String(entry.postId) : null,
     postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
@@ -2219,7 +2230,8 @@ function autopostJobView(job, nowMs = Date.now()) {
     lastPostId: job?.last_post_id ? String(job.last_post_id) : null,
     pendingCount: entries.filter((entry) => !entry.postedAt).length,
     postedCount: entries.filter((entry) => entry.postedAt).length,
-    entries
+    entries,
+    defaultEntries: defaultAutopostQueueEntries()
   };
 }
 
@@ -2228,22 +2240,31 @@ function sanitizeAutopostDraftEntries(input) {
   return items
     .map((entry, index) => ({
       id: String(entry?.id || `apq_${index + 1}`).trim() || `apq_${index + 1}`,
+      title: String(entry?.title || "").trim().slice(0, MAX_TITLE_LEN),
       text: String(entry?.text || "").trim().slice(0, MAX_TEXT_LEN),
+      media: sanitizeMediaItems(entry?.media, 9),
+      requestedAnonymousNumber: Number.isInteger(Number(entry?.requestedAnonymousNumber)) ? Number(entry.requestedAnonymousNumber) : null,
       postedAt: entry?.postedAt ? String(entry.postedAt) : null,
       postId: entry?.postId ? String(entry.postId) : null,
       postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
       anonymousNumber: Number.isInteger(Number(entry?.anonymousNumber)) ? Number(entry.anonymousNumber) : null
     }))
-    .filter((entry) => entry.text);
+    .filter((entry) => entry.title || entry.text || entry.media.length);
 }
 
 async function saveAutopostJob(env, job, body) {
   const existingEntries = autopostEntriesFromJob(job);
   const postedEntries = existingEntries.slice(0, Number(job.next_index || 0));
-  const submittedEntries = sanitizeAutopostDraftEntries(body.entries);
+  const submittedEntries = await Promise.all(sanitizeAutopostDraftEntries(body.entries).map(async (entry) => ({
+    ...entry,
+    requestedAnonymousNumber: await ensureUsableAdminAnonymousAccountNumber(env, entry.requestedAnonymousNumber)
+  })));
   const pendingEntries = submittedEntries.filter((entry) => !entry.postedAt).map((entry, index) => ({
     id: entry.id || `apq_pending_${index + 1}`,
+    title: entry.title,
     text: entry.text,
+    media: entry.media,
+    requestedAnonymousNumber: entry.requestedAnonymousNumber,
     postedAt: null,
     postId: null,
     postNumber: null,
@@ -2302,7 +2323,10 @@ async function pauseAutopostJob(env, job) {
 async function resetAutopostJob(env, job) {
   const queue = autopostEntriesFromJob(job).map((entry, index) => ({
     id: entry.id || `apq_${index + 1}`,
+    title: entry.title,
     text: entry.text,
+    media: entry.media,
+    requestedAnonymousNumber: entry.requestedAnonymousNumber,
     postedAt: null,
     postId: null,
     postNumber: null,

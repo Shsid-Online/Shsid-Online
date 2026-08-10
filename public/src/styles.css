@@ -379,6 +379,22 @@ a {
   color: var(--ink);
 }
 
+.autopost-entry-media {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, max-content));
+  gap: 8px;
+}
+
+.autopost-entry-media img {
+  display: block;
+  max-width: min(100%, 220px);
+  max-height: 220px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  background: #ffffff;
+}
+
 .thread-head {
   display: grid;
   gap: 4px;
