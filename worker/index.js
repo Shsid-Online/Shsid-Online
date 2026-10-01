@@ -1,3 +1,6 @@
+import { d1Queue, queueView, queueAction, runQueue } from "../server/instagram-queue.mjs";
+import { loginUrl, exchangeConnection, mediaKey } from "../server/instagram-auth.mjs";
+
 const ALLOWED_ORIGINS = ["https://www.shsid.online", "https://shsid.online", "http://127.0.0.1:4173", "http://localhost:4173"];
 
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -155,9 +158,107 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(runAutopostCron(env, controller?.scheduledTime || Date.now()));
+    const time = controller?.scheduledTime || Date.now();
+    // Preserve the existing website queue's hourly tick.
+    if (new Date(time).getUTCMinutes() === 0) ctx.waitUntil(runAutopostCron(env, time));
+    ctx.waitUntil(instagramCredentials(env).then(credentials => runQueue(d1Queue(env.DB), credentials,
+      id => env.DB.prepare("SELECT id FROM posts WHERE id=? AND deleted_at IS NULL").bind(id).first(), time)));
   }
 };
+
+function getSecurityHeaders(options = {}) {
+  if (options.allowOAuthFrame !== true) return { ...SECURITY_HEADERS };
+  const headers = { ...SECURITY_HEADERS };
+  delete headers["x-frame-options"];
+  headers["content-security-policy"] = "default-src 'self' 'unsafe-inline'; base-uri 'self'; img-src 'self' data: https: blob:; media-src 'self' https: blob:; connect-src 'self' https://www.shsid.online https://shsid.online; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'self'";
+  return headers;
+}
+
+function escapeHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return char;
+    }
+  });
+}
+
+function renderFacebookAuthPage(payload) {
+  const safeJson = escapeHtml(JSON.stringify(payload, null, 2));
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Instagram connection</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(180deg, #f6efe7 0%, #ffffff 100%);
+      color: #1f2937;
+      font-family: Georgia, "Times New Roman", serif;
+    }
+    main {
+      width: min(720px, calc(100vw - 32px));
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid #e5ddd3;
+      border-radius: 20px;
+      box-shadow: 0 24px 60px rgba(84, 57, 35, 0.12);
+      padding: 28px;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(28px, 5vw, 42px);
+      line-height: 1.05;
+    }
+    p {
+      margin: 0 0 16px;
+      font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #4b5563;
+    }
+    pre {
+      margin: 0;
+      padding: 16px;
+      overflow: auto;
+      border-radius: 14px;
+      background: #f9f5ef;
+      border: 1px solid #eadfce;
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #382d24;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${payload.ok ? "Instagram connected" : "Instagram connection failed"}</h1>
+    <p>${payload.ok ? "The login completed and the page data came back from Meta." : "The callback returned an error. The details are below so we can keep debugging without exposing the access token."}</p>
+    <pre>${safeJson}</pre>
+  </main>
+</body>
+</html>`;
+}
+
+async function instagramCredentials(env) {
+  if (env.INSTAGRAM_ACCESS_TOKEN && env.INSTAGRAM_USER_ID) return { token: env.INSTAGRAM_ACCESS_TOKEN, userId: env.INSTAGRAM_USER_ID };
+  const stored = await env.SESSIONS.get("instagram-connection", "json");
+  return stored && stored.expiresAt > Date.now() ? stored : null;
+}
 
 async function handleApi(request, env, url, route) {
   const method = request.method || "GET";
@@ -170,6 +271,73 @@ async function handleApi(request, env, url, route) {
 
   if (method === "GET" && route === "/health") {
     return json({ ok: true, service: "shsid-social-api", time: new Date().toISOString() }, 200);
+  }
+
+  if (method === "GET" && route === "/auth/facebook/start") {
+    if (!env.FACEBOOK_APP_ID || !env.FACEBOOK_APP_SECRET || !env.FACEBOOK_REDIRECT_URI) {
+      return json({ error: "Facebook login is not configured on this server" }, 500);
+    }
+    const authUrl = new URL("https://www.facebook.com/v26.0/dialog/oauth");
+    authUrl.searchParams.set("client_id", String(env.FACEBOOK_APP_ID));
+    authUrl.searchParams.set("redirect_uri", String(env.FACEBOOK_REDIRECT_URI));
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("scope", "instagram_basic,pages_show_list");
+    if (env.FACEBOOK_CONFIG_ID) authUrl.searchParams.set("config_id", String(env.FACEBOOK_CONFIG_ID));
+    return Response.redirect(authUrl.toString(), 302);
+  }
+
+  if (method === "GET" && route === "/auth/facebook/callback") {
+    if (url.searchParams.has("state")) {
+      const state = url.searchParams.get("state");
+      const cookie = request.headers.get("cookie") || "";
+      if (!/^[a-f0-9-]{36}$/.test(state) || !cookie.split(";").some(c => c.trim() === `ig_state=${state}`) || !await env.SESSIONS.get(`ig-state:${state}`)) {
+        return html(renderFacebookAuthPage({ ok: false, error: "Connection expired. Restart from the admin Instagram queue." }), 400);
+      }
+      await env.SESSIONS.delete(`ig-state:${state}`);
+      try {
+        if (!url.searchParams.get("code")) throw new Error("Instagram connection cancelled");
+        const connection = await exchangeConnection(env, url.searchParams.get("code"));
+        await env.SESSIONS.put("instagram-connection", JSON.stringify(connection));
+        return html(renderFacebookAuthPage({ ok: true, account: connection.userId, message: "Return to the admin queue and refresh. Publishing remains paused until you start it." }), 200);
+      } catch (error) {
+        return html(renderFacebookAuthPage({ ok: false, error: error.message }), 400);
+      }
+    }
+    if (!env.FACEBOOK_APP_ID || !env.FACEBOOK_APP_SECRET || !env.FACEBOOK_REDIRECT_URI) {
+      return html(renderFacebookAuthPage({ ok: false, error: "Facebook login is not configured on this server" }), 500, { allowOAuthFrame: true });
+    }
+    const code = String(url.searchParams.get("code") || "").trim();
+    if (!code) {
+      return html(renderFacebookAuthPage({
+        ok: false,
+        error: "Missing code",
+        detail: String(url.searchParams.get("error_message") || url.searchParams.get("error_reason") || url.searchParams.get("error") || "").trim() || null
+      }), 400, { allowOAuthFrame: true });
+    }
+
+    const tokenUrl = new URL("https://graph.facebook.com/v26.0/oauth/access_token");
+    tokenUrl.searchParams.set("client_id", String(env.FACEBOOK_APP_ID));
+    tokenUrl.searchParams.set("client_secret", String(env.FACEBOOK_APP_SECRET));
+    tokenUrl.searchParams.set("redirect_uri", String(env.FACEBOOK_REDIRECT_URI));
+    tokenUrl.searchParams.set("code", code);
+
+    const tokenRes = await fetch(tokenUrl);
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok) return html(renderFacebookAuthPage({ ok: false, error: "Token exchange failed", detail: tokenData }), 400, { allowOAuthFrame: true });
+
+    const pagesUrl = new URL("https://graph.facebook.com/v26.0/me/accounts");
+    pagesUrl.searchParams.set("access_token", String(tokenData.access_token || ""));
+    const pagesRes = await fetch(pagesUrl);
+    const pagesData = await pagesRes.json();
+    if (!pagesRes.ok) return html(renderFacebookAuthPage({ ok: false, error: "Failed to fetch pages", detail: pagesData }), 400, { allowOAuthFrame: true });
+
+    return html(renderFacebookAuthPage({
+      ok: true,
+      connected: true,
+      tokenType: tokenData.token_type || "",
+      expiresIn: tokenData.expires_in || null,
+      pages: sanitizeFacebookPages(pagesData.data)
+    }), 200, { allowOAuthFrame: true });
   }
 
   if (method === "POST" && route === "/upload-url") {
@@ -534,6 +702,34 @@ async function handleApi(request, env, url, route) {
   }
 
   const authUser = await maybeAuthUser(request, env);
+  if (route.startsWith("/admin/instagram")) {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    try {
+      if (method === "POST" && route === "/admin/instagram/connect") {
+        if (!env.FACEBOOK_APP_ID || !env.FACEBOOK_APP_SECRET || !env.FACEBOOK_REDIRECT_URI) return json({ error: "Meta app is not configured" }, 503);
+        const state = crypto.randomUUID();
+        await env.SESSIONS.put(`ig-state:${state}`, authUser.id, { expirationTtl: 600 });
+        const response = json({ url: loginUrl(env, state) });
+        response.headers.set("Set-Cookie", `ig_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600; Domain=shsid.online`);
+        return response;
+      }
+      const repo = d1Queue(env.DB);
+      const credentials = await instagramCredentials(env);
+      if (method === "GET" && route === "/admin/instagram") return json({ queue: queueView(await repo.read(), credentials) });
+      const action = route.slice("/admin/instagram/".length);
+      if (method !== "POST") return json({ error: "Not found" }, 404);
+      let post;
+      if (action === "add") {
+        post = await env.DB.prepare("SELECT id, category, post_number, title, deleted_at FROM posts WHERE id=? AND deleted_at IS NULL").bind(String(body.postId || "")).first();
+        const key = mediaKey(body.imageUrl, url.origin);
+        const image = await env.R2_BUCKET.head(key);
+        if (!image || image.httpMetadata?.contentType !== "image/jpeg" || image.size > 8 * 1024 * 1024) return json({ error: "Screenshot is missing or exceeds 8 MB" }, 400);
+      }
+      const job = await queueAction(repo, action, body, credentials, post, body.imageUrl);
+      await audit(env, authUser.id, `instagram_${action}`, { postId: post?.id || null }, request);
+      return json({ queue: queueView(job, credentials) });
+    } catch (error) { return json({ error: error.message }, error.status || 400); }
+  }
 
   if (method === "GET" && route === "/me") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
@@ -773,7 +969,7 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("update posts set likes=? where id=?").bind(JSON.stringify(nextLikes), row.id).run();
     row.likes = JSON.stringify(nextLikes);
     if (!likes.includes(authUser.id) && row.author_id && row.author_id !== authUser.id) {
-      await createNotification(env, row.author_id, "post_bump", `${notificationActorName(authUser)} bumped your post ${notificationPostLabel(row)}.`);
+      await createNotification(env, row.author_id, "post_bump", `${await anonymousAccountLabelForUserId(env, authUser.id)} bumped your post ${notificationPostLabel(row)}.`);
     }
     return json({ post: await boardPostView(env, row, authUser, ownerDigest) }, 200);
   }
@@ -1737,6 +1933,16 @@ async function handleApi(request, env, url, route) {
   return json({ error: "Not found" }, 404);
 }
 
+function sanitizeFacebookPages(pages) {
+  if (!Array.isArray(pages)) return [];
+  return pages.map((page) => ({
+    id: String(page?.id || ""),
+    name: String(page?.name || ""),
+    category: String(page?.category || ""),
+    tasks: Array.isArray(page?.tasks) ? page.tasks.map((task) => String(task || "")) : []
+  }));
+}
+
 function storyViewModel(row) {
   const text = String(row.text || "");
   if (text.startsWith("__STORY__:")) {
@@ -2058,7 +2264,7 @@ async function runAutopostCron(env, scheduledTime = Date.now()) {
   }
 
   const post = await createAutopostBoardThread(env, {
-    category: String(job.category || AUTPOST_CATEGORY).trim().toLowerCase() || AUTPOST_CATEGORY,
+    category: String(entry?.category || job.category || AUTPOST_CATEGORY).trim().toLowerCase() || AUTPOST_CATEGORY,
     ownerTokenDigest: String(job.owner_token_digest || ""),
     title: postTitle,
     text: postText,
@@ -2185,9 +2391,11 @@ function isoFromMs(ms) {
   return new Date(ms).toISOString();
 }
 
-function defaultAutopostQueueEntries() {
+function defaultAutopostQueueEntries(category = AUTPOST_CATEGORY) {
+  const baseCategory = sanitizeCategory(category || AUTPOST_CATEGORY);
   return AUTPOST_QUEUE.map((text, index) => ({
     id: `apq_${index + 1}`,
+    category: baseCategory,
     title: "",
     text: String(text || "").trim(),
     media: [],
@@ -2202,6 +2410,7 @@ function defaultAutopostQueueEntries() {
 function autopostEntriesFromJob(job) {
   return jsonArray(job?.queue_json).map((entry, index) => ({
     id: String(entry?.id || `apq_${index + 1}`),
+    category: sanitizeCategory(entry?.category || job?.category || AUTPOST_CATEGORY),
     title: String(entry?.title || "").trim(),
     text: String(entry?.text || "").trim(),
     media: sanitizeMediaItems(entry?.media, 9),
@@ -2231,7 +2440,7 @@ function autopostJobView(job, nowMs = Date.now()) {
     pendingCount: entries.filter((entry) => !entry.postedAt).length,
     postedCount: entries.filter((entry) => entry.postedAt).length,
     entries,
-    defaultEntries: defaultAutopostQueueEntries()
+    defaultEntries: defaultAutopostQueueEntries(job?.category || AUTPOST_CATEGORY)
   };
 }
 
@@ -2240,6 +2449,7 @@ function sanitizeAutopostDraftEntries(input) {
   return items
     .map((entry, index) => ({
       id: String(entry?.id || `apq_${index + 1}`).trim() || `apq_${index + 1}`,
+      category: sanitizeCategory(entry?.category || AUTPOST_CATEGORY),
       title: String(entry?.title || "").trim().slice(0, MAX_TITLE_LEN),
       text: String(entry?.text || "").trim().slice(0, MAX_TEXT_LEN),
       media: sanitizeMediaItems(entry?.media, 9),
@@ -2261,6 +2471,7 @@ async function saveAutopostJob(env, job, body) {
   })));
   const pendingEntries = submittedEntries.filter((entry) => !entry.postedAt).map((entry, index) => ({
     id: entry.id || `apq_pending_${index + 1}`,
+    category: entry.category,
     title: entry.title,
     text: entry.text,
     media: entry.media,
@@ -2323,6 +2534,7 @@ async function pauseAutopostJob(env, job) {
 async function resetAutopostJob(env, job) {
   const queue = autopostEntriesFromJob(job).map((entry, index) => ({
     id: entry.id || `apq_${index + 1}`,
+    category: entry.category,
     title: entry.title,
     text: entry.text,
     media: entry.media,
@@ -3039,8 +3251,19 @@ function json(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: {
-      ...SECURITY_HEADERS,
+      ...getSecurityHeaders(),
       "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    }
+  });
+}
+
+function html(payload, status = 200, options = {}) {
+  return new Response(payload, {
+    status,
+    headers: {
+      ...getSecurityHeaders(options),
+      "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store"
     }
   });
@@ -3260,7 +3483,7 @@ async function createNotifications(env, userIds, type, body) {
 
 async function notifyBoardComment(env, post, comment, targetComment, actorUser) {
   const actorId = comment.author_id;
-  const actorLabel = notificationActorName(actorUser);
+  const actorLabel = await anonymousAccountLabelForBoardRow(env, comment);
   const postLabel = notificationPostLabel(post);
   const directRecipients = new Set();
   if (post.author_id && post.author_id !== actorId) directRecipients.add(post.author_id);
@@ -3312,11 +3535,16 @@ function normalizeVerificationCode(value) {
 }
 
 async function hashPassword(password) {
-  return password;
+  const salt = crypto.randomUUID().replaceAll("-", "");
+  return `${salt}:${password}`;
 }
 
 async function verifyPassword(password, stored) {
-  return password === stored;
+  const rawPassword = String(password || "");
+  const rawStored = String(stored || "");
+  const parts = rawStored.split(":");
+  const storedPassword = parts.length >= 2 ? parts.slice(1).join(":") : rawStored;
+  return timingSafeEqual(rawPassword, storedPassword);
 }
 
 function timingSafeEqual(a, b) {

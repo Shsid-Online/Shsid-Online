@@ -4,6 +4,14 @@ const net = require("node:net");
 const fs = require("node:fs");
 const path = require("node:path");
 const tls = require("node:tls");
+const instagramModules = Promise.all([import("./instagram-queue.mjs"), import("./instagram-auth.mjs")]);
+const instagramStates = new Map();
+
+function instagramCredentials() {
+  if (process.env.INSTAGRAM_ACCESS_TOKEN && process.env.INSTAGRAM_USER_ID) return { token: process.env.INSTAGRAM_ACCESS_TOKEN, userId: process.env.INSTAGRAM_USER_ID };
+  const connection = store.data.instagramConnection;
+  return connection?.expiresAt > Date.now() ? connection : null;
+}
 
 loadEnvFile(path.resolve(__dirname, "..", ".env"));
 
@@ -28,6 +36,10 @@ const SMTP_USER = process.env.SMTP_USER || "";
 const SMTP_PASS = process.env.SMTP_PASS || "";
 const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || "no-reply@example.com";
 const SMTP_FROM_NAME = process.env.SMTP_FROM_NAME || "SHSID Social";
+const FACEBOOK_APP_ID = String(process.env.FACEBOOK_APP_ID || "").trim();
+const FACEBOOK_APP_SECRET = String(process.env.FACEBOOK_APP_SECRET || "").trim();
+const FACEBOOK_CONFIG_ID = String(process.env.FACEBOOK_CONFIG_ID || "").trim();
+const FACEBOOK_REDIRECT_URI = String(process.env.FACEBOOK_REDIRECT_URI || "https://shsid.online/auth/facebook/callback").trim();
 const MAX_JSON_BODY_BYTES = 1_000_000;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const UPLOAD_TTL_SECONDS = 10 * 60;
@@ -199,16 +211,24 @@ function getCorsOrigin(origin) {
   if (!origin) return null;
   return ALLOWED_ORIGINS.includes(origin) ? origin : null;
 }
-function getCommonHeaders(req) {
+function getCommonHeaders(req, options = {}) {
+  const allowOAuthFrame = options.allowOAuthFrame === true;
   const origin = getCorsOrigin(req.headers.origin);
-  return {
+  const headers = {
     ...commonHeaders,
     ...(origin ? { "access-control-allow-origin": origin, "access-control-allow-credentials": "true" } : {})
   };
+  if (allowOAuthFrame) {
+    delete headers["x-frame-options"];
+    headers["content-security-policy"] = "default-src 'self' 'unsafe-inline'; base-uri 'self'; img-src 'self' data: https: blob:; media-src 'self' https: blob:; connect-src 'self' https://www.shsid.online https://shsid.online; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'self'";
+  }
+  return {
+    ...headers
+  };
 }
-function send(res, status, payload, headers = {}, req = null) {
+function send(res, status, payload, headers = {}, req = null, options = {}) {
   const body = typeof payload === "string" ? payload : JSON.stringify(payload);
-  const h = req ? getCommonHeaders(req) : commonHeaders;
+  const h = req ? getCommonHeaders(req, options) : commonHeaders;
   res.writeHead(status, {
     ...h,
     "content-type": typeof payload === "string" ? "text/plain; charset=utf-8" : "application/json; charset=utf-8",
@@ -220,6 +240,90 @@ function send(res, status, payload, headers = {}, req = null) {
 
 function sendJson(res, status, payload, req = null) {
   send(res, status, payload, {}, req);
+}
+
+function sendHtml(res, status, html, req = null, options = {}) {
+  send(res, status, html, { "content-type": "text/html; charset=utf-8" }, req, options);
+}
+
+function escapeHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return char;
+    }
+  });
+}
+
+function renderFacebookAuthPage(payload) {
+  const safeJson = escapeHtml(JSON.stringify(payload, null, 2));
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Instagram connection</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(180deg, #f6efe7 0%, #ffffff 100%);
+      color: #1f2937;
+      font-family: Georgia, "Times New Roman", serif;
+    }
+    main {
+      width: min(720px, calc(100vw - 32px));
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid #e5ddd3;
+      border-radius: 20px;
+      box-shadow: 0 24px 60px rgba(84, 57, 35, 0.12);
+      padding: 28px;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(28px, 5vw, 42px);
+      line-height: 1.05;
+    }
+    p {
+      margin: 0 0 16px;
+      font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #4b5563;
+    }
+    pre {
+      margin: 0;
+      padding: 16px;
+      overflow: auto;
+      border-radius: 14px;
+      background: #f9f5ef;
+      border: 1px solid #eadfce;
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #382d24;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${payload.ok ? "Instagram connected" : "Instagram connection failed"}</h1>
+    <p>${payload.ok ? "The login completed and the page data came back from Meta." : "The callback returned an error. The details are below so we can keep debugging without exposing the access token."}</p>
+    <pre>${safeJson}</pre>
+  </main>
+</body>
+</html>`;
 }
 
 function parseBody(req) {
@@ -367,6 +471,16 @@ function normalizeExternalUrl(value) {
   }
 }
 
+function sanitizeFacebookPages(pages) {
+  if (!Array.isArray(pages)) return [];
+  return pages.map((page) => ({
+    id: String(page?.id || ""),
+    name: String(page?.name || ""),
+    category: String(page?.category || ""),
+    tasks: Array.isArray(page?.tasks) ? page.tasks.map((task) => String(task || "")) : []
+  }));
+}
+
 function safeName(value) {
   return String(value || "")
     .replace(/[^a-zA-Z0-9._-]+/g, "-")
@@ -506,9 +620,11 @@ function ensureGuestAliasForOwnerDigest(ownerDigest) {
   return null;
 }
 
-function defaultAutopostQueueEntries() {
+function defaultAutopostQueueEntries(category = AUTPOST_CATEGORY) {
+  const baseCategory = sanitizeCategory(category || AUTPOST_CATEGORY);
   return AUTPOST_QUEUE.map((text, index) => ({
     id: `apq_${index + 1}`,
+    category: baseCategory,
     title: "",
     text: String(text || "").trim(),
     media: [],
@@ -523,6 +639,7 @@ function defaultAutopostQueueEntries() {
 function autopostEntriesFromJob(job) {
   return Array.isArray(job?.entries) ? job.entries.map((entry, index) => ({
     id: String(entry?.id || `apq_${index + 1}`),
+    category: sanitizeCategory(entry?.category || job?.category || AUTPOST_CATEGORY),
     title: String(entry?.title || "").trim(),
     text: String(entry?.text || "").trim(),
     media: sanitizeMediaItems(entry?.media, 9),
@@ -573,7 +690,7 @@ function autopostJobView(job, nowMs = Date.now()) {
     pendingCount: entries.filter((entry) => !entry.postedAt).length,
     postedCount: entries.filter((entry) => entry.postedAt).length,
     entries,
-    defaultEntries: defaultAutopostQueueEntries()
+    defaultEntries: defaultAutopostQueueEntries(job?.category || AUTPOST_CATEGORY)
   };
 }
 
@@ -593,6 +710,7 @@ function sanitizeAutopostDraftEntries(entries) {
   return (Array.isArray(entries) ? entries : [])
     .map((entry, index) => ({
       id: String(entry?.id || `apq_${index + 1}`).trim() || `apq_${index + 1}`,
+      category: sanitizeCategory(entry?.category || AUTPOST_CATEGORY),
       title: String(entry?.title || "").trim().slice(0, MAX_TITLE_LEN),
       text: String(entry?.text || "").trim().slice(0, MAX_TEXT_LEN),
       media: sanitizeMediaItems(entry?.media, 9),
@@ -609,6 +727,7 @@ function saveAutopostJobFromBody(job, body) {
   const postedEntries = autopostEntriesFromJob(job).slice(0, Number(job.nextIndex || 0));
   const pendingEntries = sanitizeAutopostDraftEntries(body.entries).filter((entry) => !entry.postedAt).map((entry, index) => ({
     id: entry.id || `apq_pending_${index + 1}`,
+    category: entry.category,
     title: entry.title,
     text: entry.text,
     media: entry.media,
@@ -653,6 +772,7 @@ function pauseAutopostJob(job) {
 function resetAutopostJob(job) {
   job.entries = autopostEntriesFromJob(job).map((entry, index) => ({
     id: entry.id || `apq_${index + 1}`,
+    category: entry.category,
     title: entry.title,
     text: entry.text,
     media: entry.media,
@@ -711,7 +831,7 @@ function tickAutopostJob() {
     adminAnonymousAccountNumber: adminAnonymousNumber,
     ownerTokenDigest: job.ownerTokenDigest,
     canDelete: true,
-    category: sanitizeCategory(job.category),
+    category: sanitizeCategory(entry.category || job.category),
     text: entry.text,
     media: sanitizeMediaItems(entry.media, 9),
     quoteRef: null,
@@ -1360,7 +1480,7 @@ function pushNotification(userId, type, body) {
 
 function notifyBoardComment(post, comment, actorUser) {
   const actorId = comment.authorId;
-  const actorLabel = notificationActorLabel(actorUser);
+  const actorLabel = anonymousAccountLabelForBoardItem(comment);
   const postLabel = notificationPostLabel(post);
   const directRecipients = new Set();
   if (post.authorId && post.authorId !== actorId) directRecipients.add(post.authorId);
@@ -1421,6 +1541,78 @@ async function handleApi(req, res, url) {
 
   if (method === "GET" && url.pathname === "/api/health") {
     return sendJson(res, 200, { ok: true, service: "shsid-social-api", time: now() });
+  }
+
+  if (method === "GET" && url.pathname === "/auth/facebook/start") {
+    if (!FACEBOOK_APP_ID || !FACEBOOK_APP_SECRET || !FACEBOOK_REDIRECT_URI) {
+      return sendJson(res, 500, { error: "Facebook login is not configured on this server" }, req);
+    }
+    const authUrl = new URL("https://www.facebook.com/v26.0/dialog/oauth");
+    authUrl.searchParams.set("client_id", FACEBOOK_APP_ID);
+    authUrl.searchParams.set("redirect_uri", FACEBOOK_REDIRECT_URI);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("scope", "instagram_basic,pages_show_list");
+    if (FACEBOOK_CONFIG_ID) authUrl.searchParams.set("config_id", FACEBOOK_CONFIG_ID);
+    res.writeHead(302, { location: authUrl.toString() });
+    res.end();
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/auth/facebook/callback") {
+    if (url.searchParams.has("state")) {
+      const state = url.searchParams.get("state");
+      const expires = instagramStates.get(state);
+      if (!expires || expires < Date.now() || !(req.headers.cookie || "").split(";").some(c => c.trim() === `ig_state=${state}`)) {
+        return sendHtml(res, 400, renderFacebookAuthPage({ ok: false, error: "Connection expired. Restart from the admin queue." }), req);
+      }
+      instagramStates.delete(state);
+      try {
+        if (!url.searchParams.get("code")) throw new Error("Instagram connection cancelled");
+        const [, auth] = await instagramModules;
+        store.data.instagramConnection = await auth.exchangeConnection(process.env, url.searchParams.get("code"));
+        store.save();
+        return sendHtml(res, 200, renderFacebookAuthPage({ ok: true, account: store.data.instagramConnection.userId }), req);
+      } catch (error) { return sendHtml(res, 400, renderFacebookAuthPage({ ok: false, error: error.message }), req); }
+    }
+    if (!FACEBOOK_APP_ID || !FACEBOOK_APP_SECRET || !FACEBOOK_REDIRECT_URI) {
+      return sendHtml(res, 500, renderFacebookAuthPage({ ok: false, error: "Facebook login is not configured on this server" }), req, { allowOAuthFrame: true });
+    }
+    const code = String(url.searchParams.get("code") || "").trim();
+    if (!code) {
+      return sendHtml(res, 400, renderFacebookAuthPage({
+        ok: false,
+        error: "Missing code",
+        detail: String(url.searchParams.get("error_message") || url.searchParams.get("error_reason") || url.searchParams.get("error") || "").trim() || null
+      }), req, { allowOAuthFrame: true });
+    }
+
+    const tokenUrl = new URL("https://graph.facebook.com/v26.0/oauth/access_token");
+    tokenUrl.searchParams.set("client_id", FACEBOOK_APP_ID);
+    tokenUrl.searchParams.set("client_secret", FACEBOOK_APP_SECRET);
+    tokenUrl.searchParams.set("redirect_uri", FACEBOOK_REDIRECT_URI);
+    tokenUrl.searchParams.set("code", code);
+
+    const tokenRes = await fetch(tokenUrl);
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok) {
+      return sendHtml(res, 400, renderFacebookAuthPage({ ok: false, error: "Token exchange failed", detail: tokenData }), req, { allowOAuthFrame: true });
+    }
+
+    const pagesUrl = new URL("https://graph.facebook.com/v26.0/me/accounts");
+    pagesUrl.searchParams.set("access_token", String(tokenData.access_token || ""));
+    const pagesRes = await fetch(pagesUrl);
+    const pagesData = await pagesRes.json();
+    if (!pagesRes.ok) {
+      return sendHtml(res, 400, renderFacebookAuthPage({ ok: false, error: "Failed to fetch pages", detail: pagesData }), req, { allowOAuthFrame: true });
+    }
+
+    return sendHtml(res, 200, renderFacebookAuthPage({
+      ok: true,
+      connected: true,
+      tokenType: tokenData.token_type || "",
+      expiresIn: tokenData.expires_in || null,
+      pages: sanitizeFacebookPages(pagesData.data)
+    }), req, { allowOAuthFrame: true });
   }
 
   if (method === "POST" && url.pathname === "/api/upload-url") {
@@ -1772,7 +1964,7 @@ async function handleApi(req, res, url) {
     const wasLiked = post.likes.includes(user.id);
     post.likes = wasLiked ? post.likes.filter((item) => item !== user.id) : [...post.likes, user.id];
     if (!wasLiked && post.authorId && post.authorId !== user.id) {
-      pushNotification(post.authorId, "post_bump", `${notificationActorLabel(user)} bumped your post ${notificationPostLabel(post)}.`);
+      pushNotification(post.authorId, "post_bump", `${anonymousAccountLabelForUserId(user.id)} bumped your post ${notificationPostLabel(post)}.`);
     }
     store.save();
     return sendJson(res, 200, { post: boardPostView(post, user, boardOwnerDigest(req)) });
@@ -2292,6 +2484,38 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { suggestions: items, pagination });
   }
 
+  if (url.pathname.startsWith("/api/admin/instagram")) {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const [queue, auth] = await instagramModules;
+    if (method === "POST" && url.pathname === "/api/admin/instagram/connect") {
+      if (!FACEBOOK_APP_ID || !FACEBOOK_APP_SECRET || !FACEBOOK_REDIRECT_URI) return sendJson(res, 503, { error: "Meta app is not configured" }, req);
+      const state = crypto.randomUUID();
+      for (const [key, expiry] of instagramStates) if (expiry < Date.now()) instagramStates.delete(key);
+      instagramStates.set(state, Date.now() + 600000);
+      res.setHeader("Set-Cookie", `ig_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`);
+      return sendJson(res, 200, { url: auth.loginUrl(process.env, state) }, req);
+    }
+    const repo = queue.localQueue(store);
+    const credentials = instagramCredentials();
+    if (method === "GET" && url.pathname === "/api/admin/instagram") return sendJson(res, 200, { queue: queue.queueView(await repo.read(), credentials) }, req);
+    if (method !== "POST") return notFound(res);
+    const action = url.pathname.slice("/api/admin/instagram/".length);
+    let post;
+    try {
+      if (action === "add") {
+        post = store.data.posts.find(p => p.id === body.postId && !p.deletedAt);
+        const key = auth.mediaKey(body.imageUrl, url.origin);
+        const file = uploadPathForKey(key);
+        if (!fs.existsSync(file) || fs.statSync(file).size > 8 * 1024 * 1024) throw new Error("Screenshot is missing or exceeds 8 MB");
+      }
+      const job = await queue.queueAction(repo, action, body, credentials, post, body.imageUrl);
+      store.audit(admin.id, `instagram_${action}`, { postId: post?.id || null });
+      store.save();
+      return sendJson(res, 200, { queue: queue.queueView(job, credentials) }, req);
+    } catch (error) { return sendJson(res, error.status || 400, { error: error.message }, req); }
+  }
+
   if (method === "GET" && url.pathname === "/api/admin/autopost") {
     const admin = requireAdmin(req, res);
     if (!admin) return;
@@ -2702,7 +2926,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 405, { error: "Method not allowed" }, req);
       return;
     }
-    if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/upload/")) {
+    if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/upload/") || url.pathname.startsWith("/auth/facebook/")) {
       await handleApi(req, res, url);
       return;
     }
@@ -2716,6 +2940,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 setInterval(() => {
+  instagramModules.then(([queue]) => queue.runQueue(queue.localQueue(store), instagramCredentials(),
+    id => store.data.posts.find(p => p.id === id && !p.deletedAt)))
+    .catch(() => console.error("Instagram queue tick failed"));
   try {
     tickAutopostJob();
   } catch (error) {

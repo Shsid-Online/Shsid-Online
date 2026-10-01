@@ -5,6 +5,8 @@ compatibility_date = "2026-05-08"
 routes = [
   { pattern = "www.shsid.online/api/*", zone_name = "shsid.online" },
   { pattern = "shsid.online/api/*", zone_name = "shsid.online" },
+  { pattern = "www.shsid.online/auth/facebook/*", zone_name = "shsid.online" },
+  { pattern = "shsid.online/auth/facebook/*", zone_name = "shsid.online" },
   { pattern = "www.shsid.online/upload-url", zone_name = "shsid.online" },
   { pattern = "shsid.online/upload-url", zone_name = "shsid.online" },
   { pattern = "www.shsid.online/upload/*", zone_name = "shsid.online" },
@@ -17,7 +19,7 @@ routes = [
 enabled = true
 
 [triggers]
-crons = ["0 * * * *"]
+crons = ["* * * * *"]
 
 [[d1_databases]]
 binding = "DB"

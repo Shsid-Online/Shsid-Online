@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node server/server.js",
     "dev:static": "npx serve public -l 4173",
-    "check": "node --check public/src/app.js && node --check server/server.js && node --check server/store.js && node --check worker/index.js",
+    "check": "node --check public/src/app.js && node --check server/server.js && node --check server/store.js && node --check worker/index.js && node --check server/instagram-queue.mjs && node --check server/instagram-auth.mjs",
+    "test:instagram": "node --test tests/instagram-queue.test.mjs",
+    "vendor:screenshot": "node scripts/vendor-screenshot.mjs",
     "cf:dev": "wrangler dev worker/index.js",
     "cf:deploy": "wrangler deploy worker/index.js"
   },
@@ -18,7 +20,8 @@
   "author": "",
   "license": "UNLICENSED",
   "dependencies": {
-    "firebase": "^12.12.1"
+    "firebase": "^12.12.1",
+    "html2canvas": "^1.4.1"
   },
   "devDependencies": {
     "wrangler": "^4.90.0"

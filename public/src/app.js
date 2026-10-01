@@ -57,6 +57,9 @@ let threadSubmitting = false;
 let composerPhotoFiles = [];
 let notificationOutsideClickBound = false;
 let autopostListCollapsed = false;
+let instagramQueue = null;
+let instagramPreview = null;
+let instagramBusy = false;
 const replySubmittingPostIds = new Set();
 const replyPhotoFilesByPostId = new Map();
 const autopostPhotoFilesByEntryId = new Map();
@@ -266,6 +269,7 @@ function normalizeAutopostJob(job) {
   if (!job || typeof job !== "object") return null;
   const normalizeEntry = (entry, index) => ({
     id: String(entry?.id || `apq_${index + 1}`),
+    category: String(entry?.category || job?.category || "school").trim().toLowerCase() || "school",
     title: String(entry?.title || ""),
     text: String(entry?.text || ""),
     media: Array.isArray(entry?.media) ? entry.media : [],
@@ -294,6 +298,10 @@ function normalizeAutopostJob(job) {
 }
 
 async function fetchAutopostJob() {
+  if (currentUser()?.role === "admin") {
+    try { instagramQueue = (await apiRequest("/admin/instagram")).queue; }
+    catch { instagramQueue = null; }
+  } else instagramQueue = null;
   if (currentUser()?.role !== "admin") {
     state.autopostJob = null;
     state.autopostDirty = false;
@@ -304,8 +312,10 @@ async function fetchAutopostJob() {
     const result = await apiRequest("/admin/autopost");
     state.autopostJob = normalizeAutopostJob(result.job);
     state.autopostDirty = false;
+    autopostPhotoFilesByEntryId.clear();
   } catch (error) {
     state.autopostJob = null;
+    autopostPhotoFilesByEntryId.clear();
     toast(error.message || "Could not load admin queue");
   }
 }
@@ -362,6 +372,7 @@ async function apiRequest(path, { method = "GET", body, auth = true, optionalAut
   }
   const response = await fetch(`${API_BASE}${path}`, {
     method,
+    credentials: "include",
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
@@ -526,6 +537,10 @@ function autopostEntryPhotoSummary(entry) {
   return "No photos selected";
 }
 
+function autopostEntryHasQueuedPhotos(entryId) {
+  return (autopostPhotoFilesByEntryId.get(String(entryId || "")) || []).length > 0;
+}
+
 async function prepareAutopostEntriesForSave(entries) {
   const prepared = [];
   for (const entry of (entries || [])) {
@@ -543,6 +558,24 @@ async function prepareAutopostEntriesForSave(entries) {
     });
   }
   return prepared;
+}
+
+async function saveAutopostJobDraft() {
+  if (!state.autopostJob) throw new Error("Queue is not loaded");
+  const entries = await prepareAutopostEntriesForSave(state.autopostJob.entries);
+  const result = await apiRequest("/admin/autopost", {
+    method: "POST",
+    body: {
+      category: state.autopostJob.category,
+      minDelayMinutes: state.autopostJob.minDelayMinutes,
+      maxDelayMinutes: state.autopostJob.maxDelayMinutes,
+      entries
+    }
+  });
+  state.autopostJob = normalizeAutopostJob(result.job);
+  autopostPhotoFilesByEntryId.clear();
+  state.autopostDirty = false;
+  return result;
 }
 
 function composerPhotos() {
@@ -601,6 +634,161 @@ function autopostCountdownLabel(value) {
   return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
 }
 
+function renderAutopostBoardField(entry) {
+  if (entry.postedAt) {
+    return `<div class="autopost-form-value">${escapeHtml(boardMeta(entry.category).slug)}</div>`;
+  }
+  return `
+    <select id="autopost-board-${escapeHtml(entry.id)}" data-autopost-category="${escapeHtml(entry.id)}">
+      ${BOARDS.map((item) => `<option value="${escapeHtml(item.category)}"${entry.category === item.category ? " selected" : ""}>${escapeHtml(item.slug)}</option>`).join("")}
+    </select>
+  `;
+}
+
+function renderAutopostEntry(entry, index, job) {
+  const entryBoard = boardMeta(entry.category);
+  const statusText = entry.postedAt
+    ? "Posted"
+    : "Pending";
+  const identityText = entry.anonymousNumber
+    ? ` / Anonymous ${escapeHtml(entry.anonymousNumber)}`
+    : entry.requestedAnonymousNumber
+      ? ` / will use Anonymous ${escapeHtml(entry.requestedAnonymousNumber)}`
+      : "";
+  return `
+    <article class="post-box autopost-entry-box">
+      <div class="post-box-head">
+        <div>
+          <h2>Queued Post #${index + 1}</h2>
+          <p class="post-box-copy">
+            ${entry.postedAt
+              ? `Posted ${escapeHtml(commentTimestamp(entry.postedAt))}${entry.postNumber ? ` as No.${escapeHtml(entry.postNumber)}` : ""}${entry.anonymousNumber ? ` by Anonymous ${escapeHtml(entry.anonymousNumber)}` : ""}.`
+              : `Board ${escapeHtml(entryBoard.slug)}. This draft is waiting for the countdown.`}
+          </p>
+        </div>
+        ${entry.postedAt ? `<span class="autopost-status-chip is-posted">Posted</span>` : `<span class="autopost-status-chip is-pending">Pending</span>`}
+      </div>
+      ${entry.postedAt ? "" : `
+        <div class="autopost-entry-toolbar">
+          <button class="plain-board-action" type="button" data-action="autopost-move-entry-up" data-id="${escapeHtml(entry.id)}"${index === 0 ? " disabled" : ""}>Move up</button>
+          <button class="plain-board-action" type="button" data-action="autopost-move-entry-down" data-id="${escapeHtml(entry.id)}"${index === job.entries.length - 1 ? " disabled" : ""}>Move down</button>
+          <button class="plain-board-action" type="button" data-action="autopost-duplicate-entry" data-id="${escapeHtml(entry.id)}">Duplicate</button>
+        </div>
+      `}
+      <div class="thread-form autopost-entry-form">
+        <div class="form-row">
+          <label for="autopost-board-${escapeHtml(entry.id)}">Board</label>
+          ${renderAutopostBoardField(entry)}
+        </div>
+        <div class="form-row">
+          <label>Status</label>
+          <div class="autopost-form-value">
+            ${statusText}
+            ${entry.postNumber ? ` / No.${escapeHtml(entry.postNumber)}` : ""}
+            ${identityText}
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="autopost-title-${escapeHtml(entry.id)}">Subject (optional)</label>
+          <input id="autopost-title-${escapeHtml(entry.id)}" data-autopost-title="${escapeHtml(entry.id)}" type="text" maxlength="90" value="${escapeHtml(entry.title || "")}" ${entry.postedAt ? "readonly" : ""} placeholder="Add a subject if you want">
+        </div>
+        <div class="form-row form-row-textarea">
+          <label for="autopost-entry-${escapeHtml(entry.id)}">Comment (optional)</label>
+          <textarea id="autopost-entry-${escapeHtml(entry.id)}" data-autopost-text="${escapeHtml(entry.id)}" rows="${entry.text.length > 240 ? 6 : 5}" ${entry.postedAt ? "readonly" : ""} placeholder="Write your thread if you want">${escapeHtml(entry.text)}</textarea>
+        </div>
+        <div class="form-row">
+          <label for="autopost-photo-${escapeHtml(entry.id)}">Photos</label>
+          <input id="autopost-photo-${escapeHtml(entry.id)}" data-autopost-photo="${escapeHtml(entry.id)}" type="file" accept="image/*" multiple ${entry.postedAt ? "disabled" : ""}>
+        </div>
+        <div class="form-row form-row-note">
+          <span></span>
+          <span class="selected-photo-note" id="autopost-photo-note-${escapeHtml(entry.id)}">${escapeHtml(autopostEntryPhotoSummary(entry))}</span>
+        </div>
+        ${Array.isArray(entry.media) && entry.media.length ? `
+          <div class="autopost-entry-media">
+            ${entry.media.map((item) => `
+              <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.name || entry.title || "Queued photo")}" loading="lazy">
+            `).join("")}
+          </div>
+        ` : ""}
+        <div class="form-row">
+          <label for="autopost-anonymous-number-${escapeHtml(entry.id)}">Anonymous No. (admin)</label>
+          <input id="autopost-anonymous-number-${escapeHtml(entry.id)}" data-autopost-anonymous-number="${escapeHtml(entry.id)}" type="number" min="1000" max="9999" list="admin-anonymous-options" value="${escapeHtml(entry.requestedAnonymousNumber || "")}" ${entry.postedAt ? "readonly" : ""} placeholder="Leave blank for random">
+        </div>
+      </div>
+      ${entry.postedAt ? "" : `
+        <div class="form-actions">
+          <button class="board-button primary" type="button" data-action="autopost-save">Save queued post</button>
+          ${(Array.isArray(entry.media) && entry.media.length) || autopostEntryHasQueuedPhotos(entry.id) ? `<button class="plain-board-action" type="button" data-action="autopost-clear-entry-media" data-id="${escapeHtml(entry.id)}">Clear photos</button>` : ""}
+          <button class="plain-board-action" type="button" data-action="autopost-remove-entry" data-id="${escapeHtml(entry.id)}">Remove</button>
+        </div>
+      `}
+    </article>
+  `;
+}
+
+function renderInstagramQueue() {
+  const queue = instagramQueue;
+  const entries = (queue?.entries || []).filter(e => e.status !== "removed");
+  return `<section class="post-box instagram-queue">
+    <h2>Instagram queue</h2>
+    <p>Select "Queue for Instagram" on a board post, review its screenshot, then add it here. Posts publish in order, ten minutes apart, even when this page is closed.</p>
+    <p>${queue ? queue.connected ? "Instagram connected" : "Instagram connection required before starting" : "Queue not loaded"} · ${queue?.active ? `Running. Next eligible post: ${escapeHtml(new Date(queue.nextAt).toLocaleString())}` : "Paused"}</p>
+    <div class="instagram-actions">
+      <button class="board-button" data-action="instagram-connect">${queue?.connected ? "Reconnect Instagram" : "Connect Instagram"}</button>
+      <button class="board-button" data-action="instagram-refresh">Refresh status</button>
+      <button class="board-button primary" data-action="instagram-${queue?.active ? "pause" : "start"}" ${!queue || (!queue.active && !queue.connected) ? "disabled" : ""}>${queue?.active ? "Pause queue" : "Start queue"}</button>
+    </div>
+    ${instagramPreview ? `<div id="instagram-preview" class="instagram-preview">
+      <h3>Review screenshot</h3><img src="${instagramPreview.url}" alt="Screenshot that will be posted to Instagram">
+      <p>Caption: ${escapeHtml(instagramPreview.caption)}</p>
+      <button class="board-button primary" data-action="instagram-add">Add this screenshot to queue</button>
+      <button class="board-button" data-action="instagram-dismiss">Cancel preview</button>
+    </div>` : ""}
+    <div class="instagram-entries">${entries.length ? entries.map(e => `<article class="instagram-entry">
+      <a href="${escapeHtml(e.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(e.imageUrl)}" alt="${escapeHtml(e.caption)}" loading="lazy"></a>
+      <div><strong>${escapeHtml(e.caption)}</strong><p>${escapeHtml(e.title)}</p><p>${escapeHtml(e.status)}${e.publishedAt ? ` · ${escapeHtml(new Date(e.publishedAt).toLocaleString())}` : ""}</p>
+      ${e.error ? `<p role="alert">${escapeHtml(e.error)}</p>` : ""}
+      ${["queued", "processing", "failed"].includes(e.status) ? `<button class="board-button small" data-action="instagram-remove" data-id="${escapeHtml(e.id)}">Remove</button>` : ""}
+      ${e.status === "review" ? `<button class="board-button small" data-action="instagram-resolve" data-id="${escapeHtml(e.id)}">I checked Instagram: archive item</button>` : ""}
+      </div></article>`).join("") : "<p>No posts selected.</p>"}</div>
+  </section>`;
+}
+
+async function captureInstagramPost(post) {
+  const { default: html2canvas } = await import("../vendor/html2canvas.js");
+  const frame = document.createElement("div");
+  frame.className = "instagram-capture";
+  frame.innerHTML = renderThreadCard(post, 0);
+  frame.querySelectorAll(".inline-admin-link, .thread-foot, .reply-list, .reply-form, .reply-toggle").forEach(el => el.remove());
+  // Capture only the public original post, never admin controls or open reply drafts.
+  const objectUrls = [];
+  document.body.append(frame);
+  try {
+    await document.fonts.ready;
+    await Promise.all([...frame.querySelectorAll("img")].map(async img => {
+      const response = await fetch(img.src, { mode: "cors", signal: AbortSignal.timeout(15000) });
+      if (!response.ok) throw new Error("A post image could not be loaded. Screenshot was not queued.");
+      const url = URL.createObjectURL(await response.blob()); objectUrls.push(url);
+      img.loading = "eager"; img.src = url;
+      await img.decode();
+    }));
+    if (frame.scrollHeight > 6000) throw new Error("This post is too tall for a readable single-image screenshot.");
+    const capture = await html2canvas(frame, { scale: 2, backgroundColor: "#eef2e0", logging: false, windowWidth: 900 });
+    const canvas = document.createElement("canvas");
+    canvas.width = 1080; canvas.height = 1350;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#eef2e0"; ctx.fillRect(0, 0, 1080, 1350);
+    const scale = Math.min(1000 / capture.width, 1190 / capture.height);
+    if (720 * scale * 2 < 480) throw new Error("This post is too long to fit legibly. A multi-image layout is needed.");
+    const width = capture.width * scale, height = capture.height * scale;
+    ctx.drawImage(capture, (1080 - width) / 2, (1270 - height) / 2, width, height);
+    ctx.fillStyle = "#4f5b3b"; ctx.font = "24px Arial"; ctx.textAlign = "center";
+    ctx.fillText("shsid.online", 540, 1310);
+    return await new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Screenshot creation failed")), "image/jpeg", 0.94));
+  } finally { frame.remove(); objectUrls.forEach(url => URL.revokeObjectURL(url)); }
+}
+
 function renderAutopostAdminPanel() {
   const job = state.autopostJob;
   if (!currentUser() || currentUser().role !== "admin") return "";
@@ -621,8 +809,8 @@ function renderAutopostAdminPanel() {
     <section class="post-box admin-queue-box">
       <div class="post-box-head">
         <div>
-          <h2>Admin Queue</h2>
-          <p class="post-box-copy">Edit the staged list, save it, then start the countdown when you want posting to begin.</p>
+          <h2>Fake Posting Dashboard</h2>
+          <p class="post-box-copy">Build each queued post like a real thread draft, save it, then start the countdown when you want posting to begin.</p>
         </div>
         <div class="account-actions">
           <button class="board-button small muted" type="button" data-action="autopost-reset">Reset progress</button>
@@ -656,6 +844,7 @@ function renderAutopostAdminPanel() {
         <span><strong>${job.pendingCount}</strong> pending</span>
         <span><strong>${job.postedCount}</strong> posted</span>
         <span>Thread No. values are random. Leave Anonymous No. blank for random or type one you want to use.</span>
+        <span>Default board: <strong>${escapeHtml(board.slug)}</strong></span>
       </div>
       <div class="form-actions">
         <button class="board-button primary" type="button" data-action="autopost-save">Save queue</button>
@@ -671,73 +860,7 @@ function renderAutopostAdminPanel() {
           : `Showing all <strong>${job.entries.length}</strong> staged posts.`}
       </div>
       <div class="thread-list${autopostListCollapsed ? " is-collapsed" : ""}">
-        ${job.entries.map((entry, index) => `
-          <article class="post-box autopost-entry-box">
-            <div class="post-box-head">
-              <div>
-                <h2>Queued Post #${index + 1}</h2>
-                <p class="post-box-copy">
-                  ${entry.postedAt
-                    ? `Posted ${escapeHtml(commentTimestamp(entry.postedAt))}${entry.postNumber ? ` as No.${escapeHtml(entry.postNumber)}` : ""}${entry.anonymousNumber ? ` by Anonymous ${escapeHtml(entry.anonymousNumber)}` : ""}.`
-                    : `Board ${escapeHtml(board.slug)}. This draft is waiting for the countdown.`}
-                </p>
-              </div>
-              ${entry.postedAt ? `<span class="autopost-status-chip is-posted">Posted</span>` : `<span class="autopost-status-chip is-pending">Pending</span>`}
-            </div>
-            <div class="thread-form autopost-entry-form">
-              <div class="form-row">
-                <label>Board</label>
-                <div class="autopost-form-value">${escapeHtml(board.slug)}</div>
-              </div>
-              <div class="form-row">
-                <label>Status</label>
-                <div class="autopost-form-value">
-                  ${entry.postedAt ? "Posted" : "Pending"}
-                  ${entry.postNumber ? ` / No.${escapeHtml(entry.postNumber)}` : ""}
-                  ${entry.anonymousNumber
-                    ? ` / Anonymous ${escapeHtml(entry.anonymousNumber)}`
-                    : entry.requestedAnonymousNumber
-                      ? ` / will use Anonymous ${escapeHtml(entry.requestedAnonymousNumber)}`
-                      : ""}
-                </div>
-              </div>
-              <div class="form-row">
-                <label for="autopost-title-${escapeHtml(entry.id)}">Subject (optional)</label>
-                <input id="autopost-title-${escapeHtml(entry.id)}" data-autopost-title="${escapeHtml(entry.id)}" type="text" maxlength="90" value="${escapeHtml(entry.title || "")}" ${entry.postedAt ? "readonly" : ""} placeholder="Add a subject if you want">
-              </div>
-              <div class="form-row form-row-textarea">
-                <label for="autopost-entry-${escapeHtml(entry.id)}">Comment (optional)</label>
-                <textarea id="autopost-entry-${escapeHtml(entry.id)}" data-autopost-text="${escapeHtml(entry.id)}" rows="${entry.text.length > 240 ? 6 : 5}" ${entry.postedAt ? "readonly" : ""} placeholder="Write your thread if you want">${escapeHtml(entry.text)}</textarea>
-              </div>
-              <div class="form-row">
-                <label for="autopost-photo-${escapeHtml(entry.id)}">Photos</label>
-                <input id="autopost-photo-${escapeHtml(entry.id)}" data-autopost-photo="${escapeHtml(entry.id)}" type="file" accept="image/*" multiple ${entry.postedAt ? "disabled" : ""}>
-              </div>
-              <div class="form-row form-row-note">
-                <span></span>
-                <span class="selected-photo-note" id="autopost-photo-note-${escapeHtml(entry.id)}">${escapeHtml(autopostEntryPhotoSummary(entry))}</span>
-              </div>
-              ${Array.isArray(entry.media) && entry.media.length ? `
-                <div class="autopost-entry-media">
-                  ${entry.media.map((item) => `
-                    <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.name || entry.title || "Queued photo")}" loading="lazy">
-                  `).join("")}
-                </div>
-              ` : ""}
-              <div class="form-row">
-                <label for="autopost-anonymous-number-${escapeHtml(entry.id)}">Anonymous No. (admin)</label>
-                <input id="autopost-anonymous-number-${escapeHtml(entry.id)}" data-autopost-anonymous-number="${escapeHtml(entry.id)}" type="number" min="1000" max="9999" list="admin-anonymous-options" value="${escapeHtml(entry.requestedAnonymousNumber || "")}" ${entry.postedAt ? "readonly" : ""} placeholder="Leave blank for random">
-              </div>
-            </div>
-            ${entry.postedAt ? "" : `
-              <div class="form-actions">
-                <button class="board-button primary" type="button" data-action="autopost-save">Save queued post</button>
-                ${Array.isArray(entry.media) && entry.media.length ? `<button class="plain-board-action" type="button" data-action="autopost-clear-entry-media" data-id="${escapeHtml(entry.id)}">Clear photos</button>` : ""}
-                <button class="plain-board-action" type="button" data-action="autopost-remove-entry" data-id="${escapeHtml(entry.id)}">Remove</button>
-              </div>
-            `}
-          </article>
-        `).join("")}
+        ${job.entries.map((entry, index) => renderAutopostEntry(entry, index, job)).join("")}
       </div>
     </section>
   `;
@@ -1258,6 +1381,7 @@ function renderThreadCard(post, index, options = {}) {
           <span class="thread-separator">/</span>
           <span class="thread-id">No.${displayNumber}</span>
           ${canDeletePost ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
+          ${adminMode ? `<button class="inline-admin-link" data-action="instagram-preview" data-id="${escapeHtml(post.id)}">Queue for Instagram</button>` : ""}
         </div>
         <div class="thread-title">${escapeHtml(post.title)}</div>
       </div>
@@ -1584,6 +1708,7 @@ function render() {
       </section>
 
       ${adminComposer ? renderAutopostAdminPanel() : ""}
+      ${adminComposer ? renderInstagramQueue() : ""}
 
       <section class="thread-controls">
         <label class="control">
@@ -1713,6 +1838,17 @@ function bindEvents() {
     state.autopostJob.maxDelayMinutes = Math.max(1, Number(event.target.value || 360));
     state.autopostDirty = true;
   });
+  document.querySelectorAll("[data-autopost-category]").forEach((input) => {
+    input.addEventListener("change", (event) => {
+      if (!state.autopostJob) return;
+      const entryId = String(event.target.dataset.autopostCategory || "");
+      const entry = (state.autopostJob.entries || []).find((item) => item.id === entryId);
+      if (!entry || entry.postedAt) return;
+      entry.category = String(event.target.value || state.autopostJob.category || "school").trim().toLowerCase() || "school";
+      state.autopostDirty = true;
+      render();
+    });
+  });
   document.querySelectorAll("[data-autopost-title]").forEach((input) => {
     input.addEventListener("input", (event) => {
       if (!state.autopostJob) return;
@@ -1801,6 +1937,44 @@ function bindEvents() {
       const action = button.dataset.action;
       const id = button.dataset.id || "";
       const commentId = button.dataset.commentId || "";
+      if (action.startsWith("instagram-")) {
+        if (instagramBusy || currentUser()?.role !== "admin") return;
+        instagramBusy = true;
+        button.disabled = true;
+        try {
+          if (action === "instagram-preview") {
+            const post = state.posts.find(p => p.id === id);
+            if (!post) throw new Error("Post is no longer loaded");
+            const blob = await captureInstagramPost(post);
+            if (instagramPreview) URL.revokeObjectURL(instagramPreview.url);
+            instagramPreview = { postId: id, blob, url: URL.createObjectURL(blob), caption: `${boardMeta(post.category).slug} No.${post.postNumber}` };
+          } else if (action === "instagram-dismiss") {
+            if (instagramPreview) URL.revokeObjectURL(instagramPreview.url);
+            instagramPreview = null;
+          } else if (action === "instagram-add") {
+            if (!instagramPreview) throw new Error("Preview a post first");
+            const image = await uploadSinglePhoto(new File([instagramPreview.blob], `instagram-${crypto.randomUUID()}.jpg`, { type: "image/jpeg" }));
+            instagramQueue = (await apiRequest("/admin/instagram/add", { method: "POST", body: { postId: instagramPreview.postId, imageUrl: image.url } })).queue;
+            URL.revokeObjectURL(instagramPreview.url); instagramPreview = null;
+            toast("Added to Instagram queue");
+          } else if (action === "instagram-connect") {
+            const result = await apiRequest("/admin/instagram/connect", { method: "POST" });
+            window.location.assign(result.url);
+            return;
+          } else if (action === "instagram-refresh") {
+            instagramQueue = (await apiRequest("/admin/instagram")).queue;
+          } else {
+            const command = action.slice("instagram-".length);
+            if (command === "start" && !window.confirm("Publish the selected screenshots to Instagram, one every 10 minutes? The first post will publish in 10 minutes.")) return;
+            if (command === "resolve" && !window.confirm("Have you checked Instagram? This will archive the uncertain item without retrying it. If it was not published, you can queue the post again.")) return;
+            instagramQueue = (await apiRequest(`/admin/instagram/${command}`, { method: "POST", body: { id } })).queue;
+          }
+          render();
+          if (action === "instagram-preview") document.querySelector("#instagram-preview")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        } catch (error) { toast(error.message || "Instagram queue action failed"); }
+        finally { instagramBusy = false; button.disabled = false; }
+        return;
+      }
       if (action === "open-auth") {
         openAuth("login");
         return;
@@ -1935,6 +2109,7 @@ function bindEvents() {
         const newEntryId = `apq_local_${crypto.randomUUID()}`;
         state.autopostJob.entries.push({
           id: newEntryId,
+          category: state.autopostJob.category || "school",
           title: "",
           text: "",
           media: [],
@@ -1959,6 +2134,7 @@ function bindEvents() {
         const postedEntries = (state.autopostJob.entries || []).filter((entry) => entry.postedAt);
         const pendingEntries = (state.autopostJob.defaultEntries || []).map((entry, index) => ({
           id: entry.id || `apq_seed_${index + 1}`,
+          category: entry.category || state.autopostJob.category || "school",
           title: entry.title || "",
           text: entry.text || "",
           media: Array.isArray(entry.media) ? [...entry.media] : [],
@@ -1971,6 +2147,40 @@ function bindEvents() {
         state.autopostJob.entries = [...postedEntries, ...pendingEntries];
         autopostPhotoFilesByEntryId.clear();
         autopostListCollapsed = false;
+        state.autopostDirty = true;
+        render();
+        return;
+      }
+      if (action === "autopost-move-entry-up" || action === "autopost-move-entry-down") {
+        if (!state.autopostJob) return;
+        const entries = [...(state.autopostJob.entries || [])];
+        const currentIndex = entries.findIndex((entry) => entry.id === id);
+        if (currentIndex < 0) return;
+        const targetIndex = action === "autopost-move-entry-up" ? currentIndex - 1 : currentIndex + 1;
+        if (targetIndex < 0 || targetIndex >= entries.length) return;
+        [entries[currentIndex], entries[targetIndex]] = [entries[targetIndex], entries[currentIndex]];
+        state.autopostJob.entries = entries;
+        state.autopostDirty = true;
+        render();
+        return;
+      }
+      if (action === "autopost-duplicate-entry") {
+        if (!state.autopostJob) return;
+        const entries = [...(state.autopostJob.entries || [])];
+        const currentIndex = entries.findIndex((entry) => entry.id === id);
+        if (currentIndex < 0) return;
+        const source = entries[currentIndex];
+        const cloneId = `apq_local_${crypto.randomUUID()}`;
+        entries.splice(currentIndex + 1, 0, {
+          ...source,
+          id: cloneId,
+          media: Array.isArray(source.media) ? [...source.media] : [],
+          postedAt: "",
+          postId: "",
+          postNumber: null,
+          anonymousNumber: null
+        });
+        state.autopostJob.entries = entries;
         state.autopostDirty = true;
         render();
         return;
@@ -2004,19 +2214,7 @@ function bindEvents() {
       if (action === "autopost-save") {
         if (!state.autopostJob) return;
         try {
-          const entries = await prepareAutopostEntriesForSave(state.autopostJob.entries);
-          const result = await apiRequest("/admin/autopost", {
-            method: "POST",
-            body: {
-              category: state.autopostJob.category,
-              minDelayMinutes: state.autopostJob.minDelayMinutes,
-              maxDelayMinutes: state.autopostJob.maxDelayMinutes,
-              entries
-            }
-          });
-          state.autopostJob = normalizeAutopostJob(result.job);
-          autopostPhotoFilesByEntryId.clear();
-          state.autopostDirty = false;
+          await saveAutopostJobDraft();
           render();
           toast("Queue saved");
         } catch (error) {
@@ -2031,6 +2229,9 @@ function bindEvents() {
             ? "/admin/autopost/pause"
             : "/admin/autopost/reset";
         try {
+          if (action === "autopost-start" && state.autopostDirty) {
+            await saveAutopostJobDraft();
+          }
           const result = await apiRequest(path, { method: "POST", body: {} });
           state.autopostJob = normalizeAutopostJob(result.job);
           if (action === "autopost-reset") autopostPhotoFilesByEntryId.clear();
