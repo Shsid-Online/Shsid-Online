@@ -2,6 +2,9 @@ name = "shsid-online-api"
 main = "worker/index.js"
 compatibility_date = "2026-05-08"
 
+[vars]
+INSTAGRAM_USER_ID = "17841475807417225"
+
 routes = [
   { pattern = "www.shsid.online/api/*", zone_name = "shsid.online" },
   { pattern = "shsid.online/api/*", zone_name = "shsid.online" },

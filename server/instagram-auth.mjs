@@ -24,9 +24,19 @@ export async function exchangeConnection(env, code) {
   for (const required of ["instagram_basic", "instagram_content_publish", "pages_show_list", "pages_read_engagement"]) {
     if (!permissions.data?.some(p => p.permission === required && p.status === "granted")) throw new Error(`Missing ${required}. Update the Meta login configuration and reconnect.`);
   }
+
+  // Some Meta Business Login responses omit Page-linked Instagram accounts from
+  // /me/accounts. A configured account ID is still checked against Meta before use.
+  const configuredUserId = String(env.INSTAGRAM_USER_ID || "").trim();
+  if (configuredUserId) {
+    const account = await get(configuredUserId, { fields: "id,username" }, long.access_token);
+    if (String(account.id || "") !== configuredUserId) throw new Error("Configured Instagram account could not be verified.");
+    return { userId: configuredUserId, token: long.access_token, expiresAt: Date.now() + Number(long.expires_in || 5184000) * 1000 };
+  }
+
   const pages = await get("me/accounts", { fields: "id,instagram_business_account", limit: "100" }, long.access_token);
   const accounts = (pages.data || []).map(p => p.instagram_business_account?.id).filter(Boolean);
-  const userId = env.INSTAGRAM_USER_ID ? accounts.find(id => id === env.INSTAGRAM_USER_ID) : accounts.length === 1 ? accounts[0] : null;
+  const userId = accounts.length === 1 ? accounts[0] : null;
   if (!userId) throw new Error("No unique linked Instagram account found. Link your Instagram to a Facebook Page, or configure INSTAGRAM_USER_ID if you manage multiple accounts.");
   return { userId, token: long.access_token, expiresAt: Date.now() + Number(long.expires_in || 5184000) * 1000 };
 }
