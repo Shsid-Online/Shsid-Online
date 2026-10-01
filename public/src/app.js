@@ -56,7 +56,7 @@ let openReplyPostId = "";
 let threadSubmitting = false;
 let composerPhotoFiles = [];
 let notificationOutsideClickBound = false;
-let autopostListCollapsed = false;
+let autopostEntryIndex = 0;
 let instagramQueue = null;
 let instagramPreview = null;
 let instagramBusy = false;
@@ -805,6 +805,9 @@ function renderAutopostAdminPanel() {
       </section>
     `;
   }
+  const entryCount = job.entries.length;
+  autopostEntryIndex = Math.max(0, Math.min(autopostEntryIndex, Math.max(0, entryCount - 1)));
+  const selectedEntry = job.entries[autopostEntryIndex];
   return `
     <section class="post-box admin-queue-box">
       <div class="post-box-head">
@@ -851,16 +854,15 @@ function renderAutopostAdminPanel() {
         <button class="board-button ${job.active ? "muted" : "primary"}" type="button" data-action="${job.active ? "autopost-pause" : "autopost-start"}">${job.active ? "Pause countdown" : "Start countdown"}</button>
         <button class="board-button small" type="button" data-action="autopost-add-entry">Add draft</button>
         <button class="board-button small" type="button" data-action="autopost-load-defaults">Load starter posts</button>
-        <button class="board-button small muted" type="button" data-action="autopost-toggle-list">${autopostListCollapsed ? "Show staged posts" : "Hide staged posts"}</button>
         ${state.autopostDirty ? `<span class="form-note">Unsaved changes</span>` : `<span class="form-note">Saved</span>`}
       </div>
-      <div class="active-filter">
-        ${autopostListCollapsed
-          ? `Staged posts are hidden. <strong>${job.entries.length}</strong> total drafts in queue.`
-          : `Showing all <strong>${job.entries.length}</strong> staged posts.`}
+      <div class="autopost-entry-navigator" aria-label="Queued post navigation">
+        <button class="plain-board-action" type="button" data-action="autopost-navigate" data-index="${autopostEntryIndex - 1}"${autopostEntryIndex === 0 ? " disabled" : ""}>Previous</button>
+        <strong>${entryCount ? `Post ${autopostEntryIndex + 1} of ${entryCount}` : "No staged posts"}</strong>
+        <button class="plain-board-action" type="button" data-action="autopost-navigate" data-index="${autopostEntryIndex + 1}"${autopostEntryIndex >= entryCount - 1 ? " disabled" : ""}>Next</button>
       </div>
-      <div class="thread-list${autopostListCollapsed ? " is-collapsed" : ""}">
-        ${job.entries.map((entry, index) => renderAutopostEntry(entry, index, job)).join("")}
+      <div class="thread-list">
+        ${selectedEntry ? renderAutopostEntry(selectedEntry, autopostEntryIndex, job) : `<div class="empty-state">Add a draft to begin building the queue.</div>`}
       </div>
     </section>
   `;
@@ -2119,13 +2121,16 @@ function bindEvents() {
           postNumber: null,
           anonymousNumber: null
         });
-        autopostListCollapsed = false;
+        autopostEntryIndex = state.autopostJob.entries.length - 1;
         state.autopostDirty = true;
         render();
         return;
       }
-      if (action === "autopost-toggle-list") {
-        autopostListCollapsed = !autopostListCollapsed;
+      if (action === "autopost-navigate") {
+        const index = Number(button.dataset.index);
+        const entries = state.autopostJob?.entries || [];
+        if (!Number.isInteger(index) || index < 0 || index >= entries.length) return;
+        autopostEntryIndex = index;
         render();
         return;
       }
@@ -2146,7 +2151,7 @@ function bindEvents() {
         }));
         state.autopostJob.entries = [...postedEntries, ...pendingEntries];
         autopostPhotoFilesByEntryId.clear();
-        autopostListCollapsed = false;
+        autopostEntryIndex = 0;
         state.autopostDirty = true;
         render();
         return;
@@ -2160,6 +2165,7 @@ function bindEvents() {
         if (targetIndex < 0 || targetIndex >= entries.length) return;
         [entries[currentIndex], entries[targetIndex]] = [entries[targetIndex], entries[currentIndex]];
         state.autopostJob.entries = entries;
+        autopostEntryIndex = targetIndex;
         state.autopostDirty = true;
         render();
         return;
@@ -2181,6 +2187,7 @@ function bindEvents() {
           anonymousNumber: null
         });
         state.autopostJob.entries = entries;
+        autopostEntryIndex = currentIndex + 1;
         state.autopostDirty = true;
         render();
         return;
@@ -2201,6 +2208,7 @@ function bindEvents() {
         if (!state.autopostJob) return;
         state.autopostJob.entries = (state.autopostJob.entries || []).filter((entry) => entry.id !== id);
         autopostPhotoFilesByEntryId.delete(id);
+        autopostEntryIndex = Math.min(autopostEntryIndex, Math.max(0, state.autopostJob.entries.length - 1));
         state.autopostDirty = true;
         render();
         return;

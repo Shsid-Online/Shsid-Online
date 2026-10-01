@@ -393,6 +393,22 @@ a {
   margin: 8px 0 0;
 }
 
+.autopost-entry-navigator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 16px 0 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.autopost-entry-navigator strong {
+  min-width: 120px;
+  text-align: center;
+}
+
 .autopost-form-value {
   display: table-cell;
   width: 100%;
