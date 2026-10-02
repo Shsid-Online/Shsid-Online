@@ -824,7 +824,7 @@ function tickAutopostJob() {
   const post = {
     id: id("pst"),
     authorId: actorId,
-    title: entry.title || "Untitled thread",
+    title: entry.title || "",
     postNumber: createPostNumber(),
     anonymous: true,
     anonymousLabel: `Anonymous ${adminAnonymousNumber}`,
@@ -1925,7 +1925,7 @@ async function handleApi(req, res, url) {
     const post = {
       id: id("pst"),
       authorId,
-      title: title || "Untitled thread",
+      title,
       postNumber,
       anonymous: true,
       anonymousLabel: requestedAnonymousNumber ? `Anonymous ${requestedAnonymousNumber}` : anonymousAccountLabelForUserId(authorId),

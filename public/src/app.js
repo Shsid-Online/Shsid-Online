@@ -423,7 +423,7 @@ function normalizePost(post) {
   return {
     id: post.id,
     authorId,
-    title: String(post.title || "").trim() || "Untitled thread",
+    title: String(post.title || "").trim() === "Untitled thread" ? "" : String(post.title || "").trim(),
     postNumber: Number.isInteger(postNumber) && postNumber > 0 ? postNumber : null,
     adminAnonymousAccountNumber: Number.isInteger(Number(post.adminAnonymousAccountNumber)) ? Number(post.adminAnonymousAccountNumber) : null,
     anonymous,
@@ -1385,7 +1385,7 @@ function renderThreadCard(post, index, options = {}) {
           ${canDeletePost ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
           ${adminMode ? `<button class="inline-admin-link" data-action="instagram-preview" data-id="${escapeHtml(post.id)}">Queue for Instagram</button>` : ""}
         </div>
-        <div class="thread-title">${escapeHtml(post.title)}</div>
+        ${post.title ? `<div class="thread-title">${escapeHtml(post.title)}</div>` : ""}
       </div>
       ${post.quoteRef ? `
         ${renderQuoteCard(post.quoteRef)}
