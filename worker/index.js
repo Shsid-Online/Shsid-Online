@@ -1583,7 +1583,15 @@ async function handleApi(request, env, url, route) {
   if (method === "POST" && route === "/admin/autopost") {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     const job = await ensureAutopostJob(env);
-    const updated = await saveAutopostJob(env, job, body || {});
+    let updated;
+    try {
+      updated = await saveAutopostJob(env, job, body || {});
+    } catch (error) {
+      if (error.status === 400 || error.status === 409) {
+        return json({ error: error.message }, error.status);
+      }
+      throw error;
+    }
     await audit(env, authUser.id, "autopost_saved", { jobId: job.id, queueLength: autopostEntriesFromJob(updated).length }, request);
     return json({ job: autopostJobView(updated) }, 200);
   }
@@ -2414,7 +2422,7 @@ function autopostEntriesFromJob(job) {
     title: String(entry?.title || "").trim(),
     text: String(entry?.text || "").trim(),
     media: sanitizeMediaItems(entry?.media, 9),
-    requestedAnonymousNumber: Number.isInteger(Number(entry?.requestedAnonymousNumber)) ? Number(entry.requestedAnonymousNumber) : null,
+    requestedAnonymousNumber: entry?.requestedAnonymousNumber == null || String(entry.requestedAnonymousNumber).trim() === "" ? null : Number(entry.requestedAnonymousNumber),
     postedAt: entry?.postedAt ? String(entry.postedAt) : null,
     postId: entry?.postId ? String(entry.postId) : null,
     postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
@@ -2453,7 +2461,7 @@ function sanitizeAutopostDraftEntries(input) {
       title: String(entry?.title || "").trim().slice(0, MAX_TITLE_LEN),
       text: String(entry?.text || "").trim().slice(0, MAX_TEXT_LEN),
       media: sanitizeMediaItems(entry?.media, 9),
-      requestedAnonymousNumber: Number.isInteger(Number(entry?.requestedAnonymousNumber)) ? Number(entry.requestedAnonymousNumber) : null,
+      requestedAnonymousNumber: entry?.requestedAnonymousNumber == null || String(entry.requestedAnonymousNumber).trim() === "" ? null : Number(entry.requestedAnonymousNumber),
       postedAt: entry?.postedAt ? String(entry.postedAt) : null,
       postId: entry?.postId ? String(entry.postId) : null,
       postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
