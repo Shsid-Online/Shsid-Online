@@ -57,6 +57,8 @@ let threadSubmitting = false;
 let composerPhotoFiles = [];
 let notificationOutsideClickBound = false;
 let autopostEntryIndex = 0;
+let autopostBusy = false;
+let autopostError = "";
 let instagramQueue = null;
 let instagramPreview = null;
 let instagramBusy = false;
@@ -265,10 +267,34 @@ async function fetchNotifications({ rerender = false } = {}) {
   }
 }
 
+function uniqueAutopostEntryId(value, seen) {
+  let id = String(value || "");
+  while (!id || seen.has(id)) id = `apq_local_${crypto.randomUUID()}`;
+  seen.add(id);
+  return id;
+}
+
+function markAutopostDirty() {
+  state.autopostDirty = true;
+  document.querySelectorAll("[data-autopost-save-status]").forEach((node) => {
+    node.textContent = "Unsaved changes";
+  });
+}
+
+function applyAutopostJob(job) {
+  const selectedId = state.autopostJob?.entries[autopostEntryIndex]?.id;
+  const normalized = normalizeAutopostJob(job);
+  if (!normalized || !Array.isArray(job.entries)) throw new Error("The server did not return a queue. Your drafts have been kept.");
+  state.autopostJob = normalized;
+  const index = normalized.entries.findIndex((entry) => entry.id === selectedId);
+  autopostEntryIndex = index >= 0 ? index : Math.min(autopostEntryIndex, Math.max(0, normalized.entries.length - 1));
+}
+
 function normalizeAutopostJob(job) {
   if (!job || typeof job !== "object") return null;
+  const seenEntryIds = new Set();
   const normalizeEntry = (entry, index) => ({
-    id: String(entry?.id || `apq_${index + 1}`),
+    id: uniqueAutopostEntryId(entry?.id || `apq_${index + 1}`, seenEntryIds),
     category: String(entry?.category || job?.category || "school").trim().toLowerCase() || "school",
     title: String(entry?.title || ""),
     text: String(entry?.text || ""),
@@ -299,7 +325,7 @@ function normalizeAutopostJob(job) {
 
 async function fetchAutopostJob() {
   if (currentUser()?.role === "admin") {
-    try { instagramQueue = (await apiRequest("/admin/instagram")).queue; }
+    try { instagramQueue = (await apiRequest("/admin/instagram", { timeoutMs: 30000 })).queue; }
     catch { instagramQueue = null; }
   } else instagramQueue = null;
   if (currentUser()?.role !== "admin") {
@@ -308,15 +334,20 @@ async function fetchAutopostJob() {
     clearAutopostCountdownTimer();
     return;
   }
+  if (state.autopostDirty) {
+    toast("Save your queue changes before reloading.");
+    return;
+  }
+  const previousJob = state.autopostJob;
   try {
-    const result = await apiRequest("/admin/autopost");
-    state.autopostJob = normalizeAutopostJob(result.job);
-    state.autopostDirty = false;
-    autopostPhotoFilesByEntryId.clear();
+    const result = await apiRequest("/admin/autopost", { timeoutMs: 30000 });
+    // A late refresh must not replace a draft or a newer save.
+    if (state.autopostDirty || state.autopostJob !== previousJob) return;
+    applyAutopostJob(result.job);
+    autopostError = "";
   } catch (error) {
-    state.autopostJob = null;
-    autopostPhotoFilesByEntryId.clear();
-    toast(error.message || "Could not load admin queue");
+    autopostError = error.message || "Could not load admin queue";
+    toast(autopostError);
   }
 }
 
@@ -338,7 +369,7 @@ function toast(message) {
   if (!state.toast) return;
   toastTimer = setTimeout(() => {
     state.toast = "";
-    render();
+    document.querySelector(".toast")?.remove();
   }, 2600);
 }
 
@@ -361,10 +392,10 @@ function hasUnsavedComposerDraft() {
 }
 
 function hasUnsavedBoardChanges() {
-  return hasUnsavedComposerDraft() || hasUnsavedReplyDrafts();
+  return state.autopostDirty || autopostBusy || hasUnsavedComposerDraft() || hasUnsavedReplyDrafts();
 }
 
-async function apiRequest(path, { method = "GET", body, auth = true, optionalAuth = false } = {}) {
+async function apiRequest(path, { method = "GET", body, auth = true, optionalAuth = false, timeoutMs } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (state.boardOwnerToken) headers["X-Board-Owner-Token"] = state.boardOwnerToken;
   if ((auth || optionalAuth) && state.token) {
@@ -373,6 +404,7 @@ async function apiRequest(path, { method = "GET", body, auth = true, optionalAut
   const response = await fetch(`${API_BASE}${path}`, {
     method,
     credentials: "include",
+    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
@@ -502,12 +534,14 @@ async function uploadSinglePhoto(file) {
   const signed = await apiRequest("/upload-url", {
     method: "POST",
     body: { fileName, contentType, purpose: "media" },
-    auth: false
+    auth: false,
+    timeoutMs: 30000
   });
   const response = await fetch(signed.uploadUrl, {
     method: signed.method || "PUT",
     headers: signed.headers || { "content-type": contentType },
-    body: file
+    body: file,
+    signal: AbortSignal.timeout(60000)
   });
   if (!response.ok) throw new Error("Photo upload failed");
   return { url: signed.mediaUrl, type: contentType, name: fileName };
@@ -551,6 +585,9 @@ async function prepareAutopostEntriesForSave(entries) {
         throw new Error("Queued posts can include at most 9 photos");
       }
       media = [...media, ...(await uploadPhotos(queuedFiles, 9 - media.length))];
+      // Reuse completed uploads if saving fails; keep their previews in the draft.
+      entry.media = media;
+      autopostPhotoFilesByEntryId.delete(entry.id);
     }
     prepared.push({
       ...entry,
@@ -565,6 +602,7 @@ async function saveAutopostJobDraft() {
   const entries = await prepareAutopostEntriesForSave(state.autopostJob.entries);
   const result = await apiRequest("/admin/autopost", {
     method: "POST",
+    timeoutMs: 30000,
     body: {
       category: state.autopostJob.category,
       minDelayMinutes: state.autopostJob.minDelayMinutes,
@@ -572,7 +610,8 @@ async function saveAutopostJobDraft() {
       entries
     }
   });
-  state.autopostJob = normalizeAutopostJob(result.job);
+  applyAutopostJob(result.job);
+  autopostError = "";
   autopostPhotoFilesByEntryId.clear();
   state.autopostDirty = false;
   return result;
@@ -670,7 +709,7 @@ function renderAutopostEntry(entry, index, job) {
       </div>
       ${entry.postedAt ? "" : `
         <div class="autopost-entry-toolbar">
-          <button class="plain-board-action" type="button" data-action="autopost-move-entry-up" data-id="${escapeHtml(entry.id)}"${index === 0 ? " disabled" : ""}>Move up</button>
+          <button class="plain-board-action" type="button" data-action="autopost-move-entry-up" data-id="${escapeHtml(entry.id)}"${index === 0 || job.entries[index - 1]?.postedAt ? " disabled" : ""}>Move up</button>
           <button class="plain-board-action" type="button" data-action="autopost-move-entry-down" data-id="${escapeHtml(entry.id)}"${index === job.entries.length - 1 ? " disabled" : ""}>Move down</button>
           <button class="plain-board-action" type="button" data-action="autopost-duplicate-entry" data-id="${escapeHtml(entry.id)}">Duplicate</button>
         </div>
@@ -799,7 +838,8 @@ function renderAutopostAdminPanel() {
         <div class="post-box-head">
           <div>
             <h2>Admin Queue</h2>
-            <p class="post-box-copy">Loading staged posts…</p>
+            <p class="post-box-copy">${escapeHtml(autopostError || "Loading staged posts…")}</p>
+            <button type="button" class="board-button" data-action="autopost-reload">Retry loading queue</button>
           </div>
         </div>
       </section>
@@ -808,8 +848,11 @@ function renderAutopostAdminPanel() {
   const entryCount = job.entries.length;
   autopostEntryIndex = Math.max(0, Math.min(autopostEntryIndex, Math.max(0, entryCount - 1)));
   const selectedEntry = job.entries[autopostEntryIndex];
+  const pendingCount = job.entries.filter((entry) => !entry.postedAt).length;
+  const postedCount = entryCount - pendingCount;
   return `
-    <section class="post-box admin-queue-box">
+    <section class="post-box admin-queue-box" aria-busy="${autopostBusy}">
+      <fieldset class="autopost-editor-controls"${autopostBusy ? " disabled" : ""}>
       <div class="post-box-head">
         <div>
           <h2>Fake Posting Dashboard</h2>
@@ -839,23 +882,24 @@ function renderAutopostAdminPanel() {
       <div class="active-filter">
         ${job.active
           ? `Queue is active. Next post in <strong class="autopost-countdown" data-next-post-at="${escapeHtml(job.nextPostAt || "")}">${escapeHtml(autopostCountdownLabel(job.countdownMs))}</strong>`
-          : job.finishedAt
+          : job.finishedAt && !pendingCount
             ? `Queue finished on <strong>${escapeHtml(commentTimestamp(job.finishedAt))}</strong>.`
-            : "Queue is paused and nothing new has been posted yet."}
+            : "Queue is paused."}
       </div>
       <div class="active-filter">
-        <span><strong>${job.pendingCount}</strong> pending</span>
-        <span><strong>${job.postedCount}</strong> posted</span>
+        <span><strong>${pendingCount}</strong> pending</span>
+        <span><strong>${postedCount}</strong> posted</span>
         <span>Thread No. values are random. Leave Anonymous No. blank for random or type one you want to use.</span>
         <span>Default board: <strong>${escapeHtml(board.slug)}</strong></span>
       </div>
-      <div class="form-actions">
-        <button class="board-button primary" type="button" data-action="autopost-save">Save queue</button>
+      <div class="form-actions autopost-save-actions">
+        <button class="board-button primary" type="button" data-action="autopost-save">${autopostBusy ? "Working…" : "Save queue"}</button>
         <button class="board-button ${job.active ? "muted" : "primary"}" type="button" data-action="${job.active ? "autopost-pause" : "autopost-start"}">${job.active ? "Pause countdown" : "Start countdown"}</button>
         <button class="board-button small" type="button" data-action="autopost-add-entry">Add draft</button>
         <button class="board-button small" type="button" data-action="autopost-load-defaults">Load starter posts</button>
-        ${state.autopostDirty ? `<span class="form-note">Unsaved changes</span>` : `<span class="form-note">Saved</span>`}
+        <span class="form-note" data-autopost-save-status aria-live="polite">${autopostBusy ? "Working…" : state.autopostDirty ? "Unsaved changes" : "Saved"}</span>
       </div>
+      ${autopostError ? `<p class="form-note" role="alert">${escapeHtml(autopostError)}</p>` : ""}
       <div class="autopost-entry-navigator" aria-label="Queued post navigation">
         <button class="plain-board-action" type="button" data-action="autopost-navigate" data-index="${autopostEntryIndex - 1}"${autopostEntryIndex === 0 ? " disabled" : ""}>Previous</button>
         <strong>${entryCount ? `Post ${autopostEntryIndex + 1} of ${entryCount}` : "No staged posts"}</strong>
@@ -864,6 +908,7 @@ function renderAutopostAdminPanel() {
       <div class="thread-list">
         ${selectedEntry ? renderAutopostEntry(selectedEntry, autopostEntryIndex, job) : `<div class="empty-state">Add a draft to begin building the queue.</div>`}
       </div>
+      </fieldset>
     </section>
   `;
 }
@@ -1827,18 +1872,18 @@ function bindEvents() {
   document.querySelector("#autopost-category")?.addEventListener("change", (event) => {
     if (!state.autopostJob) return;
     state.autopostJob.category = String(event.target.value || "school");
-    state.autopostDirty = true;
+    markAutopostDirty();
     render();
   });
   document.querySelector("#autopost-min-delay")?.addEventListener("input", (event) => {
     if (!state.autopostJob) return;
     state.autopostJob.minDelayMinutes = Math.max(1, Number(event.target.value || 60));
-    state.autopostDirty = true;
+    markAutopostDirty();
   });
   document.querySelector("#autopost-max-delay")?.addEventListener("input", (event) => {
     if (!state.autopostJob) return;
     state.autopostJob.maxDelayMinutes = Math.max(1, Number(event.target.value || 360));
-    state.autopostDirty = true;
+    markAutopostDirty();
   });
   document.querySelectorAll("[data-autopost-category]").forEach((input) => {
     input.addEventListener("change", (event) => {
@@ -1847,7 +1892,7 @@ function bindEvents() {
       const entry = (state.autopostJob.entries || []).find((item) => item.id === entryId);
       if (!entry || entry.postedAt) return;
       entry.category = String(event.target.value || state.autopostJob.category || "school").trim().toLowerCase() || "school";
-      state.autopostDirty = true;
+      markAutopostDirty();
       render();
     });
   });
@@ -1858,7 +1903,7 @@ function bindEvents() {
       const entry = (state.autopostJob.entries || []).find((item) => item.id === entryId);
       if (!entry || entry.postedAt) return;
       entry.title = String(event.target.value || "");
-      state.autopostDirty = true;
+      markAutopostDirty();
     });
   });
   document.querySelectorAll("[data-autopost-text]").forEach((input) => {
@@ -1868,7 +1913,7 @@ function bindEvents() {
       const entry = (state.autopostJob.entries || []).find((item) => item.id === entryId);
       if (!entry || entry.postedAt) return;
       entry.text = String(event.target.value || "");
-      state.autopostDirty = true;
+      markAutopostDirty();
     });
   });
   document.querySelectorAll("[data-autopost-anonymous-number]").forEach((input) => {
@@ -1878,8 +1923,8 @@ function bindEvents() {
       const entry = (state.autopostJob.entries || []).find((item) => item.id === entryId);
       if (!entry || entry.postedAt) return;
       const raw = String(event.target.value || "").trim();
-      entry.requestedAnonymousNumber = /^\d{4}$/.test(raw) ? Number(raw) : null;
-      state.autopostDirty = true;
+      entry.requestedAnonymousNumber = raw || null;
+      markAutopostDirty();
     });
   });
   document.querySelectorAll("[data-autopost-photo]").forEach((input) => {
@@ -1889,7 +1934,7 @@ function bindEvents() {
       const entry = (state.autopostJob?.entries || []).find((item) => item.id === entryId);
       const note = document.getElementById(`autopost-photo-note-${entryId}`);
       if (note && entry) note.textContent = autopostEntryPhotoSummary(entry);
-      state.autopostDirty = true;
+      markAutopostDirty();
     });
   });
   document.querySelector("#composer-quote-search")?.addEventListener("input", (event) => {
@@ -1939,6 +1984,7 @@ function bindEvents() {
       const action = button.dataset.action;
       const id = button.dataset.id || "";
       const commentId = button.dataset.commentId || "";
+      if (action.startsWith("autopost-") && autopostBusy) return;
       if (action.startsWith("instagram-")) {
         if (instagramBusy || currentUser()?.role !== "admin") return;
         instagramBusy = true;
@@ -1964,7 +2010,7 @@ function bindEvents() {
             window.location.assign(result.url);
             return;
           } else if (action === "instagram-refresh") {
-            instagramQueue = (await apiRequest("/admin/instagram")).queue;
+            instagramQueue = (await apiRequest("/admin/instagram", { timeoutMs: 30000 })).queue;
           } else {
             const command = action.slice("instagram-".length);
             if (command === "start" && !window.confirm("Publish the selected screenshots to Instagram, one every 10 minutes? The first post will publish in 10 minutes.")) return;
@@ -2122,7 +2168,7 @@ function bindEvents() {
           anonymousNumber: null
         });
         autopostEntryIndex = state.autopostJob.entries.length - 1;
-        state.autopostDirty = true;
+        markAutopostDirty();
         render();
         return;
       }
@@ -2138,7 +2184,7 @@ function bindEvents() {
         if (!state.autopostJob) return;
         const postedEntries = (state.autopostJob.entries || []).filter((entry) => entry.postedAt);
         const pendingEntries = (state.autopostJob.defaultEntries || []).map((entry, index) => ({
-          id: entry.id || `apq_seed_${index + 1}`,
+          id: `apq_local_${crypto.randomUUID()}`,
           category: entry.category || state.autopostJob.category || "school",
           title: entry.title || "",
           text: entry.text || "",
@@ -2152,7 +2198,7 @@ function bindEvents() {
         state.autopostJob.entries = [...postedEntries, ...pendingEntries];
         autopostPhotoFilesByEntryId.clear();
         autopostEntryIndex = 0;
-        state.autopostDirty = true;
+        markAutopostDirty();
         render();
         return;
       }
@@ -2162,11 +2208,11 @@ function bindEvents() {
         const currentIndex = entries.findIndex((entry) => entry.id === id);
         if (currentIndex < 0) return;
         const targetIndex = action === "autopost-move-entry-up" ? currentIndex - 1 : currentIndex + 1;
-        if (targetIndex < 0 || targetIndex >= entries.length) return;
+        if (targetIndex < 0 || targetIndex >= entries.length || entries[currentIndex].postedAt || entries[targetIndex].postedAt) return;
         [entries[currentIndex], entries[targetIndex]] = [entries[targetIndex], entries[currentIndex]];
         state.autopostJob.entries = entries;
         autopostEntryIndex = targetIndex;
-        state.autopostDirty = true;
+        markAutopostDirty();
         render();
         return;
       }
@@ -2186,9 +2232,11 @@ function bindEvents() {
           postNumber: null,
           anonymousNumber: null
         });
+        const photos = autopostPhotoFilesByEntryId.get(source.id);
+        if (photos?.length) autopostPhotoFilesByEntryId.set(cloneId, [...photos]);
         state.autopostJob.entries = entries;
         autopostEntryIndex = currentIndex + 1;
-        state.autopostDirty = true;
+        markAutopostDirty();
         render();
         return;
       }
@@ -2200,60 +2248,52 @@ function bindEvents() {
         autopostPhotoFilesByEntryId.delete(id);
         const input = document.querySelector(`#autopost-photo-${CSS.escape(id)}`);
         if (input) input.value = "";
-        state.autopostDirty = true;
+        markAutopostDirty();
         render();
         return;
       }
       if (action === "autopost-remove-entry") {
-        if (!state.autopostJob) return;
+        if (!state.autopostJob || state.autopostJob.entries.find((entry) => entry.id === id)?.postedAt) return;
         state.autopostJob.entries = (state.autopostJob.entries || []).filter((entry) => entry.id !== id);
         autopostPhotoFilesByEntryId.delete(id);
         autopostEntryIndex = Math.min(autopostEntryIndex, Math.max(0, state.autopostJob.entries.length - 1));
-        state.autopostDirty = true;
+        markAutopostDirty();
         render();
         return;
       }
-      if (action === "autopost-reload") {
-        await fetchAutopostJob();
-        autopostPhotoFilesByEntryId.clear();
+      if (["autopost-reload", "autopost-save", "autopost-start", "autopost-pause", "autopost-reset"].includes(action)) {
+        if (action !== "autopost-reload" && !state.autopostJob) return;
+        autopostBusy = true;
+        autopostError = "";
         render();
-        return;
-      }
-      if (action === "autopost-save") {
-        if (!state.autopostJob) return;
         try {
-          await saveAutopostJobDraft();
-          render();
-          toast("Queue saved");
-        } catch (error) {
-          toast(error.message || "Could not save queue");
-        }
-        return;
-      }
-      if (action === "autopost-start" || action === "autopost-pause" || action === "autopost-reset") {
-        const path = action === "autopost-start"
-          ? "/admin/autopost/start"
-          : action === "autopost-pause"
-            ? "/admin/autopost/pause"
-            : "/admin/autopost/reset";
-        try {
-          if (action === "autopost-start" && state.autopostDirty) {
+          if (action === "autopost-reload") {
+            await fetchAutopostJob();
+          } else if (action === "autopost-save") {
             await saveAutopostJobDraft();
+            toast("Queue saved");
+          } else {
+            if (action === "autopost-start" && state.autopostJob.entries.some((entry) =>
+              !entry.postedAt && !String(entry.title || "").trim() && !String(entry.text || "").trim()
+              && !entry.media.length && !autopostEntryHasQueuedPhotos(entry.id))) {
+              throw new Error("Complete or remove empty drafts before starting the countdown.");
+            }
+            // Save before changing execution state so a response cannot erase local edits.
+            if (state.autopostDirty) await saveAutopostJobDraft();
+            const path = `/admin/autopost/${action.replace("autopost-", "")}`;
+            const result = await apiRequest(path, { method: "POST", body: {}, timeoutMs: 30000 });
+            applyAutopostJob(result.job);
+            state.autopostDirty = false;
+            toast(action === "autopost-start" ? "Countdown started" : action === "autopost-pause" ? "Queue paused" : "Queue reset");
           }
-          const result = await apiRequest(path, { method: "POST", body: {} });
-          state.autopostJob = normalizeAutopostJob(result.job);
-          if (action === "autopost-reset") autopostPhotoFilesByEntryId.clear();
-          state.autopostDirty = false;
-          render();
-          toast(
-            action === "autopost-start"
-              ? "Countdown started"
-              : action === "autopost-pause"
-                ? "Queue paused"
-                : "Queue reset"
-          );
         } catch (error) {
-          toast(error.message || "Could not update queue");
+          autopostError = error.name === "TimeoutError"
+            ? "The request timed out. Your drafts are still here; retry saving."
+            : error.message || "Could not update queue";
+          toast(autopostError);
+        } finally {
+          autopostBusy = false;
+          render();
         }
         return;
       }

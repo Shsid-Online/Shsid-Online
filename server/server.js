@@ -643,7 +643,7 @@ function autopostEntriesFromJob(job) {
     title: String(entry?.title || "").trim(),
     text: String(entry?.text || "").trim(),
     media: sanitizeMediaItems(entry?.media, 9),
-    requestedAnonymousNumber: Number.isInteger(Number(entry?.requestedAnonymousNumber)) ? Number(entry.requestedAnonymousNumber) : null,
+    requestedAnonymousNumber: entry?.requestedAnonymousNumber == null || String(entry.requestedAnonymousNumber).trim() === "" ? null : Number(entry.requestedAnonymousNumber),
     postedAt: entry?.postedAt ? String(entry.postedAt) : null,
     postId: entry?.postId ? String(entry.postId) : null,
     postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
@@ -719,13 +719,13 @@ function sanitizeAutopostDraftEntries(entries) {
       postId: entry?.postId ? String(entry.postId) : null,
       postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
       anonymousNumber: Number.isInteger(Number(entry?.anonymousNumber)) ? Number(entry.anonymousNumber) : null
-    }))
-    .filter((entry) => entry.title || entry.text || entry.media.length);
+    }));
 }
 
 function saveAutopostJobFromBody(job, body) {
-  const postedEntries = autopostEntriesFromJob(job).slice(0, Number(job.nextIndex || 0));
-  const pendingEntries = sanitizeAutopostDraftEntries(body.entries).filter((entry) => !entry.postedAt).map((entry, index) => ({
+  const postedEntries = autopostEntriesFromJob(job).filter((entry) => entry.postedAt);
+  const postedIds = new Set(postedEntries.map((entry) => entry.id));
+  const pendingEntries = sanitizeAutopostDraftEntries(body.entries).filter((entry) => !entry.postedAt && !postedIds.has(entry.id)).map((entry, index) => ({
     id: entry.id || `apq_pending_${index + 1}`,
     category: entry.category,
     title: entry.title,

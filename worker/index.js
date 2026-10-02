@@ -2466,18 +2466,18 @@ function sanitizeAutopostDraftEntries(input) {
       postId: entry?.postId ? String(entry.postId) : null,
       postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
       anonymousNumber: Number.isInteger(Number(entry?.anonymousNumber)) ? Number(entry.anonymousNumber) : null
-    }))
-    .filter((entry) => entry.title || entry.text || entry.media.length);
+    }));
 }
 
 async function saveAutopostJob(env, job, body) {
   const existingEntries = autopostEntriesFromJob(job);
-  const postedEntries = existingEntries.slice(0, Number(job.next_index || 0));
+  const postedEntries = existingEntries.filter((entry) => entry.postedAt);
   const submittedEntries = await Promise.all(sanitizeAutopostDraftEntries(body.entries).map(async (entry) => ({
     ...entry,
     requestedAnonymousNumber: await ensureUsableAdminAnonymousAccountNumber(env, entry.requestedAnonymousNumber)
   })));
-  const pendingEntries = submittedEntries.filter((entry) => !entry.postedAt).map((entry, index) => ({
+  const postedIds = new Set(postedEntries.map((entry) => entry.id));
+  const pendingEntries = submittedEntries.filter((entry) => !entry.postedAt && !postedIds.has(entry.id)).map((entry, index) => ({
     id: entry.id || `apq_pending_${index + 1}`,
     category: entry.category,
     title: entry.title,

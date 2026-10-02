@@ -1030,3 +1030,22 @@ a {
     margin-left: 0;
   }
 }
+
+.autopost-editor-controls {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.autopost-save-actions {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--panel, #f5f7ec);
+  padding: 10px 0;
+}
+
+.autopost-editor-controls:disabled {
+  opacity: 0.75;
+}

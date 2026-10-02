@@ -7,6 +7,7 @@
     "dev": "node server/server.js",
     "dev:static": "npx serve public -l 4173",
     "check": "node --check public/src/app.js && node --check server/server.js && node --check server/store.js && node --check worker/index.js && node --check server/instagram-queue.mjs && node --check server/instagram-auth.mjs",
+    "test:autopost": "node --test tests/autopost-editor.test.mjs",
     "test:instagram": "node --test tests/instagram-queue.test.mjs",
     "vendor:screenshot": "node scripts/vendor-screenshot.mjs",
     "cf:dev": "wrangler dev worker/index.js",
