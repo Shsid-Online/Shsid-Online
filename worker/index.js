@@ -2334,7 +2334,26 @@ async function createAutopostBoardThread(env, { category, ownerTokenDigest, titl
 async function ensureAutopostJob(env, scheduledTime = Date.now()) {
   await hasAutopostJobsTable(env);
   const existing = await env.DB.prepare("select * from autopost_jobs where id=? limit 1").bind(AUTPOST_JOB_ID).first();
-  if (existing) return existing;
+  if (existing) {
+    const entries = autopostEntriesFromJob(existing);
+    const pendingEntries = entries.filter((entry) => !entry.postedAt);
+    if (pendingEntries.length !== entries.length || Number(existing.next_index || 0) !== 0) {
+      const updatedAt = now();
+      const active = pendingEntries.length ? Number(existing.active || 0) : 0;
+      await env.DB.prepare("update autopost_jobs set queue_json=?, next_index=0, next_post_at=?, active=?, updated_at=?, finished_at=? where id=?")
+        .bind(
+          JSON.stringify(pendingEntries),
+          active ? existing.next_post_at : null,
+          active,
+          updatedAt,
+          pendingEntries.length ? null : (existing.finished_at || updatedAt),
+          existing.id
+        )
+        .run();
+      return env.DB.prepare("select * from autopost_jobs where id=? limit 1").bind(existing.id).first();
+    }
+    return existing;
+  }
   const createdAt = now();
   const ownerTokenDigest = await sha256Hex(`autopost:${AUTPOST_JOB_ID}`);
   await env.DB.prepare("insert into autopost_jobs (id, category, queue_json, next_index, next_post_at, owner_token_digest, active, min_delay_minutes, max_delay_minutes, last_post_id, created_at, updated_at, finished_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -2359,18 +2378,9 @@ async function ensureAutopostJob(env, scheduledTime = Date.now()) {
 
 async function advanceAutopostJob(env, job, lastPostId, postNumber, anonymousNumber, scheduledTime = Date.now()) {
   const queue = autopostEntriesFromJob(job);
-  const currentIndex = Number(job.next_index || 0);
-  if (queue[currentIndex]) {
-    queue[currentIndex] = {
-      ...queue[currentIndex],
-      postedAt: now(),
-      postId: lastPostId || null,
-      postNumber: Number.isInteger(postNumber) ? postNumber : null,
-      anonymousNumber: Number.isInteger(anonymousNumber) ? anonymousNumber : null
-    };
-  }
-  const nextIndex = Number(job.next_index || 0) + 1;
-  const finished = nextIndex >= queue.length;
+  queue.shift();
+  const nextIndex = 0;
+  const finished = queue.length === 0;
   const updatedAt = now();
   const nextPostAt = finished
     ? null
@@ -2470,14 +2480,14 @@ function sanitizeAutopostDraftEntries(input) {
 }
 
 async function saveAutopostJob(env, job, body) {
-  const existingEntries = autopostEntriesFromJob(job);
-  const postedEntries = existingEntries.filter((entry) => entry.postedAt);
+  const pendingIds = new Set(autopostEntriesFromJob(job).filter((entry) => !entry.postedAt).map((entry) => entry.id));
   const submittedEntries = await Promise.all(sanitizeAutopostDraftEntries(body.entries).map(async (entry) => ({
     ...entry,
     requestedAnonymousNumber: await ensureUsableAdminAnonymousAccountNumber(env, entry.requestedAnonymousNumber)
   })));
-  const postedIds = new Set(postedEntries.map((entry) => entry.id));
-  const pendingEntries = submittedEntries.filter((entry) => !entry.postedAt && !postedIds.has(entry.id)).map((entry, index) => ({
+  const pendingEntries = submittedEntries.filter((entry) => (
+    !entry.postedAt && (pendingIds.has(entry.id) || entry.id.startsWith("apq_local_"))
+  )).map((entry, index) => ({
     id: entry.id || `apq_pending_${index + 1}`,
     category: entry.category,
     title: entry.title,
@@ -2489,12 +2499,12 @@ async function saveAutopostJob(env, job, body) {
     postNumber: null,
     anonymousNumber: null
   }));
-  const queue = [...postedEntries, ...pendingEntries];
+  const queue = pendingEntries;
   const minDelayMinutes = clampAutopostDelay(body.minDelayMinutes, AUTPOST_MIN_DELAY_MINUTES);
   const maxDelayMinutes = Math.max(minDelayMinutes, clampAutopostDelay(body.maxDelayMinutes, AUTPOST_MAX_DELAY_MINUTES));
   const category = sanitizeCategory(body.category || job.category || AUTPOST_CATEGORY);
-  const nextIndex = postedEntries.length;
-  const finished = nextIndex >= queue.length && queue.length > 0;
+  const nextIndex = 0;
+  const finished = queue.length === 0;
   const active = finished ? 0 : Number(job.active || 0);
   const nextPostAt = active && !finished
     ? String(job.next_post_at || "").trim() || isoFromMs(Date.now() + randomDelayMs(minDelayMinutes, maxDelayMinutes))
@@ -2525,8 +2535,7 @@ function clampAutopostDelay(value, fallback) {
 
 async function startAutopostJob(env, job) {
   const queue = autopostEntriesFromJob(job);
-  const nextIndex = Number(job.next_index || 0);
-  const finished = nextIndex >= queue.length && queue.length > 0;
+  const finished = queue.length === 0;
   const nextPostAt = finished ? null : isoFromMs(Date.now() + randomDelayMs(Number(job.min_delay_minutes || AUTPOST_MIN_DELAY_MINUTES), Number(job.max_delay_minutes || AUTPOST_MAX_DELAY_MINUTES)));
   await env.DB.prepare("update autopost_jobs set active=?, next_post_at=?, finished_at=?, updated_at=? where id=?")
     .bind(finished ? 0 : 1, nextPostAt, finished ? now() : null, now(), job.id)

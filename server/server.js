@@ -652,7 +652,21 @@ function autopostEntriesFromJob(job) {
 }
 
 function ensureAutopostJob() {
-  if (store.data.autopostJob?.id === AUTPOST_JOB_ID) return store.data.autopostJob;
+  if (store.data.autopostJob?.id === AUTPOST_JOB_ID) {
+    const job = store.data.autopostJob;
+    const entries = autopostEntriesFromJob(job);
+    const pendingEntries = entries.filter((entry) => !entry.postedAt);
+    if (pendingEntries.length !== entries.length || Number(job.nextIndex || 0) !== 0) {
+      job.entries = pendingEntries;
+      job.nextIndex = 0;
+      job.active = pendingEntries.length ? Boolean(job.active) : false;
+      job.nextPostAt = job.active ? String(job.nextPostAt || "") : "";
+      job.finishedAt = pendingEntries.length ? "" : (job.finishedAt || now());
+      job.updatedAt = now();
+      store.save();
+    }
+    return job;
+  }
   store.data.autopostJob = {
     id: AUTPOST_JOB_ID,
     category: AUTPOST_CATEGORY,
@@ -723,9 +737,10 @@ function sanitizeAutopostDraftEntries(entries) {
 }
 
 function saveAutopostJobFromBody(job, body) {
-  const postedEntries = autopostEntriesFromJob(job).filter((entry) => entry.postedAt);
-  const postedIds = new Set(postedEntries.map((entry) => entry.id));
-  const pendingEntries = sanitizeAutopostDraftEntries(body.entries).filter((entry) => !entry.postedAt && !postedIds.has(entry.id)).map((entry, index) => ({
+  const pendingIds = new Set(autopostEntriesFromJob(job).filter((entry) => !entry.postedAt).map((entry) => entry.id));
+  const pendingEntries = sanitizeAutopostDraftEntries(body.entries).filter((entry) => (
+    !entry.postedAt && (pendingIds.has(entry.id) || entry.id.startsWith("apq_local_"))
+  )).map((entry, index) => ({
     id: entry.id || `apq_pending_${index + 1}`,
     category: entry.category,
     title: entry.title,
@@ -737,13 +752,13 @@ function saveAutopostJobFromBody(job, body) {
     postNumber: null,
     anonymousNumber: null
   }));
-  job.entries = [...postedEntries, ...pendingEntries];
+  job.entries = pendingEntries;
   job.category = sanitizeCategory(body.category || job.category || AUTPOST_CATEGORY);
   job.minDelayMinutes = clampAutopostDelay(body.minDelayMinutes, AUTPOST_MIN_DELAY_MINUTES);
   job.maxDelayMinutes = Math.max(job.minDelayMinutes, clampAutopostDelay(body.maxDelayMinutes, AUTPOST_MAX_DELAY_MINUTES));
-  job.nextIndex = postedEntries.length;
-  job.finishedAt = job.nextIndex >= job.entries.length && job.entries.length ? now() : "";
-  job.active = job.finishedAt ? false : Boolean(job.active);
+  job.nextIndex = 0;
+  job.finishedAt = pendingEntries.length ? "" : (job.finishedAt || now());
+  job.active = pendingEntries.length ? Boolean(job.active) : false;
   job.nextPostAt = job.active
     ? (String(job.nextPostAt || "").trim() || new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString())
     : "";
@@ -753,7 +768,8 @@ function saveAutopostJobFromBody(job, body) {
 }
 
 function startAutopostJob(job) {
-  job.active = Number(job.nextIndex || 0) < autopostEntriesFromJob(job).length;
+  job.nextIndex = 0;
+  job.active = autopostEntriesFromJob(job).length > 0;
   job.finishedAt = job.active ? "" : (job.finishedAt || now());
   job.nextPostAt = job.active ? new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString() : "";
   job.updatedAt = now();
@@ -796,7 +812,7 @@ function tickAutopostJob() {
   const job = ensureAutopostJob();
   if (!job.active || job.finishedAt) return;
   const entries = autopostEntriesFromJob(job);
-  if (Number(job.nextIndex || 0) >= entries.length) {
+  if (!entries.length) {
     job.active = false;
     job.finishedAt = now();
     job.nextPostAt = "";
@@ -806,11 +822,12 @@ function tickAutopostJob() {
   }
   const dueAt = new Date(job.nextPostAt || "").getTime();
   if (!Number.isFinite(dueAt) || dueAt > Date.now()) return;
-  const entry = entries[job.nextIndex];
+  const entry = entries[0];
   if (!entry?.title && !entry?.text && !(entry?.media || []).length) {
-    job.nextIndex += 1;
-    job.nextPostAt = job.nextIndex >= entries.length ? "" : new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString();
-    job.active = job.nextIndex < entries.length;
+    entries.shift();
+    job.nextIndex = 0;
+    job.nextPostAt = entries.length ? new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString() : "";
+    job.active = entries.length > 0;
     job.finishedAt = job.active ? "" : now();
     job.updatedAt = now();
     job.entries = entries;
@@ -844,17 +861,11 @@ function tickAutopostJob() {
     deletedAt: null
   };
   store.data.posts.unshift(post);
-  entries[job.nextIndex] = {
-    ...entry,
-    postedAt: post.createdAt,
-    postId: post.id,
-    postNumber: post.postNumber,
-    anonymousNumber: post.adminAnonymousAccountNumber
-  };
+  entries.shift();
   job.entries = entries;
-  job.nextIndex += 1;
+  job.nextIndex = 0;
   job.lastPostId = post.id;
-  job.active = job.nextIndex < entries.length;
+  job.active = entries.length > 0;
   job.nextPostAt = job.active ? new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString() : "";
   job.finishedAt = job.active ? "" : now();
   job.updatedAt = now();

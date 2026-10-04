@@ -103,19 +103,18 @@ test('late refresh cannot overwrite typing', async () => {
 });
 
 const workerSource=fs.readFileSync(new URL('../worker/index.js',import.meta.url),'utf8').replace(/^import .*;$/gm,'').replace('export default {','const worker = {');
-test('worker preserves blank drafts and does not resurrect a post published since the editor loaded',async()=>{
+test('worker removes posted drafts and does not resurrect a post published since the editor loaded',async()=>{
   const context=vm.createContext({crypto:webcrypto,TextEncoder,console});
   vm.runInContext(workerSource,context);
-  context.body={entries:[entry('done','stale pending'),entry('blank',''),entry('new','new draft')]};
+  context.body={entries:[entry('done','stale pending'),entry('apq_local_blank',''),entry('new','new draft')]};
   context.job={id:'job',category:'school',next_index:1,queue_json:JSON.stringify([entry('done','published',{postedAt:'2026-01-01'}),entry('new','new draft')])};
   let saved;
   context.env={DB:{prepare(sql){return {bind(...values){if(sql.startsWith("update")) saved=values;return this},async run(){},async first(){return context.job}}}}};
   await vm.runInContext('saveAutopostJob(env,job,body)',context);
   const queue=JSON.parse(saved[1]);
-  assert.deepEqual(queue.map(e=>e.id),['done','blank','new']);
-  assert.equal(queue[0].text,'published');
-  assert.equal(queue[1].requestedAnonymousNumber,null);
-  assert.equal(saved[2],1);
+  assert.deepEqual(queue.map(e=>e.id),['apq_local_blank','new']);
+  assert.equal(queue[0].requestedAnonymousNumber,null);
+  assert.equal(saved[2],0);
 });
 
 test('blank draft remains selected after save and cannot start the countdown', async () => {
@@ -128,7 +127,7 @@ test('blank draft remains selected after save and cannot start the countdown', a
   assert.equal(e.run('autopostBusy'),false);
 });
 
-test('local backend also preserves blank drafts and posted history',()=>{
+test('local backend removes posted drafts and preserves pending blank drafts',()=>{
   const source=fs.readFileSync(new URL('../server/server.js',import.meta.url),'utf8');
   function definition(name) {
     const start=source.indexOf(`function ${name}(`);
@@ -138,11 +137,11 @@ test('local backend also preserves blank drafts and posted history',()=>{
     AUTPOST_CATEGORY:'school',AUTPOST_MIN_DELAY_MINUTES:60,AUTPOST_MAX_DELAY_MINUTES:360,MAX_TITLE_LEN:200,MAX_TEXT_LEN:10000,
     sanitizeCategory:v=>v||'school',sanitizeMediaItems:v=>v||[],ensureUnusedAnonymousAccountNumber:v=>v??null,
     now:()=> '2026-10-02',store:{save(){}},clampAutopostDelay:(v,f)=>v||f,
-    body:{entries:[entry('done','stale'),entry('blank','')]},
+    body:{entries:[entry('done','stale'),entry('apq_local_blank','')]},
     job:{nextIndex:1,entries:[entry('done','history',{postedAt:'2026-01-01'})]},
   });
   vm.runInContext(['autopostEntriesFromJob','sanitizeAutopostDraftEntries','saveAutopostJobFromBody'].map(definition).join('\n'),context);
   const result=vm.runInContext('saveAutopostJobFromBody(job,body)',context);
-  assert.deepEqual(Array.from(result.entries,e=>e.id),['done','blank']);
-  assert.equal(result.entries[1].requestedAnonymousNumber,null);
+  assert.deepEqual(Array.from(result.entries,e=>e.id),['apq_local_blank']);
+  assert.equal(result.entries[0].requestedAnonymousNumber,null);
 });
