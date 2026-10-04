@@ -305,20 +305,21 @@ function normalizeAutopostJob(job) {
     postNumber: Number.isInteger(Number(entry?.postNumber)) ? Number(entry.postNumber) : null,
     anonymousNumber: Number.isInteger(Number(entry?.anonymousNumber)) ? Number(entry.anonymousNumber) : null
   });
+  const entries = Array.isArray(job.entries) ? job.entries.map(normalizeEntry).filter((entry) => !entry.postedAt) : [];
   return {
     id: String(job.id || ""),
     category: String(job.category || "school").trim().toLowerCase() || "school",
     active: Boolean(job.active),
-    nextIndex: Number.isInteger(Number(job.nextIndex)) ? Number(job.nextIndex) : 0,
+    nextIndex: 0,
     nextPostAt: String(job.nextPostAt || "").trim(),
     countdownMs: Number.isFinite(Number(job.countdownMs)) ? Number(job.countdownMs) : null,
     minDelayMinutes: Math.max(1, Number(job.minDelayMinutes || 60)),
     maxDelayMinutes: Math.max(1, Number(job.maxDelayMinutes || 360)),
     finishedAt: String(job.finishedAt || "").trim(),
     lastPostId: String(job.lastPostId || "").trim(),
-    pendingCount: Number.isInteger(Number(job.pendingCount)) ? Number(job.pendingCount) : 0,
-    postedCount: Number.isInteger(Number(job.postedCount)) ? Number(job.postedCount) : 0,
-    entries: Array.isArray(job.entries) ? job.entries.map(normalizeEntry) : [],
+    pendingCount: entries.length,
+    postedCount: 0,
+    entries,
     defaultEntries: Array.isArray(job.defaultEntries) ? job.defaultEntries.map(normalizeEntry) : []
   };
 }

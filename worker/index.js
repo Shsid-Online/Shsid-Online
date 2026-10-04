@@ -25,6 +25,9 @@ const AUTPOST_JOB_ID = "board-synthetic-seed-v1";
 const AUTPOST_MIN_DELAY_MINUTES = 60;
 const AUTPOST_MAX_DELAY_MINUTES = 360;
 const AUTPOST_CATEGORY = "school";
+const AUTPOST_SEOUL_OFFSET_MINUTES = 9 * 60;
+const AUTPOST_QUIET_START_HOUR = 3;
+const AUTPOST_QUIET_END_HOUR = 8;
 const AUTPOST_QUEUE = [
   "i want a bf so bad",
   "why is everyone getting into talking stages except me",
@@ -2253,6 +2256,13 @@ async function runAutopostCron(env, scheduledTime = Date.now()) {
   const job = await ensureAutopostJob(env, scheduledTime);
   if (!job || !Number(job.active)) return;
   if (job.finished_at) return;
+  if (isAutopostQuietTime(scheduledTime)) {
+    const resumeAt = isoFromMs(nextAllowedAutopostTime(scheduledTime));
+    await env.DB.prepare("update autopost_jobs set next_post_at=?, updated_at=? where id=?")
+      .bind(resumeAt, now(), job.id)
+      .run();
+    return;
+  }
   const queue = autopostEntriesFromJob(job);
   const nextIndex = Number(job.next_index || 0);
   if (nextIndex >= queue.length) {
@@ -2384,7 +2394,7 @@ async function advanceAutopostJob(env, job, lastPostId, postNumber, anonymousNum
   const updatedAt = now();
   const nextPostAt = finished
     ? null
-    : isoFromMs(scheduledTime + randomDelayMs(Number(job.min_delay_minutes || AUTPOST_MIN_DELAY_MINUTES), Number(job.max_delay_minutes || AUTPOST_MAX_DELAY_MINUTES)));
+    : isoFromMs(scheduledAutopostTime(scheduledTime, Number(job.min_delay_minutes || AUTPOST_MIN_DELAY_MINUTES), Number(job.max_delay_minutes || AUTPOST_MAX_DELAY_MINUTES)));
   await env.DB.prepare("update autopost_jobs set queue_json=?, next_index=?, next_post_at=?, last_post_id=?, updated_at=?, finished_at=?, active=? where id=?")
     .bind(JSON.stringify(queue), nextIndex, nextPostAt, lastPostId, updatedAt, finished ? updatedAt : null, finished ? 0 : Number(job.active || 1), job.id)
     .run();
@@ -2403,6 +2413,22 @@ function randomDelayMs(minMinutes, maxMinutes) {
   const span = max - min + 1;
   const value = Math.floor(Math.random() * span) + min;
   return value * 60 * 1000;
+}
+
+function isAutopostQuietTime(timeMs) {
+  const seoulHour = new Date(timeMs + AUTPOST_SEOUL_OFFSET_MINUTES * 60 * 1000).getUTCHours();
+  return seoulHour >= AUTPOST_QUIET_START_HOUR && seoulHour < AUTPOST_QUIET_END_HOUR;
+}
+
+function nextAllowedAutopostTime(timeMs) {
+  if (!isAutopostQuietTime(timeMs)) return timeMs;
+  const seoulTime = new Date(timeMs + AUTPOST_SEOUL_OFFSET_MINUTES * 60 * 1000);
+  seoulTime.setUTCHours(AUTPOST_QUIET_END_HOUR, 0, 0, 0);
+  return seoulTime.getTime() - AUTPOST_SEOUL_OFFSET_MINUTES * 60 * 1000;
+}
+
+function scheduledAutopostTime(baseTimeMs, minMinutes, maxMinutes) {
+  return nextAllowedAutopostTime(baseTimeMs + randomDelayMs(minMinutes, maxMinutes));
 }
 
 function isoFromMs(ms) {
@@ -2507,7 +2533,7 @@ async function saveAutopostJob(env, job, body) {
   const finished = queue.length === 0;
   const active = finished ? 0 : Number(job.active || 0);
   const nextPostAt = active && !finished
-    ? String(job.next_post_at || "").trim() || isoFromMs(Date.now() + randomDelayMs(minDelayMinutes, maxDelayMinutes))
+    ? String(job.next_post_at || "").trim() || isoFromMs(scheduledAutopostTime(Date.now(), minDelayMinutes, maxDelayMinutes))
     : null;
   await env.DB.prepare("update autopost_jobs set category=?, queue_json=?, next_index=?, next_post_at=?, active=?, min_delay_minutes=?, max_delay_minutes=?, updated_at=?, finished_at=?, last_post_id=? where id=?")
     .bind(
@@ -2536,7 +2562,7 @@ function clampAutopostDelay(value, fallback) {
 async function startAutopostJob(env, job) {
   const queue = autopostEntriesFromJob(job);
   const finished = queue.length === 0;
-  const nextPostAt = finished ? null : isoFromMs(Date.now() + randomDelayMs(Number(job.min_delay_minutes || AUTPOST_MIN_DELAY_MINUTES), Number(job.max_delay_minutes || AUTPOST_MAX_DELAY_MINUTES)));
+  const nextPostAt = finished ? null : isoFromMs(scheduledAutopostTime(Date.now(), Number(job.min_delay_minutes || AUTPOST_MIN_DELAY_MINUTES), Number(job.max_delay_minutes || AUTPOST_MAX_DELAY_MINUTES)));
   await env.DB.prepare("update autopost_jobs set active=?, next_post_at=?, finished_at=?, updated_at=? where id=?")
     .bind(finished ? 0 : 1, nextPostAt, finished ? now() : null, now(), job.id)
     .run();

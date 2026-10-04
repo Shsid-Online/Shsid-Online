@@ -82,13 +82,13 @@ test('save failure unlocks editor and retains successful uploads for retry', asy
   assert.equal(e.run('autopostBusy'),false);
 });
 
-test('pending drafts cannot move into posted history and duplicate keeps selected photos', async () => {
+test('posted history is hidden and duplicate keeps selected photos', async () => {
   const e=editor({entries:[entry('posted','history',{postedAt:'2026-01-01'}),entry('pending','draft')]});
-  await e.click({action:'autopost-move-entry-up',id:'pending'});
-  assert.equal(e.run('state.autopostJob.entries[0].id'),'posted');
+  assert.deepEqual(e.run('state.autopostJob.entries.map(entry => entry.id)'),['pending']);
+  assert.equal(e.run('state.autopostJob.postedCount'),0);
   e.run('autopostPhotoFilesByEntryId.set("pending",[{name:"photo"}])');
   await e.click({action:'autopost-duplicate-entry',id:'pending'});
-  assert.equal(e.run('autopostPhotoFilesByEntryId.get(state.autopostJob.entries[2].id).length'),1);
+  assert.equal(e.run('autopostPhotoFilesByEntryId.get(state.autopostJob.entries[1].id).length'),1);
 });
 
 test('late refresh cannot overwrite typing', async () => {
@@ -103,6 +103,16 @@ test('late refresh cannot overwrite typing', async () => {
 });
 
 const workerSource=fs.readFileSync(new URL('../worker/index.js',import.meta.url),'utf8').replace(/^import .*;$/gm,'').replace('export default {','const worker = {');
+test('autopost quiet hours run from 03:00 through 07:59 in Seoul',()=>{
+  const context=vm.createContext({crypto:webcrypto,TextEncoder,console});
+  vm.runInContext(workerSource,context);
+  assert.equal(vm.runInContext('isAutopostQuietTime(Date.parse("2026-10-04T17:59:00Z"))',context),false);
+  assert.equal(vm.runInContext('isAutopostQuietTime(Date.parse("2026-10-04T18:00:00Z"))',context),true);
+  assert.equal(vm.runInContext('isAutopostQuietTime(Date.parse("2026-10-04T22:59:59Z"))',context),true);
+  assert.equal(vm.runInContext('isAutopostQuietTime(Date.parse("2026-10-04T23:00:00Z"))',context),false);
+  assert.equal(vm.runInContext('new Date(nextAllowedAutopostTime(Date.parse("2026-10-04T20:15:00Z"))).toISOString()',context),'2026-10-04T23:00:00.000Z');
+});
+
 test('worker removes posted drafts and does not resurrect a post published since the editor loaded',async()=>{
   const context=vm.createContext({crypto:webcrypto,TextEncoder,console});
   vm.runInContext(workerSource,context);

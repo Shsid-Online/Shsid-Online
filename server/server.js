@@ -75,6 +75,9 @@ const AUTPOST_JOB_ID = "board-synthetic-seed-v1";
 const AUTPOST_MIN_DELAY_MINUTES = 60;
 const AUTPOST_MAX_DELAY_MINUTES = 360;
 const AUTPOST_CATEGORY = "school";
+const AUTPOST_SEOUL_OFFSET_MINUTES = 9 * 60;
+const AUTPOST_QUIET_START_HOUR = 3;
+const AUTPOST_QUIET_END_HOUR = 8;
 const AUTPOST_QUEUE = [
   "i want a bf so bad",
   "why is everyone getting into talking stages except me",
@@ -720,6 +723,22 @@ function randomDelayMs(minMinutes, maxMinutes) {
   return (crypto.randomInt(min, max + 1)) * 60 * 1000;
 }
 
+function isAutopostQuietTime(timeMs) {
+  const seoulHour = new Date(timeMs + AUTPOST_SEOUL_OFFSET_MINUTES * 60 * 1000).getUTCHours();
+  return seoulHour >= AUTPOST_QUIET_START_HOUR && seoulHour < AUTPOST_QUIET_END_HOUR;
+}
+
+function nextAllowedAutopostTime(timeMs) {
+  if (!isAutopostQuietTime(timeMs)) return timeMs;
+  const seoulTime = new Date(timeMs + AUTPOST_SEOUL_OFFSET_MINUTES * 60 * 1000);
+  seoulTime.setUTCHours(AUTPOST_QUIET_END_HOUR, 0, 0, 0);
+  return seoulTime.getTime() - AUTPOST_SEOUL_OFFSET_MINUTES * 60 * 1000;
+}
+
+function scheduledAutopostTime(baseTimeMs, minMinutes, maxMinutes) {
+  return nextAllowedAutopostTime(baseTimeMs + randomDelayMs(minMinutes, maxMinutes));
+}
+
 function sanitizeAutopostDraftEntries(entries) {
   return (Array.isArray(entries) ? entries : [])
     .map((entry, index) => ({
@@ -760,7 +779,7 @@ function saveAutopostJobFromBody(job, body) {
   job.finishedAt = pendingEntries.length ? "" : (job.finishedAt || now());
   job.active = pendingEntries.length ? Boolean(job.active) : false;
   job.nextPostAt = job.active
-    ? (String(job.nextPostAt || "").trim() || new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString())
+    ? (String(job.nextPostAt || "").trim() || new Date(scheduledAutopostTime(Date.now(), job.minDelayMinutes, job.maxDelayMinutes)).toISOString())
     : "";
   job.updatedAt = now();
   store.save();
@@ -771,7 +790,7 @@ function startAutopostJob(job) {
   job.nextIndex = 0;
   job.active = autopostEntriesFromJob(job).length > 0;
   job.finishedAt = job.active ? "" : (job.finishedAt || now());
-  job.nextPostAt = job.active ? new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString() : "";
+  job.nextPostAt = job.active ? new Date(scheduledAutopostTime(Date.now(), job.minDelayMinutes, job.maxDelayMinutes)).toISOString() : "";
   job.updatedAt = now();
   store.save();
   return job;
@@ -811,6 +830,12 @@ function resetAutopostJob(job) {
 function tickAutopostJob() {
   const job = ensureAutopostJob();
   if (!job.active || job.finishedAt) return;
+  if (isAutopostQuietTime(Date.now())) {
+    job.nextPostAt = new Date(nextAllowedAutopostTime(Date.now())).toISOString();
+    job.updatedAt = now();
+    store.save();
+    return;
+  }
   const entries = autopostEntriesFromJob(job);
   if (!entries.length) {
     job.active = false;
@@ -826,7 +851,7 @@ function tickAutopostJob() {
   if (!entry?.title && !entry?.text && !(entry?.media || []).length) {
     entries.shift();
     job.nextIndex = 0;
-    job.nextPostAt = entries.length ? new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString() : "";
+    job.nextPostAt = entries.length ? new Date(scheduledAutopostTime(Date.now(), job.minDelayMinutes, job.maxDelayMinutes)).toISOString() : "";
     job.active = entries.length > 0;
     job.finishedAt = job.active ? "" : now();
     job.updatedAt = now();
@@ -866,7 +891,7 @@ function tickAutopostJob() {
   job.nextIndex = 0;
   job.lastPostId = post.id;
   job.active = entries.length > 0;
-  job.nextPostAt = job.active ? new Date(Date.now() + randomDelayMs(job.minDelayMinutes, job.maxDelayMinutes)).toISOString() : "";
+  job.nextPostAt = job.active ? new Date(scheduledAutopostTime(Date.now(), job.minDelayMinutes, job.maxDelayMinutes)).toISOString() : "";
   job.finishedAt = job.active ? "" : now();
   job.updatedAt = now();
   store.audit(actor.id, "autopost_created", { autopostJobId: job.id, postId: post.id, postNumber: post.postNumber, category: post.category });
