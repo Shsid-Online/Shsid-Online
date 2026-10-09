@@ -29,7 +29,7 @@ const initialState = {
   composerAnonymousNumber: "",
   composerQuote: null,
   composerQuoteSearch: "",
-  composerOpen: false,
+  composerOpen: true,
   boardOwnerToken: "",
   replyDrafts: {},
   replyAnonymousNumbers: {},
@@ -1676,7 +1676,7 @@ function render() {
           <div class="account-copy">
             ${signedInUser
               ? `Signed in as <strong>${escapeHtml(signedInUser.englishName || signedInUser.email || "Student")}</strong>`
-              : "Browsing is open. Sign in only if you want to upvote."}
+              : "Post and comment without signing in."}
           </div>
           <div class="account-actions">
             ${signedInUser
