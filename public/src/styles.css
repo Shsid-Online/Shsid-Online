@@ -3,6 +3,10 @@
   --bg: #eef2e0;
   --panel: #f6f9ee;
   --panel-strong: #e7efd9;
+  --post-odd: #f7f1df;
+  --post-even: #e7eef8;
+  --post-odd-line: #c8a96a;
+  --post-even-line: #8da8ca;
   --ink: #111111;
   --muted: #4f5b3b;
   --line: #b7c5a0;
@@ -351,6 +355,18 @@ a {
 
 .thread-card {
   padding: 12px;
+}
+
+main.thread-list > .thread-card:nth-child(odd) {
+  border-color: var(--post-odd-line);
+  border-left: 5px solid var(--post-odd-line);
+  background: var(--post-odd);
+}
+
+main.thread-list > .thread-card:nth-child(even) {
+  border-color: var(--post-even-line);
+  border-left: 5px solid var(--post-even-line);
+  background: var(--post-even);
 }
 
 .autopost-status-chip {
