@@ -24,6 +24,18 @@ test("queue is paused, deduplicates posts and builds board-number caption", asyn
   assert.equal(JSON.stringify(queueView(job, credentials)).includes("test-token"), false);
 });
 
+test("queued screenshot can be replaced without changing its position", async () => {
+  const { repo } = fixture();
+  const original = await add(repo);
+  const entryId = original.entries[0].id;
+  const replacement = "https://www.shsid.online/api/media/uploads%2Freplacement.jpg";
+  const job = await queueAction(repo, "replace", { id: entryId }, credentials, post, replacement, 10);
+  assert.equal(job.entries.length, 1);
+  assert.equal(job.entries[0].id, entryId);
+  assert.equal(job.entries[0].imageUrl, replacement);
+  assert.equal(job.entries[0].status, "queued");
+});
+
 test("ten-minute delay, concurrent ticks publish only once, FIFO", async t => {
   const { repo } = fixture();
   await add(repo); await add(repo, { ...post, id: "post2", postNumber: 1235 });

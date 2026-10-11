@@ -784,6 +784,7 @@ function renderInstagramQueue() {
     <div class="instagram-actions">
       <button class="board-button" data-action="instagram-connect">${queue?.connected ? "Reconnect Instagram" : "Connect Instagram"}</button>
       <button class="board-button" data-action="instagram-refresh">Refresh status</button>
+      <button class="board-button" data-action="instagram-refresh-images" ${entries.some((entry) => ["queued", "failed"].includes(entry.status)) ? "" : "disabled"}>Refresh queued images</button>
       <button class="board-button primary" data-action="instagram-${queue?.active ? "pause" : "start"}" ${!queue || (!queue.active && !queue.connected) ? "disabled" : ""}>${queue?.active ? "Pause queue" : "Start queue"}</button>
     </div>
     <div class="instagram-entries">${entries.length ? entries.map(e => `<article class="instagram-entry">
@@ -827,15 +828,15 @@ async function captureInstagramPost(post) {
     if (frame.scrollHeight > 6000) throw new Error("This post is too tall for a readable single-image screenshot.");
     const capture = await html2canvas(frame, { scale: 2, backgroundColor: "#eef2e0", logging: false, windowWidth: 900 });
     const canvas = document.createElement("canvas");
-    canvas.width = 1080; canvas.height = 1350;
+    canvas.width = 1080; canvas.height = 1200;
     const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#eef2e0"; ctx.fillRect(0, 0, 1080, 1350);
-    const scale = Math.min(1000 / capture.width, 1190 / capture.height);
+    ctx.fillStyle = "#eef2e0"; ctx.fillRect(0, 0, 1080, 1200);
+    const scale = Math.min(1000 / capture.width, 1040 / capture.height);
     if (720 * scale * 2 < 480) throw new Error("This post is too long to fit legibly. A multi-image layout is needed.");
     const width = capture.width * scale, height = capture.height * scale;
-    ctx.drawImage(capture, (1080 - width) / 2, (1270 - height) / 2, width, height);
+    ctx.drawImage(capture, (1080 - width) / 2, (1120 - height) / 2, width, height);
     ctx.fillStyle = "#4f5b3b"; ctx.font = "24px Arial"; ctx.textAlign = "center";
-    ctx.fillText("shsid.online", 540, 1310);
+    ctx.fillText("shsid.online", 540, 1160);
     return await new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Screenshot creation failed")), "image/jpeg", 0.94));
   } finally { frame.remove(); objectUrls.forEach(url => URL.revokeObjectURL(url)); }
 }
@@ -2021,6 +2022,20 @@ function bindEvents() {
             return;
           } else if (action === "instagram-refresh") {
             instagramQueue = (await apiRequest("/admin/instagram", { timeoutMs: 30000 })).queue;
+          } else if (action === "instagram-refresh-images") {
+            const refreshable = (instagramQueue?.entries || []).filter((entry) => ["queued", "failed"].includes(entry.status));
+            if (!refreshable.length) throw new Error("There are no queued images to refresh");
+            if (!window.confirm(`Regenerate ${refreshable.length} queued Instagram ${refreshable.length === 1 ? "image" : "images"} with the latest replies and larger text?`)) return;
+            for (let index = 0; index < refreshable.length; index += 1) {
+              const entry = refreshable[index];
+              const post = state.posts.find((item) => item.id === entry.postId);
+              if (!post) throw new Error(`Could not find ${entry.caption || "a queued post"} on the board`);
+              toast(`Refreshing Instagram image ${index + 1} of ${refreshable.length}…`);
+              const blob = await captureInstagramPost(post);
+              const image = await uploadSinglePhoto(new File([blob], `instagram-${crypto.randomUUID()}.jpg`, { type: "image/jpeg" }));
+              instagramQueue = (await apiRequest("/admin/instagram/replace", { method: "POST", body: { id: entry.id, postId: post.id, imageUrl: image.url } })).queue;
+            }
+            toast(`Refreshed ${refreshable.length} queued Instagram ${refreshable.length === 1 ? "image" : "images"}`);
           } else {
             const command = action.slice("instagram-".length);
             if (command === "start" && !window.confirm("Publish the selected screenshots to Instagram, one every 10 minutes? The first post will publish in 10 minutes.")) return;

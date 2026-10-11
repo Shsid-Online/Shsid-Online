@@ -2539,7 +2539,7 @@ async function handleApi(req, res, url) {
     const action = url.pathname.slice("/api/admin/instagram/".length);
     let post;
     try {
-      if (action === "add") {
+      if (action === "add" || action === "replace") {
         post = store.data.posts.find(p => p.id === body.postId && !p.deletedAt);
         const key = auth.mediaKey(body.imageUrl, url.origin);
         const file = uploadPathForKey(key);

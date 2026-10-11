@@ -722,7 +722,7 @@ async function handleApi(request, env, url, route) {
       const action = route.slice("/admin/instagram/".length);
       if (method !== "POST") return json({ error: "Not found" }, 404);
       let post;
-      if (action === "add") {
+      if (action === "add" || action === "replace") {
         post = await env.DB.prepare("SELECT id, category, post_number, title, deleted_at FROM posts WHERE id=? AND deleted_at IS NULL").bind(String(body.postId || "")).first();
         const key = mediaKey(body.imageUrl, url.origin);
         const image = await env.R2_BUCKET.head(key);

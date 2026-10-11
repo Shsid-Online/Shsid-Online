@@ -30,6 +30,16 @@ export async function queueAction(repo, action, body, credentials, post, imageUr
       job.entries.push({ id: crypto.randomUUID(), postId: post.id, imageUrl,
         caption: `${BOARD[post.category] || "/board/"} No.${number}`,
         title: String(post.title || ""), status: "queued", createdAt: time, error: "" });
+    } else if (action === "replace") {
+      if (!post || post.deletedAt || post.deleted_at) fail("Post is no longer available", 404);
+      const entry = job.entries.find(e => e.id === body.id && e.postId === post.id);
+      if (!entry) fail("Queue item not found", 404);
+      if (!["queued", "failed"].includes(entry.status) || job.lockUntil > time) fail("This queue image cannot be refreshed while publishing", 409);
+      entry.imageUrl = imageUrl;
+      entry.status = "queued";
+      entry.error = "";
+      delete entry.containerId;
+      delete entry.processingAt;
     } else if (action === "start") {
       if (!credentials?.token || !credentials?.userId) fail("Connect Instagram before starting the queue");
       if (job.entries.some(e => ["failed", "review", "publishing"].includes(e.status))) fail("Resolve the stopped item before restarting");

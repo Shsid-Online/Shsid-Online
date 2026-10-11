@@ -23,7 +23,7 @@
 .instagram-entry { display: grid; grid-template-columns: 90px 1fr; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); }
 .instagram-entry img { width: 90px; height: auto; }
 .instagram-entry p { margin: 4px 0; overflow-wrap: anywhere; }
-.instagram-capture { position: fixed; left: -10000px; top: 0; width: 720px; padding: 24px; background: #eef2e0; }
+.instagram-capture { position: fixed; left: -10000px; top: 0; width: 640px; padding: 24px; background: #eef2e0; }
 .instagram-capture .thread-card { margin: 0; width: 100%; }
 .instagram-capture .thread-body { white-space: pre-wrap; overflow-wrap: anywhere; }
 .instagram-capture .thread-media img { max-height: 560px; object-fit: contain; }
