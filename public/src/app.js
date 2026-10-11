@@ -2025,17 +2025,18 @@ function bindEvents() {
           } else if (action === "instagram-refresh-images") {
             const refreshable = (instagramQueue?.entries || []).filter((entry) => ["queued", "failed"].includes(entry.status));
             if (!refreshable.length) throw new Error("There are no queued images to refresh");
-            if (!window.confirm(`Regenerate ${refreshable.length} queued Instagram ${refreshable.length === 1 ? "image" : "images"} with the latest replies and larger text?`)) return;
-            for (let index = 0; index < refreshable.length; index += 1) {
-              const entry = refreshable[index];
-              const post = state.posts.find((item) => item.id === entry.postId);
-              if (!post) throw new Error(`Could not find ${entry.caption || "a queued post"} on the board`);
-              toast(`Refreshing Instagram image ${index + 1} of ${refreshable.length}…`);
+            const available = refreshable.map((entry) => ({ entry, post: state.posts.find((item) => item.id === entry.postId) })).filter((item) => item.post);
+            const skipped = refreshable.length - available.length;
+            if (!available.length) throw new Error("The source posts for these queued images are no longer available");
+            if (!window.confirm(`Regenerate ${available.length} queued Instagram ${available.length === 1 ? "image" : "images"} with the latest replies and larger text?${skipped ? ` ${skipped} unavailable ${skipped === 1 ? "post will" : "posts will"} be left unchanged.` : ""}`)) return;
+            for (let index = 0; index < available.length; index += 1) {
+              const { entry, post } = available[index];
+              toast(`Refreshing Instagram image ${index + 1} of ${available.length}…`);
               const blob = await captureInstagramPost(post);
               const image = await uploadSinglePhoto(new File([blob], `instagram-${crypto.randomUUID()}.jpg`, { type: "image/jpeg" }));
               instagramQueue = (await apiRequest("/admin/instagram/replace", { method: "POST", body: { id: entry.id, postId: post.id, imageUrl: image.url } })).queue;
             }
-            toast(`Refreshed ${refreshable.length} queued Instagram ${refreshable.length === 1 ? "image" : "images"}`);
+            toast(`Refreshed ${available.length} queued Instagram ${available.length === 1 ? "image" : "images"}${skipped ? `; left ${skipped} unavailable ${skipped === 1 ? "post" : "posts"} unchanged` : ""}`);
           } else {
             const command = action.slice("instagram-".length);
             if (command === "start" && !window.confirm("Publish the selected screenshots to Instagram, one every 10 minutes? The first post will publish in 10 minutes.")) return;
