@@ -60,7 +60,6 @@ let autopostEntryIndex = 0;
 let autopostBusy = false;
 let autopostError = "";
 let instagramQueue = null;
-let instagramPreview = null;
 let instagramBusy = false;
 const replySubmittingPostIds = new Set();
 const replyPhotoFilesByPostId = new Map();
@@ -402,13 +401,21 @@ async function apiRequest(path, { method = "GET", body, auth = true, optionalAut
   if ((auth || optionalAuth) && state.token) {
     headers.Authorization = `Bearer ${state.token}`;
   }
-  const response = await fetch(`${API_BASE}${path}`, {
+  const request = () => fetch(`${API_BASE}${path}`, {
     method,
     credentials: "include",
     signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
+  let response;
+  try {
+    response = await request();
+  } catch (error) {
+    if (method !== "GET") throw error;
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    response = await request();
+  }
   let payload = {};
   try {
     payload = await response.json();
@@ -772,19 +779,13 @@ function renderInstagramQueue() {
   const entries = (queue?.entries || []).filter(e => e.status !== "removed");
   return `<section class="post-box instagram-queue">
     <h2>Instagram queue</h2>
-    <p>Select "Queue for Instagram" on a board post, review its screenshot, then add it here. Posts publish in order, ten minutes apart, even when this page is closed.</p>
+    <p>Press "Queue for Instagram" on a board post and confirm. It will be added here with up to three random replies. Posts publish in order, ten minutes apart, even when this page is closed.</p>
     <p>${queue ? queue.connected ? "Instagram connected" : "Instagram connection required before starting" : "Queue not loaded"} · ${queue?.active ? `Running. Next eligible post: ${escapeHtml(new Date(queue.nextAt).toLocaleString())}` : "Paused"}</p>
     <div class="instagram-actions">
       <button class="board-button" data-action="instagram-connect">${queue?.connected ? "Reconnect Instagram" : "Connect Instagram"}</button>
       <button class="board-button" data-action="instagram-refresh">Refresh status</button>
       <button class="board-button primary" data-action="instagram-${queue?.active ? "pause" : "start"}" ${!queue || (!queue.active && !queue.connected) ? "disabled" : ""}>${queue?.active ? "Pause queue" : "Start queue"}</button>
     </div>
-    ${instagramPreview ? `<div id="instagram-preview" class="instagram-preview">
-      <h3>Review screenshot</h3><img src="${instagramPreview.url}" alt="Screenshot that will be posted to Instagram">
-      <p>Caption: ${escapeHtml(instagramPreview.caption)}</p>
-      <button class="board-button primary" data-action="instagram-add">Add this screenshot to queue</button>
-      <button class="board-button" data-action="instagram-dismiss">Cancel preview</button>
-    </div>` : ""}
     <div class="instagram-entries">${entries.length ? entries.map(e => `<article class="instagram-entry">
       <a href="${escapeHtml(e.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(e.imageUrl)}" alt="${escapeHtml(e.caption)}" loading="lazy"></a>
       <div><strong>${escapeHtml(e.caption)}</strong><p>${escapeHtml(e.title)}</p><p>${escapeHtml(e.status)}${e.publishedAt ? ` · ${escapeHtml(new Date(e.publishedAt).toLocaleString())}` : ""}</p>
@@ -795,13 +796,23 @@ function renderInstagramQueue() {
   </section>`;
 }
 
+function randomReplies(comments, limit = 3) {
+  const shuffled = [...(comments || [])];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled.slice(0, limit);
+}
+
 async function captureInstagramPost(post) {
   const { default: html2canvas } = await import("../vendor/html2canvas.js");
   const frame = document.createElement("div");
   frame.className = "instagram-capture";
-  frame.innerHTML = renderThreadCard(post, 0);
-  frame.querySelectorAll(".inline-admin-link, .thread-foot, .reply-list, .reply-form, .reply-toggle").forEach(el => el.remove());
-  // Capture only the public original post, never admin controls or open reply drafts.
+  const capturePost = { ...post, comments: randomReplies(post.comments) };
+  frame.innerHTML = renderThreadCard(capturePost, 0, { forceReplies: true, captureMode: true });
+  frame.querySelectorAll(".inline-admin-link, .thread-foot, .reply-form, .thread-card-actions, .reply-inline-actions, .reply-head-actions").forEach(el => el.remove());
+  // Capture the public post and up to three replies, never admin controls or reply drafts.
   const objectUrls = [];
   document.body.append(frame);
   try {
@@ -1412,7 +1423,7 @@ function renderThreadCard(post, index, options = {}) {
   const replyCount = (post.comments || []).length;
   const profileTagKey = String(options.profileTagKey || "").trim().toLowerCase();
   const profileMode = Boolean(profileTagKey);
-  const repliesOpen = openReplies.has(post.id) || (profileMode && replyCount > 0);
+  const repliesOpen = Boolean(options.forceReplies) || openReplies.has(post.id) || (profileMode && replyCount > 0);
   const replySubmitting = replySubmittingPostIds.has(post.id);
   const replyPhotoSummary = selectedPhotoSummary(replyPhotoFilesByPostId.get(post.id) || [], "No photos selected");
   const replyAnonymousNumber = state.replyAnonymousNumbers?.[post.id] || "";
@@ -1420,6 +1431,7 @@ function renderThreadCard(post, index, options = {}) {
   const commentsById = new Map((post.comments || []).map((comment) => [comment.id, comment]));
   const replyTarget = replyTargetId ? commentsById.get(replyTargetId) : null;
   const displayNumber = Number.isInteger(post.postNumber) ? post.postNumber : 5000 + index;
+  const instagramQueued = (instagramQueue?.entries || []).some((entry) => entry.postId === post.id && entry.status !== "removed");
   return `
     <article class="thread-card">
       <div class="thread-head">
@@ -1429,7 +1441,6 @@ function renderThreadCard(post, index, options = {}) {
           <span class="thread-separator">/</span>
           <span class="thread-id">No.${displayNumber}</span>
           ${canDeletePost ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
-          ${adminMode ? `<button class="inline-admin-link" data-action="instagram-preview" data-id="${escapeHtml(post.id)}">Queue for Instagram</button>` : ""}
         </div>
         ${post.title ? `<div class="thread-title">${escapeHtml(post.title)}</div>` : ""}
       </div>
@@ -1487,7 +1498,7 @@ function renderThreadCard(post, index, options = {}) {
           `).join("")}
         </div>
       ` : ""}
-      ${replyOpen ? `
+      ${replyOpen && !options.captureMode ? `
         <form class="reply-form" data-reply-form="${escapeHtml(post.id)}">
           ${replyTarget ? `
             <div class="replying-to-note">
@@ -1514,11 +1525,15 @@ function renderThreadCard(post, index, options = {}) {
           <div class="reply-actions">
             <button class="board-button" type="submit"${replySubmitting ? " disabled" : ""}>${replySubmitting ? "Posting..." : "Reply"}</button>
             <button class="board-button muted" type="button" data-action="close-reply" data-id="${escapeHtml(post.id)}">Close</button>
+            ${adminMode ? `<button class="board-button instagram-queue-toggle" type="button" data-action="instagram-queue" data-id="${escapeHtml(post.id)}"${instagramQueued ? " disabled" : ""}>${instagramQueued ? "Queued for Instagram" : "Queue for Instagram"}</button>` : ""}
           </div>
         </form>
-      ` : `
-        <button class="board-button reply-toggle" type="button" data-action="open-reply" data-id="${escapeHtml(post.id)}">Reply</button>
-      `}
+      ` : !options.captureMode ? `
+        <div class="thread-card-actions">
+          ${adminMode ? `<button class="board-button instagram-queue-toggle" type="button" data-action="instagram-queue" data-id="${escapeHtml(post.id)}"${instagramQueued ? " disabled" : ""}>${instagramQueued ? "Queued for Instagram" : "Queue for Instagram"}</button>` : ""}
+          <button class="board-button reply-toggle" type="button" data-action="open-reply" data-id="${escapeHtml(post.id)}">Reply</button>
+        </div>
+      ` : ""}
     </article>
   `;
 }
@@ -1991,20 +2006,14 @@ function bindEvents() {
         instagramBusy = true;
         button.disabled = true;
         try {
-          if (action === "instagram-preview") {
+          if (action === "instagram-queue") {
             const post = state.posts.find(p => p.id === id);
             if (!post) throw new Error("Post is no longer loaded");
+            const replyCount = (post.comments || []).length;
+            if (!window.confirm(`Add this post${replyCount ? ` with ${Math.min(3, replyCount)} random ${replyCount === 1 ? "reply" : "replies"}` : ""} to the Instagram queue?`)) return;
             const blob = await captureInstagramPost(post);
-            if (instagramPreview) URL.revokeObjectURL(instagramPreview.url);
-            instagramPreview = { postId: id, blob, url: URL.createObjectURL(blob), caption: `${boardMeta(post.category).slug} No.${post.postNumber}` };
-          } else if (action === "instagram-dismiss") {
-            if (instagramPreview) URL.revokeObjectURL(instagramPreview.url);
-            instagramPreview = null;
-          } else if (action === "instagram-add") {
-            if (!instagramPreview) throw new Error("Preview a post first");
-            const image = await uploadSinglePhoto(new File([instagramPreview.blob], `instagram-${crypto.randomUUID()}.jpg`, { type: "image/jpeg" }));
-            instagramQueue = (await apiRequest("/admin/instagram/add", { method: "POST", body: { postId: instagramPreview.postId, imageUrl: image.url } })).queue;
-            URL.revokeObjectURL(instagramPreview.url); instagramPreview = null;
+            const image = await uploadSinglePhoto(new File([blob], `instagram-${crypto.randomUUID()}.jpg`, { type: "image/jpeg" }));
+            instagramQueue = (await apiRequest("/admin/instagram/add", { method: "POST", body: { postId: id, imageUrl: image.url } })).queue;
             toast("Added to Instagram queue");
           } else if (action === "instagram-connect") {
             const result = await apiRequest("/admin/instagram/connect", { method: "POST" });
@@ -2019,7 +2028,6 @@ function bindEvents() {
             instagramQueue = (await apiRequest(`/admin/instagram/${command}`, { method: "POST", body: { id } })).queue;
           }
           render();
-          if (action === "instagram-preview") document.querySelector("#instagram-preview")?.scrollIntoView({ behavior: "smooth", block: "center" });
         } catch (error) { toast(error.message || "Instagram queue action failed"); }
         finally { instagramBusy = false; button.disabled = false; }
         return;

@@ -19,8 +19,6 @@
 
 .instagram-queue { margin: 20px 0; padding: 20px; }
 .instagram-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.instagram-preview { margin: 20px 0; padding: 16px; border: 1px solid var(--line); }
-.instagram-preview > img { display: block; width: min(100%, 360px); height: auto; }
 .instagram-entries { max-height: 600px; overflow: auto; margin-top: 16px; }
 .instagram-entry { display: grid; grid-template-columns: 90px 1fr; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); }
 .instagram-entry img { width: 90px; height: auto; }
@@ -705,6 +703,13 @@ main.thread-list > .thread-card:nth-child(even) {
   gap: 10px;
   font-size: 12px;
   color: #555555;
+}
+
+.thread-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .plain-board-action {
