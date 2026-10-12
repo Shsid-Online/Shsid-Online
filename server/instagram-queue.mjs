@@ -2,14 +2,17 @@ export const INTERVAL_MS = 10 * 60 * 1000;
 const BOARD = { school: "/campus/", academic: "/study/", lifestyle: "/teacher/", gaming: "/club/", shitpost: "/random/" };
 export const emptyQueue = () => ({ revision: 0, active: false, nextAt: 0, lockUntil: 0, entries: [] });
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
+const TERMINAL_STATUSES = new Set(["published", "posted", "complete", "completed", "done", "removed", "archived"]);
+export const isCompletedEntry = entry => TERMINAL_STATUSES.has(String(entry?.status || "").trim().toLowerCase())
+  || Boolean(entry?.publishedAt && entry?.mediaId);
 
 export async function changeQueue(repo, fn) {
   for (let attempt = 0; attempt < 8; attempt++) {
     const job = await repo.read();
     const revision = job.revision;
-    job.entries = (job.entries || []).filter((entry) => !["published", "removed"].includes(entry.status));
+    job.entries = (job.entries || []).filter((entry) => !isCompletedEntry(entry));
     await fn(job);
-    job.entries = (job.entries || []).filter((entry) => !["published", "removed"].includes(entry.status));
+    job.entries = (job.entries || []).filter((entry) => !isCompletedEntry(entry));
     job.revision = revision + 1;
     if (await repo.write(job, revision)) return job;
   }
@@ -18,13 +21,13 @@ export async function changeQueue(repo, fn) {
 
 export async function cleanedQueue(repo) {
   const job = await repo.read();
-  if (!(job.entries || []).some((entry) => ["published", "removed"].includes(entry.status))) return job;
+  if (!(job.entries || []).some(isCompletedEntry)) return job;
   return changeQueue(repo, () => {});
 }
 
 export function queueView(job, credentials) {
   return { active: job.active, nextAt: job.nextAt, connected: Boolean(credentials?.token && credentials?.userId),
-    intervalMinutes: 10, entries: job.entries.filter((entry) => !["published", "removed"].includes(entry.status)).map(({ containerId, ...entry }) => entry) };
+    intervalMinutes: 10, entries: job.entries.filter((entry) => !isCompletedEntry(entry)).map(({ containerId, ...entry }) => entry) };
 }
 
 export async function queueAction(repo, action, body, credentials, post, imageUrl, time = Date.now()) {

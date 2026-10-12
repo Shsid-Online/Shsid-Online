@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanedQueue, emptyQueue, localQueue, queueAction, queueView, runQueue, INTERVAL_MS } from "../server/instagram-queue.mjs";
+import { cleanedQueue, emptyQueue, isCompletedEntry, localQueue, queueAction, queueView, runQueue, INTERVAL_MS } from "../server/instagram-queue.mjs";
 import { mediaKey, exchangeConnection } from "../server/instagram-auth.mjs";
 
 const credentials = { token: "test-token", userId: "test-ig" };
@@ -28,8 +28,12 @@ test("completed legacy entries are removed from storage and never shown", async 
   const { repo, store } = fixture();
   store.data.instagramQueue.entries = [
     { id: "published", postId: "old1", status: "published" },
-    { id: "removed", postId: "old2", status: "removed" }
+    { id: "removed", postId: "old2", status: "removed" },
+    { id: "posted", postId: "old3", status: "posted" },
+    { id: "completed", postId: "old4", status: "completed" },
+    { id: "legacy-media", postId: "old5", status: "review", publishedAt: 123, mediaId: "ig-1" }
   ];
+  assert.equal(store.data.instagramQueue.entries.every(isCompletedEntry), true);
   assert.equal(queueView(store.data.instagramQueue, credentials).entries.length, 0);
   await cleanedQueue(repo);
   assert.equal((await repo.read()).entries.length, 0);

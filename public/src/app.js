@@ -882,9 +882,14 @@ function renderAutopostEntry(entry, index, job) {
   `;
 }
 
+function isCompletedInstagramEntry(entry) {
+  const completedStatuses = new Set(["published", "posted", "complete", "completed", "done", "removed", "archived"]);
+  return completedStatuses.has(String(entry?.status || "").trim().toLowerCase()) || Boolean(entry?.publishedAt && entry?.mediaId);
+}
+
 function renderInstagramQueue() {
   const queue = instagramQueue;
-  const entries = (queue?.entries || []).filter(e => e.status !== "removed");
+  const entries = (queue?.entries || []).filter((entry) => !isCompletedInstagramEntry(entry));
   return `<section class="post-box instagram-queue">
     <h2>Instagram queue</h2>
     <p>Queue a board post with up to three random replies, or queue one specific reply with its post. Items publish in order, ten minutes apart, even when this page is closed.</p>
@@ -1574,7 +1579,7 @@ function renderThreadCard(post, index, options = {}) {
   const commentsById = new Map((post.comments || []).map((comment) => [comment.id, comment]));
   const replyTarget = replyTargetId ? commentsById.get(replyTargetId) : null;
   const displayNumber = Number.isInteger(post.postNumber) ? post.postNumber : 5000 + index;
-  const instagramPostQueued = (instagramQueue?.entries || []).some((entry) => entry.postId === post.id && !entry.commentId && entry.status !== "removed");
+  const instagramPostQueued = (instagramQueue?.entries || []).some((entry) => entry.postId === post.id && !entry.commentId && !isCompletedInstagramEntry(entry));
   return `
     <article class="thread-card" id="post-${escapeHtml(post.id)}">
       <div class="thread-head">
@@ -1636,7 +1641,7 @@ function renderThreadCard(post, index, options = {}) {
               ` : ""}
               <div class="reply-inline-actions">
                 <button class="plain-board-action" type="button" data-action="open-comment-reply" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Reply</button>
-                ${adminMode && !options.captureMode ? `<button class="plain-board-action" type="button" data-action="instagram-queue-reply" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}"${(instagramQueue?.entries || []).some((entry) => entry.postId === post.id && entry.commentId === comment.id && entry.status !== "removed") ? " disabled" : ""}>${(instagramQueue?.entries || []).some((entry) => entry.postId === post.id && entry.commentId === comment.id && entry.status !== "removed") ? "Reply queued" : "Queue reply"}</button>` : ""}
+                ${adminMode && !options.captureMode ? `<button class="plain-board-action" type="button" data-action="instagram-queue-reply" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}"${(instagramQueue?.entries || []).some((entry) => entry.postId === post.id && entry.commentId === comment.id && !isCompletedInstagramEntry(entry)) ? " disabled" : ""}>${(instagramQueue?.entries || []).some((entry) => entry.postId === post.id && entry.commentId === comment.id && !isCompletedInstagramEntry(entry)) ? "Reply queued" : "Queue reply"}</button>` : ""}
               </div>
             </div>
           `).join("")}
@@ -2184,7 +2189,7 @@ function bindEvents() {
             const blob = await captureInstagramPost(post, selectedCommentId);
             const image = await uploadSinglePhoto(new File([blob], `instagram-${crypto.randomUUID()}.jpg`, { type: "image/jpeg" }));
             instagramQueue = (await apiRequest("/admin/instagram/add", { method: "POST", body: { postId: id, ...(selectedCommentId ? { commentId: selectedCommentId } : {}), imageUrl: image.url } })).queue;
-            const position = (instagramQueue?.entries || []).filter((entry) => entry.status !== "removed").findIndex((entry) => entry.postId === id && String(entry.commentId || "") === selectedCommentId) + 1;
+            const position = (instagramQueue?.entries || []).filter((entry) => !isCompletedInstagramEntry(entry)).findIndex((entry) => entry.postId === id && String(entry.commentId || "") === selectedCommentId) + 1;
             toast(position ? `${selectedCommentId ? "Reply" : "Post"} added to Instagram queue · ${position} in line` : "Added to Instagram queue");
           } else if (action === "instagram-connect") {
             const result = await apiRequest("/admin/instagram/connect", { method: "POST" });
