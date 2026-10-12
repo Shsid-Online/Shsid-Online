@@ -125,7 +125,7 @@ export async function runQueue(repo, credentials, getPost, time = Date.now()) {
     const result = await graph(`${credentials.userId}/media_publish`, credentials.token, { creation_id: containerId });
     if (!result.id) fail("Instagram did not confirm publication");
     await update((j, e) => {
-      e.status = "published"; e.mediaId = result.id; e.publishedAt = Date.now(); e.error = "";
+      j.entries = j.entries.filter(row => row.id !== e.id);
       j.nextAt = Date.now() + INTERVAL_MS;
       if (!j.entries.some(row => ["queued", "processing"].includes(row.status))) j.active = false;
     });

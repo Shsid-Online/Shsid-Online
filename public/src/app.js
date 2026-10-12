@@ -787,9 +787,9 @@ function renderInstagramQueue() {
       <button class="board-button" data-action="instagram-refresh-images" ${entries.some((entry) => ["queued", "failed"].includes(entry.status)) ? "" : "disabled"}>Refresh queued images</button>
       <button class="board-button primary" data-action="instagram-${queue?.active ? "pause" : "start"}" ${!queue || (!queue.active && !queue.connected) ? "disabled" : ""}>${queue?.active ? "Pause queue" : "Start queue"}</button>
     </div>
-    <div class="instagram-entries">${entries.length ? entries.map(e => `<article class="instagram-entry">
+    <div class="instagram-entries">${entries.length ? entries.map((e, index) => `<article class="instagram-entry">
       <a href="${escapeHtml(e.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(e.imageUrl)}" alt="${escapeHtml(e.caption)}" loading="lazy"></a>
-      <div><strong>${escapeHtml(e.caption)}</strong><p>${escapeHtml(e.title)}</p><p>${escapeHtml(e.status)}${e.publishedAt ? ` · ${escapeHtml(new Date(e.publishedAt).toLocaleString())}` : ""}</p>
+      <div><strong>${escapeHtml(e.caption)}</strong><p>${escapeHtml(e.title)}</p><p>${index + 1} of ${entries.length} in line · ${escapeHtml(e.status)}</p>
       ${e.error ? `<p role="alert">${escapeHtml(e.error)}</p>` : ""}
       ${["queued", "processing", "failed"].includes(e.status) ? `<button class="board-button small" data-action="instagram-remove" data-id="${escapeHtml(e.id)}">Remove</button>` : ""}
       ${e.status === "review" ? `<button class="board-button small" data-action="instagram-resolve" data-id="${escapeHtml(e.id)}">I checked Instagram: archive item</button>` : ""}
@@ -2006,6 +2006,10 @@ function bindEvents() {
         if (instagramBusy || currentUser()?.role !== "admin") return;
         instagramBusy = true;
         button.disabled = true;
+        const originalButtonText = button.textContent;
+        if (action === "instagram-queue") button.textContent = "Queueing…";
+        if (action === "instagram-refresh-images") button.textContent = "Refreshing…";
+        if (action === "instagram-start") button.textContent = "Starting…";
         try {
           if (action === "instagram-queue") {
             const post = state.posts.find(p => p.id === id);
@@ -2015,7 +2019,8 @@ function bindEvents() {
             const blob = await captureInstagramPost(post);
             const image = await uploadSinglePhoto(new File([blob], `instagram-${crypto.randomUUID()}.jpg`, { type: "image/jpeg" }));
             instagramQueue = (await apiRequest("/admin/instagram/add", { method: "POST", body: { postId: id, imageUrl: image.url } })).queue;
-            toast("Added to Instagram queue");
+            const position = (instagramQueue?.entries || []).filter((entry) => entry.status !== "removed").findIndex((entry) => entry.postId === id) + 1;
+            toast(position ? `Added to Instagram queue · ${position} in line` : "Added to Instagram queue");
           } else if (action === "instagram-connect") {
             const result = await apiRequest("/admin/instagram/connect", { method: "POST" });
             window.location.assign(result.url);
@@ -2045,7 +2050,13 @@ function bindEvents() {
           }
           render();
         } catch (error) { toast(error.message || "Instagram queue action failed"); }
-        finally { instagramBusy = false; button.disabled = false; }
+        finally {
+          instagramBusy = false;
+          if (button.isConnected) {
+            button.disabled = false;
+            button.textContent = originalButtonText;
+          }
+        }
         return;
       }
       if (action === "open-auth") {

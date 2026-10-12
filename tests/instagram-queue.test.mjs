@@ -52,8 +52,9 @@ test("ten-minute delay, concurrent ticks publish only once, FIFO", async t => {
   await Promise.all([runQueue(repo, credentials, () => post, INTERVAL_MS), runQueue(repo, credentials, () => post, INTERVAL_MS)]);
   const job = await repo.read();
   assert.equal(publishes, 1);
-  assert.equal(job.entries[0].status, "published");
-  assert.equal(job.entries[1].status, "queued");
+  assert.equal(job.entries.length, 1);
+  assert.equal(job.entries[0].status, "queued");
+  assert.equal(job.entries[0].postId, "post2");
   assert.equal(job.nextAt, 2 * INTERVAL_MS);
 });
 
@@ -70,7 +71,7 @@ test("processing container survives ticks and is not recreated", async t => {
   assert.equal((await repo.read()).entries[0].status, "processing");
   await runQueue(repo, credentials, () => post, INTERVAL_MS + 60000);
   assert.equal(creates, 1);
-  assert.equal((await repo.read()).entries[0].status, "published");
+  assert.equal((await repo.read()).entries.length, 0);
 });
 
 test("ambiguous publication pauses and cannot retry without admin resolution", async t => {
