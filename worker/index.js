@@ -1,4 +1,4 @@
-import { d1Queue, queueView, queueAction, runQueue } from "../server/instagram-queue.mjs";
+import { d1Queue, cleanedQueue, queueView, queueAction, runQueue } from "../server/instagram-queue.mjs";
 import { loginUrl, exchangeConnection, mediaKey } from "../server/instagram-auth.mjs";
 
 const ALLOWED_ORIGINS = ["https://www.shsid.online", "https://shsid.online", "http://127.0.0.1:4173", "http://localhost:4173"];
@@ -120,6 +120,7 @@ let hasPostsEngagementColumnsCache = null;
 let hasAdsTableCache = null;
 let hasBoardGuestAliasesTableCache = null;
 let hasAutopostJobsTableCache = null;
+let hasNotificationTargetColumnsCache = null;
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
@@ -165,9 +166,23 @@ export default {
     // Preserve the existing website queue's hourly tick.
     if (new Date(time).getUTCMinutes() === 0) ctx.waitUntil(runAutopostCron(env, time));
     ctx.waitUntil(instagramCredentials(env).then(credentials => runQueue(d1Queue(env.DB), credentials,
-      id => env.DB.prepare("SELECT id FROM posts WHERE id=? AND deleted_at IS NULL").bind(id).first(), time)));
+      (id, commentId) => instagramSourceExists(env, id, commentId), time)));
   }
 };
+
+async function instagramSourceExists(env, postId, commentId = "") {
+  const post = await env.DB.prepare("SELECT id FROM posts WHERE id=? AND deleted_at IS NULL").bind(postId).first();
+  if (!post || !commentId) return post;
+  const seen = new Set();
+  let currentId = commentId;
+  while (currentId && !seen.has(currentId)) {
+    seen.add(currentId);
+    const comment = await env.DB.prepare("SELECT reply_to FROM comments WHERE id=? AND post_id=? AND deleted_at IS NULL").bind(currentId, postId).first();
+    if (!comment) return null;
+    currentId = String(comment.reply_to || "");
+  }
+  return currentId ? null : post;
+}
 
 function getSecurityHeaders(options = {}) {
   if (options.allowOAuthFrame !== true) return { ...SECURITY_HEADERS };
@@ -718,18 +733,23 @@ async function handleApi(request, env, url, route) {
       }
       const repo = d1Queue(env.DB);
       const credentials = await instagramCredentials(env);
-      if (method === "GET" && route === "/admin/instagram") return json({ queue: queueView(await repo.read(), credentials) });
+      if (method === "GET" && route === "/admin/instagram") return json({ queue: queueView(await cleanedQueue(repo), credentials) });
       const action = route.slice("/admin/instagram/".length);
       if (method !== "POST") return json({ error: "Not found" }, 404);
       let post;
       if (action === "add" || action === "replace") {
         post = await env.DB.prepare("SELECT id, category, post_number, title, deleted_at FROM posts WHERE id=? AND deleted_at IS NULL").bind(String(body.postId || "")).first();
+        const commentId = String(body.commentId || "").trim();
+        if (commentId) {
+          const comment = await env.DB.prepare("SELECT id FROM comments WHERE id=? AND post_id=? AND deleted_at IS NULL").bind(commentId, String(body.postId || "")).first();
+          if (!comment) return json({ error: "Reply is no longer available" }, 404);
+        }
         const key = mediaKey(body.imageUrl, url.origin);
         const image = await env.R2_BUCKET.head(key);
         if (!image || image.httpMetadata?.contentType !== "image/jpeg" || image.size > 8 * 1024 * 1024) return json({ error: "Screenshot is missing or exceeds 8 MB" }, 400);
       }
       const job = await queueAction(repo, action, body, credentials, post, body.imageUrl);
-      await audit(env, authUser.id, `instagram_${action}`, { postId: post?.id || null }, request);
+      await audit(env, authUser.id, `instagram_${action}`, { postId: post?.id || null, commentId: String(body.commentId || "").trim() || null }, request);
       return json({ queue: queueView(job, credentials) });
     } catch (error) { return json({ error: error.message }, error.status || 400); }
   }
@@ -853,8 +873,9 @@ async function handleApi(request, env, url, route) {
   if (method === "GET" && route === "/posts") {
     const ownerDigest = await boardOwnerDigest(request);
     const { limit, offset } = pageParams(url, 10, 30);
-    const postRows = await env.DB.prepare("select * from posts where deleted_at is null order by sticky desc, created_at desc limit ? offset ?").bind(limit, offset).all();
-    const totalRow = await env.DB.prepare("select count(*) as count from posts where deleted_at is null").first();
+    const before = String(url.searchParams.get("before") || now());
+    const postRows = await env.DB.prepare("select * from posts where deleted_at is null and created_at <= ? order by sticky desc, created_at desc, id desc limit ? offset ?").bind(before, limit, offset).all();
+    const totalRow = await env.DB.prepare("select count(*) as count from posts where deleted_at is null and created_at <= ?").bind(before).first();
     const viewContext = await boardViewContext(env);
     const posts = [];
     for (const post of postRows.results || []) {
@@ -864,7 +885,7 @@ async function handleApi(request, env, url, route) {
     const total = Number(totalRow?.count || 0);
     return json({
       posts,
-      pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null },
+      pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null, snapshot: before },
       ...(authUser?.role === "admin" ? { adminAnonymousNumbers: await adminAnonymousNumbersView(env) } : {})
     }, 200);
   }
@@ -972,7 +993,10 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("update posts set likes=? where id=?").bind(JSON.stringify(nextLikes), row.id).run();
     row.likes = JSON.stringify(nextLikes);
     if (!likes.includes(authUser.id) && row.author_id && row.author_id !== authUser.id) {
-      await createNotification(env, row.author_id, "post_bump", `${await anonymousAccountLabelForUserId(env, authUser.id)} bumped your post ${notificationPostLabel(row)}.`);
+      try {
+        const actorLabel = await anonymousAccountLabelForUserId(env, authUser.id);
+        await createNotification(env, row.author_id, "post_bump", `${actorLabel} bumped your post ${notificationPostLabel(row)}.`, { postId: row.id });
+      } catch (error) { console.error("Post bump notification failed", error); }
     }
     return json({ post: await boardPostView(env, row, authUser, ownerDigest) }, 200);
   }
@@ -989,7 +1013,8 @@ async function handleApi(request, env, url, route) {
     await env.DB.prepare("update posts set hearts=? where id=?").bind(JSON.stringify(nextHearts), row.id).run();
     row.hearts = JSON.stringify(nextHearts);
     if (!hearts.includes(authUser.id) && row.author_id && row.author_id !== authUser.id) {
-      await createNotification(env, row.author_id, "post_heart_public", `${notificationActorName(authUser)} hearted your post.`);
+      try { await createNotification(env, row.author_id, "post_heart_public", `${notificationActorName(authUser)} hearted your post.`, { postId: row.id }); }
+      catch (error) { console.error("Post heart notification failed", error); }
     }
     return json({ post: await boardPostView(env, row, authUser, ownerDigest) }, 200);
   }
@@ -1089,7 +1114,8 @@ async function handleApi(request, env, url, route) {
         .run();
     }
     await audit(env, actor.id, "comment_created", { postId: post.id, commentId: comment.id }, request);
-    await notifyBoardComment(env, post, comment, targetComment, authUser);
+    try { await notifyBoardComment(env, post, comment, targetComment, authUser); }
+    catch (error) { console.error("Comment notification fanout failed", error); }
 
     return json({
       comment: await boardCommentView(env, comment, authUser, ownerDigest)
@@ -1715,9 +1741,26 @@ async function handleApi(request, env, url, route) {
 
   if (method === "GET" && route === "/notifications") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
+    await hasNotificationTargetColumns(env);
     const rows = await env.DB.prepare("select * from notifications where user_id=? order by created_at desc").bind(authUser.id).all();
-    const notifications = (rows.results || []).map((n) => ({ id: n.id, userId: n.user_id, type: n.type || "notice", text: n.body || "", read: Boolean(n.read_at), createdAt: n.created_at }));
+    const notifications = (rows.results || []).map((n) => ({ id: n.id, userId: n.user_id, type: n.type || "notice", text: n.body || "", read: Boolean(n.read_at), postId: n.post_id || "", commentId: n.comment_id || "", createdAt: n.created_at }));
     return json({ notifications, pagination: { limit: 100, offset: 0, total: notifications.length, nextOffset: null } }, 200);
+  }
+
+  const notificationReadMatch = route.match(/^\/notifications\/([^/]+)\/read$/);
+  if (method === "POST" && notificationReadMatch) {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    await env.DB.prepare("update notifications set read_at=? where id=? and user_id=?").bind(now(), notificationReadMatch[1], authUser.id).run();
+    return json({ ok: true }, 200);
+  }
+
+  if (method === "POST" && route === "/notifications/read") {
+    if (!authUser) return json({ error: "Authentication required" }, 401);
+    const ids = [...new Set((Array.isArray(body.ids) ? body.ids : []).map((value) => String(value || "")).filter(Boolean))].slice(0, 100);
+    for (const notificationId of ids) {
+      await env.DB.prepare("update notifications set read_at=? where id=? and user_id=?").bind(now(), notificationId, authUser.id).run();
+    }
+    return json({ ok: true }, 200);
   }
 
   if (method === "POST" && route === "/notifications/read-all") {
@@ -3510,11 +3553,22 @@ async function audit(env, actorId, action, metadata = {}, request = null) {
   }
 }
 
-async function createNotification(env, userId, type, body) {
-  if (!userId) return;
-  await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
-    .bind(id("ntf"), userId, String(type || "notice").slice(0, 50), String(body || "").slice(0, 500), null, now())
-    .run();
+async function createNotification(env, userId, type, body, target = {}) {
+  if (!userId) return false;
+  const values = [id("ntf"), userId, String(type || "notice").slice(0, 50), String(body || "").slice(0, 500)];
+  try {
+    if (await hasNotificationTargetColumns(env)) {
+      await env.DB.prepare("insert into notifications (id, user_id, type, body, post_id, comment_id, read_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(...values, String(target.postId || "") || null, String(target.commentId || "") || null, null, now()).run();
+    } else {
+      await env.DB.prepare("insert into notifications (id, user_id, type, body, read_at, created_at) values (?, ?, ?, ?, ?, ?)")
+        .bind(...values, null, now()).run();
+    }
+    return true;
+  } catch (error) {
+    console.error("Notification delivery failed", error);
+    return false;
+  }
 }
 
 async function createNotifications(env, userIds, type, body) {
@@ -3538,7 +3592,8 @@ async function notifyBoardComment(env, post, comment, targetComment, actorUser) 
       env,
       userId,
       isReplyToComment ? "comment_reply_direct" : "post_reply_direct",
-      isReplyToComment ? `${actorLabel} replied to your reply on ${postLabel}.` : `${actorLabel} replied to your post ${postLabel}.`
+      isReplyToComment ? `${actorLabel} replied to your reply on ${postLabel}.` : `${actorLabel} replied to your post ${postLabel}.`,
+      { postId: post.id, commentId: comment.id }
     );
   }
 
@@ -3549,7 +3604,30 @@ async function notifyBoardComment(env, post, comment, targetComment, actorUser) 
     ...(comments.results || []).map((row) => row.author_id)
   ]);
   const notifyUserIds = [...activityRecipients].filter((userId) => userId && userId !== actorId && !directRecipients.has(userId));
-  await createNotifications(env, notifyUserIds, "thread_activity", `${actorLabel} replied to ${postLabel}, a thread you bumped or joined.`);
+  for (const userId of notifyUserIds) {
+    await createNotification(env, userId, "thread_activity", `${actorLabel} replied to ${postLabel}, a thread you bumped or joined.`, { postId: post.id, commentId: comment.id });
+  }
+}
+
+async function hasNotificationTargetColumns(env) {
+  if (hasNotificationTargetColumnsCache === true) return true;
+  try {
+    let rows = await env.DB.prepare("pragma table_info(notifications)").all();
+    let names = new Set((rows.results || []).map((row) => String(row.name || "").toLowerCase()));
+    for (const column of ["post_id", "comment_id"]) {
+      if (names.has(column)) continue;
+      try { await env.DB.prepare(`alter table notifications add column ${column} text`).run(); }
+      catch { /* Another request may have added it concurrently. */ }
+    }
+    rows = await env.DB.prepare("pragma table_info(notifications)").all();
+    names = new Set((rows.results || []).map((row) => String(row.name || "").toLowerCase()));
+    if (!names.has("post_id") || !names.has("comment_id")) return false;
+    hasNotificationTargetColumnsCache = true;
+    return true;
+  } catch {
+    hasNotificationTargetColumnsCache = null;
+    return false;
+  }
 }
 
 function notificationActorName(user) {

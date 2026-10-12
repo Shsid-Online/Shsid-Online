@@ -7,33 +7,45 @@ export async function changeQueue(repo, fn) {
   for (let attempt = 0; attempt < 8; attempt++) {
     const job = await repo.read();
     const revision = job.revision;
+    job.entries = (job.entries || []).filter((entry) => !["published", "removed"].includes(entry.status));
     await fn(job);
+    job.entries = (job.entries || []).filter((entry) => !["published", "removed"].includes(entry.status));
     job.revision = revision + 1;
     if (await repo.write(job, revision)) return job;
   }
   fail("Queue changed in another session. Please reload.", 409);
 }
 
+export async function cleanedQueue(repo) {
+  const job = await repo.read();
+  if (!(job.entries || []).some((entry) => ["published", "removed"].includes(entry.status))) return job;
+  return changeQueue(repo, () => {});
+}
+
 export function queueView(job, credentials) {
   return { active: job.active, nextAt: job.nextAt, connected: Boolean(credentials?.token && credentials?.userId),
-    intervalMinutes: 10, entries: job.entries.map(({ containerId, ...entry }) => entry) };
+    intervalMinutes: 10, entries: job.entries.filter((entry) => !["published", "removed"].includes(entry.status)).map(({ containerId, ...entry }) => entry) };
 }
 
 export async function queueAction(repo, action, body, credentials, post, imageUrl, time = Date.now()) {
   return changeQueue(repo, (job) => {
     if (action === "add") {
       if (!post || post.deletedAt || post.deleted_at) fail("Post is no longer available", 404);
-      if (job.entries.some(e => e.postId === post.id && e.status !== "removed")) fail("This post is already in the Instagram queue", 409);
+      const commentId = String(body.commentId || "").trim();
+      if (job.entries.some(e => e.postId === post.id && String(e.commentId || "") === commentId && e.status !== "removed")) {
+        fail(commentId ? "This reply is already in the Instagram queue" : "This post is already in the Instagram queue", 409);
+      }
       if (job.entries.length >= 500) fail("Queue history is full (500 posts)");
       const number = post.postNumber ?? post.post_number;
       if (!Number.isInteger(Number(number))) fail("Post needs a permanent board number");
-      job.entries.push({ id: crypto.randomUUID(), postId: post.id, imageUrl,
+      job.entries.push({ id: crypto.randomUUID(), postId: post.id, ...(commentId ? { commentId } : {}), imageUrl,
         caption: `${BOARD[post.category] || "/board/"} No.${number}`,
         title: String(post.title || ""), status: "queued", createdAt: time, error: "" });
     } else if (action === "replace") {
       if (!post || post.deletedAt || post.deleted_at) fail("Post is no longer available", 404);
       const entry = job.entries.find(e => e.id === body.id && e.postId === post.id);
       if (!entry) fail("Queue item not found", 404);
+      if (String(entry.commentId || "") !== String(body.commentId || "")) fail("Queue reply selection changed", 409);
       if (!["queued", "failed"].includes(entry.status) || job.lockUntil > time) fail("This queue image cannot be refreshed while publishing", 409);
       entry.imageUrl = imageUrl;
       entry.status = "queued";
@@ -101,7 +113,9 @@ export async function runQueue(repo, credentials, getPost, time = Date.now()) {
   try {
     if (!entry) { await update(j => { j.active = false; }); return; }
     if (!credentials?.token || !credentials?.userId) fail("Instagram is not connected");
-    if (!await getPost(entry.postId)) fail("Original board post was deleted. Remove this item.");
+    if (!await getPost(entry.postId, entry.commentId || "")) fail(entry.commentId
+      ? "Original board post or selected reply was deleted. Remove this item."
+      : "Original board post was deleted. Remove this item.");
     let containerId = entry.containerId;
     if (!containerId) {
       const container = await graph(`${credentials.userId}/media`, credentials.token, { image_url: entry.imageUrl, caption: entry.caption });

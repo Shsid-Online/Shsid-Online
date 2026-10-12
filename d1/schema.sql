@@ -128,6 +128,8 @@ create table if not exists notifications (
   user_id text not null references users(id),
   type text not null default 'notice',
   body text not null default '',
+  post_id text,
+  comment_id text,
   read_at text,
   created_at text not null
 );

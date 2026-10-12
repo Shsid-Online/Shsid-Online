@@ -1502,13 +1502,15 @@ function notificationActorLabel(user) {
   return String(user?.englishName || user?.email || "Anonymous").trim() || "Anonymous";
 }
 
-function pushNotification(userId, type, body) {
+function pushNotification(userId, type, body, target = {}) {
   if (!userId || !store.findUserById(userId)) return;
   store.data.notifications.push({
     id: id("ntf"),
     userId,
     type,
     body,
+    postId: String(target.postId || ""),
+    commentId: String(target.commentId || ""),
     readAt: null,
     createdAt: now()
   });
@@ -1530,7 +1532,8 @@ function notifyBoardComment(post, comment, actorUser) {
     pushNotification(
       userId,
       isReplyToComment ? "comment_reply_direct" : "post_reply_direct",
-      isReplyToComment ? `${actorLabel} replied to your reply on ${postLabel}.` : `${actorLabel} replied to your post ${postLabel}.`
+      isReplyToComment ? `${actorLabel} replied to your reply on ${postLabel}.` : `${actorLabel} replied to your post ${postLabel}.`,
+      { postId: post.id, commentId: comment.id }
     );
   }
 
@@ -1540,7 +1543,7 @@ function notifyBoardComment(post, comment, actorUser) {
   ]);
   for (const userId of activityRecipients) {
     if (!userId || userId === actorId || directRecipients.has(userId)) continue;
-    pushNotification(userId, "thread_activity", `${actorLabel} replied to ${postLabel}, a thread you bumped or joined.`);
+    pushNotification(userId, "thread_activity", `${actorLabel} replied to ${postLabel}, a thread you bumped or joined.`, { postId: post.id, commentId: comment.id });
   }
 }
 
@@ -1919,15 +1922,20 @@ async function handleApi(req, res, url) {
     if (user?.status === "banned") return sendJson(res, 403, { error: "Account banned" }, req);
     const categoryFilter = String(url.searchParams.get("category") || "").trim().toLowerCase();
     const followIndexes = buildFollowIndexes();
+    const beforeText = String(url.searchParams.get("before") || now());
+    const before = new Date(beforeText).getTime();
     const visiblePosts = store.data.posts.filter((post) => {
       if (post.deletedAt) return false;
+      if (new Date(post.createdAt).getTime() > before) return false;
       if (!categoryFilter) return true;
       return String(post.category || "").trim().toLowerCase() === categoryFilter;
-    });
+    }).sort((left, right) => Number(Boolean(right.sticky)) - Number(Boolean(left.sticky))
+      || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+      || String(right.id).localeCompare(String(left.id)));
     const { items, pagination } = paginate(visiblePosts, url, { limit: 25, maxLimit: 100 });
     const viewContext = boardViewContext();
     const posts = items.map((post) => boardPostView(post, user, ownerDigest, followIndexes, viewContext));
-    return sendJson(res, 200, { posts, pagination, ...(user?.role === "admin" ? { adminAnonymousNumbers: adminAnonymousNumbersView() } : {}) });
+    return sendJson(res, 200, { posts, pagination: { ...pagination, snapshot: beforeText }, ...(user?.role === "admin" ? { adminAnonymousNumbers: adminAnonymousNumbersView() } : {}) });
   }
 
   if (method === "POST" && url.pathname === "/api/posts") {
@@ -2000,7 +2008,8 @@ async function handleApi(req, res, url) {
     const wasLiked = post.likes.includes(user.id);
     post.likes = wasLiked ? post.likes.filter((item) => item !== user.id) : [...post.likes, user.id];
     if (!wasLiked && post.authorId && post.authorId !== user.id) {
-      pushNotification(post.authorId, "post_bump", `${anonymousAccountLabelForUserId(user.id)} bumped your post ${notificationPostLabel(post)}.`);
+      try { pushNotification(post.authorId, "post_bump", `${anonymousAccountLabelForUserId(user.id)} bumped your post ${notificationPostLabel(post)}.`, { postId: post.id }); }
+      catch (error) { console.error("Post bump notification failed", error); }
     }
     store.save();
     return sendJson(res, 200, { post: boardPostView(post, user, boardOwnerDigest(req)) });
@@ -2016,7 +2025,7 @@ async function handleApi(req, res, url) {
     const wasHearted = post.hearts.includes(user.id);
     post.hearts = wasHearted ? post.hearts.filter((item) => item !== user.id) : [...post.hearts, user.id];
     if (!wasHearted && post.authorId && post.authorId !== user.id) {
-      store.data.notifications.push({ id: id("ntf"), userId: post.authorId, type: "post_heart_public", body: `${user.englishName || "A student"} hearted your post.`, readAt: null, createdAt: now() });
+      pushNotification(post.authorId, "post_heart_public", `${user.englishName || "A student"} hearted your post.`, { postId: post.id });
     }
     store.save();
     return sendJson(res, 200, { post: boardPostView(post, user, boardOwnerDigest(req)) });
@@ -2074,7 +2083,8 @@ async function handleApi(req, res, url) {
       deletedAt: null
     };
     post.comments.push(comment);
-    notifyBoardComment(post, comment, user);
+    try { notifyBoardComment(post, comment, user); }
+    catch (error) { console.error("Comment notification fanout failed", error); }
     store.audit(authorId, "comment_created", {
       postId: post.id,
       commentId: comment.id,
@@ -2311,6 +2321,8 @@ async function handleApi(req, res, url) {
       type: item.type || "notice",
       text: item.body || item.text || "",
       read: Boolean(item.readAt),
+      postId: String(item.postId || ""),
+      commentId: String(item.commentId || ""),
       createdAt: item.createdAt
     }));
     return sendJson(res, 200, { notifications, pagination });
@@ -2325,6 +2337,28 @@ async function handleApi(req, res, url) {
     }
     store.save();
     return sendJson(res, 200, { ok: true });
+  }
+
+  const notificationReadMatch = url.pathname.match(/^\/api\/notifications\/([^/]+)\/read$/);
+  if (method === "POST" && notificationReadMatch) {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const item = store.data.notifications.find((notification) => notification.id === notificationReadMatch[1] && notification.userId === user.id);
+    if (item && !item.readAt) item.readAt = now();
+    store.save();
+    return sendJson(res, 200, { ok: true }, req);
+  }
+
+  if (method === "POST" && url.pathname === "/api/notifications/read") {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const ids = new Set((Array.isArray(body.ids) ? body.ids : []).map((value) => String(value || "")).filter(Boolean).slice(0, 100));
+    const marked = now();
+    for (const item of store.data.notifications) {
+      if (item.userId === user.id && ids.has(item.id) && !item.readAt) item.readAt = marked;
+    }
+    store.save();
+    return sendJson(res, 200, { ok: true }, req);
   }
 
   if (method === "GET" && url.pathname === "/api/stories") {
@@ -2534,19 +2568,23 @@ async function handleApi(req, res, url) {
     }
     const repo = queue.localQueue(store);
     const credentials = instagramCredentials();
-    if (method === "GET" && url.pathname === "/api/admin/instagram") return sendJson(res, 200, { queue: queue.queueView(await repo.read(), credentials) }, req);
+    if (method === "GET" && url.pathname === "/api/admin/instagram") return sendJson(res, 200, { queue: queue.queueView(await queue.cleanedQueue(repo), credentials) }, req);
     if (method !== "POST") return notFound(res);
     const action = url.pathname.slice("/api/admin/instagram/".length);
     let post;
     try {
       if (action === "add" || action === "replace") {
         post = store.data.posts.find(p => p.id === body.postId && !p.deletedAt);
+        const commentId = String(body.commentId || "").trim();
+        if (commentId && !(post?.comments || []).some((comment) => comment.id === commentId && !comment.deletedAt)) {
+          return sendJson(res, 404, { error: "Reply is no longer available" }, req);
+        }
         const key = auth.mediaKey(body.imageUrl, url.origin);
         const file = uploadPathForKey(key);
         if (!fs.existsSync(file) || fs.statSync(file).size > 8 * 1024 * 1024) throw new Error("Screenshot is missing or exceeds 8 MB");
       }
       const job = await queue.queueAction(repo, action, body, credentials, post, body.imageUrl);
-      store.audit(admin.id, `instagram_${action}`, { postId: post?.id || null });
+      store.audit(admin.id, `instagram_${action}`, { postId: post?.id || null, commentId: String(body.commentId || "").trim() || null });
       store.save();
       return sendJson(res, 200, { queue: queue.queueView(job, credentials) }, req);
     } catch (error) { return sendJson(res, error.status || 400, { error: error.message }, req); }
@@ -2977,7 +3015,20 @@ const server = http.createServer(async (req, res) => {
 
 setInterval(() => {
   instagramModules.then(([queue]) => queue.runQueue(queue.localQueue(store), instagramCredentials(),
-    id => store.data.posts.find(p => p.id === id && !p.deletedAt)))
+    (id, commentId) => {
+      const post = store.data.posts.find(p => p.id === id && !p.deletedAt);
+      if (!post || !commentId) return post;
+      const commentsById = new Map((post.comments || []).filter(comment => !comment.deletedAt).map(comment => [comment.id, comment]));
+      const seen = new Set();
+      let currentId = commentId;
+      while (currentId && !seen.has(currentId)) {
+        seen.add(currentId);
+        const comment = commentsById.get(currentId);
+        if (!comment) return null;
+        currentId = String(comment.replyTo || "");
+      }
+      return currentId ? null : post;
+    }))
     .catch(() => console.error("Instagram queue tick failed"));
   try {
     tickAutopostJob();

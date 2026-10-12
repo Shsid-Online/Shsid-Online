@@ -154,6 +154,8 @@ create table notifications (
   user_id uuid not null references users(id) on delete cascade,
   type text not null,
   body text not null,
+  post_id uuid references posts(id) on delete set null,
+  comment_id uuid references comments(id) on delete set null,
   read_at timestamptz,
   created_at timestamptz not null default now()
 );

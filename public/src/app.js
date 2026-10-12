@@ -61,10 +61,14 @@ let autopostBusy = false;
 let autopostError = "";
 let instagramQueue = null;
 let instagramBusy = false;
+let postsNextOffset = null;
+let postsSnapshot = "";
+let postsLoadPromise = null;
 const replySubmittingPostIds = new Set();
 const replyPhotoFilesByPostId = new Map();
 const autopostPhotoFilesByEntryId = new Map();
 const openReplies = new Set();
+const removedPostIds = new Set();
 
 function loadState() {
   const base = structuredClone(initialState);
@@ -214,11 +218,15 @@ function commentTimestamp(value) {
 }
 
 function normalizeNotification(notification) {
+  const postNumberMatch = String(notification.text || notification.body || "").match(/No\.(\d+)/i);
   return {
     id: String(notification.id || crypto.randomUUID()),
     type: String(notification.type || "notice"),
     text: String(notification.text || notification.body || "").trim(),
     read: Boolean(notification.read),
+    postId: String(notification.postId || ""),
+    commentId: String(notification.commentId || ""),
+    postNumber: Number(notification.postNumber || postNumberMatch?.[1]) || null,
     createdAt: notification.createdAt || new Date().toISOString()
   };
 }
@@ -235,11 +243,15 @@ function groupedNotifications() {
     ), bumpNotifications[0]);
     grouped.push({
       id: "bump-summary",
+      notificationIds: bumpNotifications.map((item) => item.id),
       type: "post_bump_summary",
       text: bumpNotifications.length === 1
         ? latest.text || "1 bump on your post."
         : `${bumpNotifications.length} bumps. Latest: ${latest.text || "someone bumped your post."}`,
       read: unreadCount === 0,
+      postId: latest.postId,
+      commentId: latest.commentId,
+      postNumber: latest.postNumber,
       createdAt: latest.createdAt,
       count: unreadCount || bumpNotifications.length
     });
@@ -362,6 +374,17 @@ async function markNotificationsRead() {
   }
 }
 
+async function markNotificationRead(notificationId) {
+  const ids = (Array.isArray(notificationId) ? notificationId : [notificationId]).filter(Boolean);
+  if (!ids.length || !state.token || !state.currentUser) return;
+  const unreadIds = ids.filter((id) => state.notifications.some((item) => item.id === id && !item.read));
+  if (!unreadIds.length) return;
+  for (let index = 0; index < unreadIds.length; index += 100) {
+    await apiRequest("/notifications/read", { method: "POST", body: { ids: unreadIds.slice(index, index + 100) } });
+  }
+  state.notifications = state.notifications.map((item) => unreadIds.includes(item.id) ? { ...item, read: true } : item);
+}
+
 function toast(message) {
   clearTimeout(toastTimer);
   state.toast = String(message || "").trim();
@@ -438,7 +461,7 @@ async function fetchCurrentUser() {
     return;
   }
   try {
-    const result = await apiRequest("/me", { optionalAuth: true });
+    const result = await apiRequest("/me", { optionalAuth: true, timeoutMs: 15000 });
     state.currentUser = result.user || null;
   } catch (error) {
     state.token = "";
@@ -498,15 +521,46 @@ function normalizePost(post) {
 }
 
 async function fetchPosts() {
-  const result = await apiRequest("/posts?limit=100", { auth: false, optionalAuth: true });
-  const posts = Array.isArray(result.posts) ? result.posts.map(normalizePost) : [];
-  state.adminAnonymousNumbers = Array.isArray(result.adminAnonymousNumbers)
-    ? result.adminAnonymousNumbers.map(Number).filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999)
-    : [];
-  state.posts = posts.sort((a, b) => {
+  removedPostIds.clear();
+  const result = await apiRequest("/posts?limit=100&offset=0", { auth: false, optionalAuth: true, timeoutMs: 30000 });
+  postsSnapshot = String(result.pagination?.snapshot || new Date().toISOString());
+  state.posts = (Array.isArray(result.posts) ? result.posts.map(normalizePost) : []).sort((a, b) => {
     if (a.sticky !== b.sticky) return Number(b.sticky) - Number(a.sticky);
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
+  state.adminAnonymousNumbers = Array.isArray(result.adminAnonymousNumbers)
+    ? result.adminAnonymousNumbers.map(Number).filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999)
+    : [];
+  const nextOffset = Number(result.pagination?.nextOffset);
+  postsNextOffset = Number.isFinite(nextOffset) && nextOffset > 0 ? nextOffset : null;
+}
+
+async function fetchRemainingPosts() {
+  const collected = [...state.posts];
+  const seenOffsets = new Set();
+  let offset = postsNextOffset;
+  try {
+    while (offset !== null && !seenOffsets.has(offset)) {
+      seenOffsets.add(offset);
+      const result = await apiRequest(`/posts?limit=100&offset=${offset}&before=${encodeURIComponent(postsSnapshot)}`, { auth: false, optionalAuth: true, timeoutMs: 30000 });
+      collected.push(...(Array.isArray(result.posts) ? result.posts.map(normalizePost) : []));
+      const nextOffset = Number(result.pagination?.nextOffset);
+      offset = Number.isFinite(nextOffset) && nextOffset > offset ? nextOffset : null;
+    }
+    state.posts = [...new Map([...collected, ...state.posts].filter((post) => !removedPostIds.has(post.id)).map((post) => [post.id, post])).values()].sort((a, b) => {
+      if (a.sticky !== b.sticky) return Number(b.sticky) - Number(a.sticky);
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+    postsNextOffset = null;
+    render();
+  } catch (error) {
+    state.posts = [...new Map([...collected, ...state.posts].filter((post) => !removedPostIds.has(post.id)).map((post) => [post.id, post])).values()].sort((a, b) => {
+      if (a.sticky !== b.sticky) return Number(b.sticky) - Number(a.sticky);
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+    console.warn("Older posts could not finish loading", error);
+    toast("Some older posts could not load. Refresh to try again.");
+  }
 }
 
 function mergePost(updatedPost) {
@@ -515,7 +569,7 @@ function mergePost(updatedPost) {
   if (existing) {
     state.posts = state.posts.map((post) => (
       post.id === normalized.id
-        ? { ...post, ...normalized, comments: normalized.comments.length ? normalized.comments : post.comments }
+        ? { ...post, ...normalized, comments: normalized.comments }
         : post
     ));
   } else {
@@ -524,6 +578,7 @@ function mergePost(updatedPost) {
 }
 
 function removePost(postId) {
+  removedPostIds.add(postId);
   state.posts = state.posts.filter((post) => post.id !== postId);
 }
 
@@ -779,7 +834,7 @@ function renderInstagramQueue() {
   const entries = (queue?.entries || []).filter(e => e.status !== "removed");
   return `<section class="post-box instagram-queue">
     <h2>Instagram queue</h2>
-    <p>Press "Queue for Instagram" on a board post and confirm. It will be added here with up to three random replies. Posts publish in order, ten minutes apart, even when this page is closed.</p>
+    <p>Queue a board post with up to three random replies, or queue one specific reply with its post. Items publish in order, ten minutes apart, even when this page is closed.</p>
     <p>${queue ? queue.connected ? "Instagram connected" : "Instagram connection required before starting" : "Queue not loaded"} · ${queue?.active ? `Running. Next eligible post: ${escapeHtml(new Date(queue.nextAt).toLocaleString())}` : "Paused"}</p>
     <div class="instagram-actions">
       <button class="board-button" data-action="instagram-connect">${queue?.connected ? "Reconnect Instagram" : "Connect Instagram"}</button>
@@ -789,7 +844,7 @@ function renderInstagramQueue() {
     </div>
     <div class="instagram-entries">${entries.length ? entries.map((e, index) => `<article class="instagram-entry">
       <a href="${escapeHtml(e.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(e.imageUrl)}" alt="${escapeHtml(e.caption)}" loading="lazy"></a>
-      <div><strong>${escapeHtml(e.caption)}</strong><p>${escapeHtml(e.title)}</p><p>${index + 1} of ${entries.length} in line · ${escapeHtml(e.status)}</p>
+      <div><strong>${escapeHtml(e.caption)}${e.commentId ? " · selected reply" : ""}</strong><p>${escapeHtml(e.title)}</p><p>${index + 1} of ${entries.length} in line · ${escapeHtml(e.status)}</p>
       ${e.error ? `<p role="alert">${escapeHtml(e.error)}</p>` : ""}
       ${["queued", "processing", "failed"].includes(e.status) ? `<button class="board-button small" data-action="instagram-remove" data-id="${escapeHtml(e.id)}">Remove</button>` : ""}
       ${e.status === "review" ? `<button class="board-button small" data-action="instagram-resolve" data-id="${escapeHtml(e.id)}">I checked Instagram: archive item</button>` : ""}
@@ -803,17 +858,51 @@ function randomReplies(comments, limit = 3) {
     const swapIndex = Math.floor(Math.random() * (index + 1));
     [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
   }
-  return shuffled.slice(0, limit);
+  const commentsById = new Map(shuffled.map((comment) => [comment.id, comment]));
+  const selected = [];
+  const selectedIds = new Set();
+  for (const candidate of shuffled) {
+    const chain = [];
+    const seen = new Set();
+    let current = candidate;
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      chain.unshift(current);
+      current = current.replyTo ? commentsById.get(current.replyTo) : null;
+    }
+    const missing = chain.filter((comment) => !selectedIds.has(comment.id));
+    if (selected.length && selected.length + missing.length > limit) continue;
+    for (const comment of missing.slice(-Math.max(0, limit - selected.length))) {
+      selected.push(comment);
+      selectedIds.add(comment.id);
+    }
+    if (selected.length >= limit) break;
+  }
+  return selected;
 }
 
-async function captureInstagramPost(post) {
+async function captureInstagramPost(post, commentId = "") {
   const { default: html2canvas } = await import("../vendor/html2canvas.js");
   const frame = document.createElement("div");
   frame.className = "instagram-capture";
-  const capturePost = { ...post, comments: randomReplies(post.comments) };
+  const allComments = post.comments || [];
+  const commentsById = new Map(allComments.map((comment) => [comment.id, comment]));
+  const comments = commentId ? (() => {
+    const chain = [];
+    const seen = new Set();
+    let current = commentsById.get(commentId);
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      chain.unshift(current);
+      current = current.replyTo ? commentsById.get(current.replyTo) : null;
+    }
+    return chain;
+  })() : randomReplies(allComments);
+  if (commentId && !comments.length) throw new Error("Reply is no longer available");
+  const capturePost = { ...post, comments };
   frame.innerHTML = renderThreadCard(capturePost, 0, { forceReplies: true, captureMode: true });
   frame.querySelectorAll(".inline-admin-link, .thread-foot, .reply-form, .thread-card-actions, .reply-inline-actions, .reply-head-actions").forEach(el => el.remove());
-  // Capture the public post and up to three replies, never admin controls or reply drafts.
+  // Capture the public post with the selected reply chain or up to three random replies.
   const objectUrls = [];
   document.body.append(frame);
   try {
@@ -1432,9 +1521,9 @@ function renderThreadCard(post, index, options = {}) {
   const commentsById = new Map((post.comments || []).map((comment) => [comment.id, comment]));
   const replyTarget = replyTargetId ? commentsById.get(replyTargetId) : null;
   const displayNumber = Number.isInteger(post.postNumber) ? post.postNumber : 5000 + index;
-  const instagramQueued = (instagramQueue?.entries || []).some((entry) => entry.postId === post.id && entry.status !== "removed");
+  const instagramPostQueued = (instagramQueue?.entries || []).some((entry) => entry.postId === post.id && !entry.commentId && entry.status !== "removed");
   return `
-    <article class="thread-card">
+    <article class="thread-card" id="post-${escapeHtml(post.id)}">
       <div class="thread-head">
         <div class="thread-topline">
           <button class="thread-board" type="button" data-action="enter-board" data-board="${escapeHtml(board.category)}">${escapeHtml(board.slug)}</button>
@@ -1468,7 +1557,7 @@ function renderThreadCard(post, index, options = {}) {
       ${replyCount && repliesOpen ? `
         <div class="reply-list">
           ${(post.comments || []).map((comment, commentIndex) => `
-            <div class="reply ${profileTagKey && userTagKey(comment) === profileTagKey ? "profile-match" : ""}">
+            <div class="reply ${profileTagKey && userTagKey(comment) === profileTagKey ? "profile-match" : ""}" id="comment-${escapeHtml(comment.id)}">
               <div class="reply-head">
                 <div class="reply-identity">
                   <button class="reply-author" type="button" data-action="filter-author" data-author="${escapeHtml(userTagLabel(comment))}">${escapeHtml(userTagLabel(comment))}</button>
@@ -1494,6 +1583,7 @@ function renderThreadCard(post, index, options = {}) {
               ` : ""}
               <div class="reply-inline-actions">
                 <button class="plain-board-action" type="button" data-action="open-comment-reply" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Reply</button>
+                ${adminMode && !options.captureMode ? `<button class="plain-board-action" type="button" data-action="instagram-queue-reply" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}"${(instagramQueue?.entries || []).some((entry) => entry.postId === post.id && entry.commentId === comment.id && entry.status !== "removed") ? " disabled" : ""}>${(instagramQueue?.entries || []).some((entry) => entry.postId === post.id && entry.commentId === comment.id && entry.status !== "removed") ? "Reply queued" : "Queue reply"}</button>` : ""}
               </div>
             </div>
           `).join("")}
@@ -1526,12 +1616,12 @@ function renderThreadCard(post, index, options = {}) {
           <div class="reply-actions">
             <button class="board-button" type="submit"${replySubmitting ? " disabled" : ""}>${replySubmitting ? "Posting..." : "Reply"}</button>
             <button class="board-button muted" type="button" data-action="close-reply" data-id="${escapeHtml(post.id)}">Close</button>
-            ${adminMode ? `<button class="board-button instagram-queue-toggle" type="button" data-action="instagram-queue" data-id="${escapeHtml(post.id)}"${instagramQueued ? " disabled" : ""}>${instagramQueued ? "Queued for Instagram" : "Queue for Instagram"}</button>` : ""}
+            ${adminMode ? `<button class="board-button instagram-queue-toggle" type="button" data-action="instagram-queue" data-id="${escapeHtml(post.id)}"${instagramPostQueued ? " disabled" : ""}>${instagramPostQueued ? "Queued for Instagram" : "Queue for Instagram"}</button>` : ""}
           </div>
         </form>
       ` : !options.captureMode ? `
         <div class="thread-card-actions">
-          ${adminMode ? `<button class="board-button instagram-queue-toggle" type="button" data-action="instagram-queue" data-id="${escapeHtml(post.id)}"${instagramQueued ? " disabled" : ""}>${instagramQueued ? "Queued for Instagram" : "Queue for Instagram"}</button>` : ""}
+          ${adminMode ? `<button class="board-button instagram-queue-toggle" type="button" data-action="instagram-queue" data-id="${escapeHtml(post.id)}"${instagramPostQueued ? " disabled" : ""}>${instagramPostQueued ? "Queued for Instagram" : "Queue for Instagram"}</button>` : ""}
           <button class="board-button reply-toggle" type="button" data-action="open-reply" data-id="${escapeHtml(post.id)}">Reply</button>
         </div>
       ` : ""}
@@ -1661,10 +1751,10 @@ function renderNotificationBell() {
           ${notifications.length ? `
             <div class="notification-list">
               ${notifications.map((item) => `
-                <div class="notification-item ${item.read ? "read" : "unread"}">
+                <button class="notification-item ${item.read ? "read" : "unread"}" type="button" data-action="open-notification" data-notification-id="${escapeHtml(item.id)}" data-notification-ids="${escapeHtml((item.notificationIds || [item.id]).join(","))}" data-post-id="${escapeHtml(item.postId)}" data-post-number="${escapeHtml(item.postNumber || "")}" data-comment-id="${escapeHtml(item.commentId)}">
                   <div>${escapeHtml(item.text || "New notification")}</div>
                   <time datetime="${escapeHtml(item.createdAt || "")}">${escapeHtml(timeAgo(item.createdAt))}</time>
-                </div>
+                </button>
               `).join("")}
             </div>
           ` : `<div class="notification-empty">No notifications yet.</div>`}
@@ -2007,20 +2097,26 @@ function bindEvents() {
         instagramBusy = true;
         button.disabled = true;
         const originalButtonText = button.textContent;
-        if (action === "instagram-queue") button.textContent = "Queueing…";
+        if (action === "instagram-queue" || action === "instagram-queue-reply") button.textContent = "Queueing…";
         if (action === "instagram-refresh-images") button.textContent = "Refreshing…";
         if (action === "instagram-start") button.textContent = "Starting…";
         try {
-          if (action === "instagram-queue") {
+          if (action === "instagram-queue" || action === "instagram-queue-reply") {
             const post = state.posts.find(p => p.id === id);
             if (!post) throw new Error("Post is no longer loaded");
+            const selectedCommentId = action === "instagram-queue-reply" ? commentId : "";
+            const selectedComment = selectedCommentId ? (post.comments || []).find((comment) => comment.id === selectedCommentId) : null;
+            if (selectedCommentId && !selectedComment) throw new Error("Reply is no longer available");
             const replyCount = (post.comments || []).length;
-            if (!window.confirm(`Add this post${replyCount ? ` with ${Math.min(3, replyCount)} random ${replyCount === 1 ? "reply" : "replies"}` : ""} to the Instagram queue?`)) return;
-            const blob = await captureInstagramPost(post);
+            const confirmation = selectedCommentId
+              ? "Add this post with this reply and its parent reply chain to the Instagram queue?"
+              : `Add this post${replyCount ? ` with ${Math.min(3, replyCount)} random ${replyCount === 1 ? "reply" : "replies"}` : ""} to the Instagram queue?`;
+            if (!window.confirm(confirmation)) return;
+            const blob = await captureInstagramPost(post, selectedCommentId);
             const image = await uploadSinglePhoto(new File([blob], `instagram-${crypto.randomUUID()}.jpg`, { type: "image/jpeg" }));
-            instagramQueue = (await apiRequest("/admin/instagram/add", { method: "POST", body: { postId: id, imageUrl: image.url } })).queue;
-            const position = (instagramQueue?.entries || []).filter((entry) => entry.status !== "removed").findIndex((entry) => entry.postId === id) + 1;
-            toast(position ? `Added to Instagram queue · ${position} in line` : "Added to Instagram queue");
+            instagramQueue = (await apiRequest("/admin/instagram/add", { method: "POST", body: { postId: id, ...(selectedCommentId ? { commentId: selectedCommentId } : {}), imageUrl: image.url } })).queue;
+            const position = (instagramQueue?.entries || []).filter((entry) => entry.status !== "removed").findIndex((entry) => entry.postId === id && String(entry.commentId || "") === selectedCommentId) + 1;
+            toast(position ? `${selectedCommentId ? "Reply" : "Post"} added to Instagram queue · ${position} in line` : "Added to Instagram queue");
           } else if (action === "instagram-connect") {
             const result = await apiRequest("/admin/instagram/connect", { method: "POST" });
             window.location.assign(result.url);
@@ -2030,16 +2126,17 @@ function bindEvents() {
           } else if (action === "instagram-refresh-images") {
             const refreshable = (instagramQueue?.entries || []).filter((entry) => ["queued", "failed"].includes(entry.status));
             if (!refreshable.length) throw new Error("There are no queued images to refresh");
-            const available = refreshable.map((entry) => ({ entry, post: state.posts.find((item) => item.id === entry.postId) })).filter((item) => item.post);
+            const available = refreshable.map((entry) => ({ entry, post: state.posts.find((item) => item.id === entry.postId) }))
+              .filter(({ entry, post }) => post && (!entry.commentId || (post.comments || []).some((comment) => comment.id === entry.commentId)));
             const skipped = refreshable.length - available.length;
             if (!available.length) throw new Error("The source posts for these queued images are no longer available");
             if (!window.confirm(`Regenerate ${available.length} queued Instagram ${available.length === 1 ? "image" : "images"} with the latest replies and larger text?${skipped ? ` ${skipped} unavailable ${skipped === 1 ? "post will" : "posts will"} be left unchanged.` : ""}`)) return;
             for (let index = 0; index < available.length; index += 1) {
               const { entry, post } = available[index];
               toast(`Refreshing Instagram image ${index + 1} of ${available.length}…`);
-              const blob = await captureInstagramPost(post);
+              const blob = await captureInstagramPost(post, entry.commentId || "");
               const image = await uploadSinglePhoto(new File([blob], `instagram-${crypto.randomUUID()}.jpg`, { type: "image/jpeg" }));
-              instagramQueue = (await apiRequest("/admin/instagram/replace", { method: "POST", body: { id: entry.id, postId: post.id, imageUrl: image.url } })).queue;
+              instagramQueue = (await apiRequest("/admin/instagram/replace", { method: "POST", body: { id: entry.id, postId: post.id, ...(entry.commentId ? { commentId: entry.commentId } : {}), imageUrl: image.url } })).queue;
             }
             toast(`Refreshed ${available.length} queued Instagram ${available.length === 1 ? "image" : "images"}${skipped ? `; left ${skipped} unavailable ${skipped === 1 ? "post" : "posts"} unchanged` : ""}`);
           } else {
@@ -2110,6 +2207,47 @@ function bindEvents() {
       }
       if (action === "mark-notifications-read") {
         await markNotificationsRead();
+        return;
+      }
+      if (action === "open-notification") {
+        const notificationIds = String(button.dataset.notificationIds || button.dataset.notificationId || "").split(",").filter(Boolean);
+        let postId = String(button.dataset.postId || "");
+        const postNumber = Number(button.dataset.postNumber || 0);
+        const targetCommentId = String(button.dataset.commentId || "");
+        if (!postId && postNumber) {
+          if (postsLoadPromise) await postsLoadPromise;
+          postId = state.posts.find((post) => post.postNumber === postNumber)?.id || "";
+        }
+        try { await markNotificationRead(notificationIds); }
+        catch (error) { console.warn("Notification could not be marked read", error); }
+        if (!postId) {
+          toast("This older notification no longer has a post link.");
+          return;
+        }
+        const loadedPost = state.posts.find((post) => post.id === postId);
+        if (!loadedPost || (targetCommentId && !(loadedPost.comments || []).some((comment) => comment.id === targetCommentId))) {
+          try {
+            const result = await apiRequest(`/posts/${encodeURIComponent(postId)}`, { optionalAuth: true, timeoutMs: 15000 });
+            if (result.post) mergePost(result.post);
+          } catch {
+            toast("That post is no longer available.");
+            return;
+          }
+        }
+        state.board = "all";
+        state.search = "";
+        state.authorFilter = "";
+        state.notificationsOpen = false;
+        openReplies.add(postId);
+        saveState();
+        render();
+        requestAnimationFrame(() => {
+          const target = document.getElementById(targetCommentId ? `comment-${targetCommentId}` : `post-${postId}`)
+            || document.getElementById(`post-${postId}`);
+          target?.scrollIntoView({ behavior: "smooth", block: "center" });
+          target?.classList.add("notification-target");
+          setTimeout(() => target?.classList.remove("notification-target"), 2400);
+        });
         return;
       }
       if (action === "like-post") {
@@ -2362,6 +2500,7 @@ async function initialize() {
   await fetchAutopostJob();
   saveState();
   render();
+  if (postsNextOffset !== null) postsLoadPromise = fetchRemainingPosts().finally(() => { postsLoadPromise = null; });
 }
 
 initialize().catch((error) => {

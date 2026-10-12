@@ -169,11 +169,18 @@ a {
 
 .notification-item {
   display: grid;
+  width: 100%;
   gap: 2px;
   padding: 7px 8px;
   border: 1px solid var(--line);
   background: var(--panel-strong);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
+
+.notification-item:disabled { cursor: default; }
 
 .notification-item.read {
   opacity: 0.72;
@@ -183,6 +190,15 @@ a {
 .notification-empty {
   color: var(--muted);
   font-size: 12px;
+}
+
+.notification-target {
+  animation: notification-target-pulse 2.4s ease-out;
+}
+
+@keyframes notification-target-pulse {
+  0%, 35% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 48%, transparent); }
+  100% { box-shadow: none; }
 }
 
 .site-header h1 {
