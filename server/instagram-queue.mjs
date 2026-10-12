@@ -1,6 +1,7 @@
-export const INTERVAL_MS = 10 * 60 * 1000;
+export const INTERVAL_MINUTES = 60;
+export const INTERVAL_MS = INTERVAL_MINUTES * 60 * 1000;
 const BOARD = { school: "/campus/", academic: "/study/", lifestyle: "/teacher/", gaming: "/club/", shitpost: "/random/" };
-export const emptyQueue = () => ({ revision: 0, active: false, nextAt: 0, lockUntil: 0, entries: [] });
+export const emptyQueue = () => ({ revision: 0, active: false, nextAt: 0, lockUntil: 0, intervalMinutes: INTERVAL_MINUTES, entries: [] });
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
 const TERMINAL_STATUSES = new Set(["published", "posted", "complete", "completed", "done", "removed", "archived"]);
 export const isCompletedEntry = entry => TERMINAL_STATUSES.has(String(entry?.status || "").trim().toLowerCase())
@@ -10,6 +11,12 @@ export async function changeQueue(repo, fn) {
   for (let attempt = 0; attempt < 8; attempt++) {
     const job = await repo.read();
     const revision = job.revision;
+    if (Number(job.intervalMinutes) !== INTERVAL_MINUTES) {
+      job.intervalMinutes = INTERVAL_MINUTES;
+      if (job.active && (job.entries || []).some((entry) => !isCompletedEntry(entry))) {
+        job.nextAt = Math.max(Number(job.nextAt) || 0, Date.now() + INTERVAL_MS);
+      }
+    }
     job.entries = (job.entries || []).filter((entry) => !isCompletedEntry(entry));
     await fn(job);
     job.entries = (job.entries || []).filter((entry) => !isCompletedEntry(entry));
@@ -27,7 +34,7 @@ export async function cleanedQueue(repo) {
 
 export function queueView(job, credentials) {
   return { active: job.active, nextAt: job.nextAt, connected: Boolean(credentials?.token && credentials?.userId),
-    intervalMinutes: 10, entries: job.entries.filter((entry) => !isCompletedEntry(entry)).map(({ containerId, ...entry }) => entry) };
+    intervalMinutes: INTERVAL_MINUTES, entries: job.entries.filter((entry) => !isCompletedEntry(entry)).map(({ containerId, ...entry }) => entry) };
 }
 
 export async function queueAction(repo, action, body, credentials, post, imageUrl, time = Date.now()) {

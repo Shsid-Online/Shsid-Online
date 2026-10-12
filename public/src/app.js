@@ -892,7 +892,7 @@ function renderInstagramQueue() {
   const entries = (queue?.entries || []).filter((entry) => !isCompletedInstagramEntry(entry));
   return `<section class="post-box instagram-queue">
     <h2>Instagram queue</h2>
-    <p>Queue a board post with up to three random replies, or queue one specific reply with its post. Items publish in order, ten minutes apart, even when this page is closed.</p>
+    <p>Queue a board post with up to three random replies, or queue one specific reply with its post. Items publish in order, one hour apart, even when this page is closed.</p>
     <p>${queue ? queue.connected ? "Instagram connected" : "Instagram connection required before starting" : "Queue not loaded"} · ${queue?.active ? `Running. Next eligible post: ${escapeHtml(new Date(queue.nextAt).toLocaleString())}` : "Paused"}</p>
     <div class="instagram-actions">
       <button class="board-button" data-action="instagram-connect">${queue?.connected ? "Reconnect Instagram" : "Connect Instagram"}</button>

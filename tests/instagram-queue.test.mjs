@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanedQueue, emptyQueue, isCompletedEntry, localQueue, queueAction, queueView, runQueue, INTERVAL_MS } from "../server/instagram-queue.mjs";
+import { cleanedQueue, emptyQueue, isCompletedEntry, localQueue, queueAction, queueView, runQueue, INTERVAL_MINUTES, INTERVAL_MS } from "../server/instagram-queue.mjs";
 import { mediaKey, exchangeConnection } from "../server/instagram-auth.mjs";
 
 const credentials = { token: "test-token", userId: "test-ig" };
@@ -18,6 +18,8 @@ test("queue is paused, deduplicates posts and builds board-number caption", asyn
   const { repo } = fixture();
   const job = await add(repo);
   assert.equal(job.active, false);
+  assert.equal(INTERVAL_MINUTES, 60);
+  assert.equal(queueView(job, credentials).intervalMinutes, 60);
   assert.equal(job.entries[0].caption, "/campus/ No.1234");
   await assert.rejects(add(repo), /already/);
   await assert.rejects(queueAction(repo, "start", {}, null, null, null, 0), /Connect/);
@@ -87,7 +89,7 @@ test("refresh preserves the queued reply selection", async () => {
   assert.equal(job.entries[0].commentId, "reply1");
 });
 
-test("ten-minute delay, concurrent ticks publish only once, FIFO", async t => {
+test("one-hour delay, concurrent ticks publish only once, FIFO", async t => {
   const { repo } = fixture();
   await add(repo); await add(repo, { ...post, id: "post2", postNumber: 1235 });
   await queueAction(repo, "start", {}, credentials, null, null, 0);
