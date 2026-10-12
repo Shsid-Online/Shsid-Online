@@ -363,6 +363,12 @@ a {
   gap: 10px;
 }
 
+.posts-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 18px 0 6px;
+}
+
 .thread-list.is-collapsed {
   display: none;
 }

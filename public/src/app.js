@@ -64,6 +64,9 @@ let instagramBusy = false;
 let postsNextOffset = null;
 let postsSnapshot = "";
 let postsLoadPromise = null;
+let postsLoadObserver = null;
+let postsLoadFailed = false;
+let postsRequestGeneration = 0;
 const replySubmittingPostIds = new Set();
 const replyPhotoFilesByPostId = new Map();
 const autopostPhotoFilesByEntryId = new Map();
@@ -527,8 +530,11 @@ function normalizePost(post) {
 }
 
 async function fetchPosts() {
+  const generation = ++postsRequestGeneration;
   removedPostIds.clear();
+  postsLoadFailed = false;
   const result = await apiRequest("/posts?limit=10&offset=0", { auth: false, optionalAuth: true, timeoutMs: 30000 });
+  if (generation !== postsRequestGeneration) return;
   postsSnapshot = String(result.pagination?.snapshot || new Date().toISOString());
   state.posts = (Array.isArray(result.posts) ? result.posts.map(normalizePost) : []).sort((a, b) => {
     if (a.sticky !== b.sticky) return Number(b.sticky) - Number(a.sticky);
@@ -541,30 +547,58 @@ async function fetchPosts() {
 async function fetchRemainingPosts() {
   const offset = postsNextOffset;
   if (offset === null) return;
+  const generation = postsRequestGeneration;
+  const snapshot = postsSnapshot;
   try {
-    const result = await apiRequest(`/posts?limit=10&offset=${offset}&before=${encodeURIComponent(postsSnapshot)}`, { auth: false, optionalAuth: true, timeoutMs: 30000 });
+    const result = await apiRequest(`/posts?limit=10&offset=${offset}&before=${encodeURIComponent(snapshot)}`, { auth: false, optionalAuth: true, timeoutMs: 30000 });
+    if (generation !== postsRequestGeneration || snapshot !== postsSnapshot) return;
     const olderPosts = Array.isArray(result.posts) ? result.posts.map(normalizePost) : [];
     const nextOffset = Number(result.pagination?.nextOffset);
-    postsNextOffset = Number.isFinite(nextOffset) && nextOffset > offset ? nextOffset : null;
-    state.posts = [...new Map([...state.posts, ...olderPosts].filter((post) => !removedPostIds.has(post.id)).map((post) => [post.id, post])).values()].sort((a, b) => {
+    postsNextOffset = olderPosts.length && Number.isFinite(nextOffset) && nextOffset > offset ? nextOffset : null;
+    postsLoadFailed = false;
+    state.posts = [...new Map([...olderPosts, ...state.posts].filter((post) => !removedPostIds.has(post.id)).map((post) => [post.id, post])).values()].sort((a, b) => {
       if (a.sticky !== b.sticky) return Number(b.sticky) - Number(a.sticky);
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
     render();
   } catch (error) {
+    if (generation !== postsRequestGeneration || snapshot !== postsSnapshot) return;
+    postsLoadFailed = true;
     console.warn("Older posts could not finish loading", error);
     toast("Some older posts could not load. Refresh to try again.");
   }
 }
 
-function maybeLoadMorePosts() {
-  if (postsNextOffset === null || postsLoadPromise) return;
-  const nearBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1200;
-  if (!nearBottom) return;
+function loadNextPostsPage({ force = false } = {}) {
+  if (postsNextOffset === null || (postsLoadFailed && !force)) return postsLoadPromise;
+  if (postsLoadPromise) return postsLoadPromise;
+  if (force) postsLoadFailed = false;
   postsLoadPromise = fetchRemainingPosts().finally(() => {
     postsLoadPromise = null;
     requestAnimationFrame(maybeLoadMorePosts);
   });
+  return postsLoadPromise;
+}
+
+function maybeLoadMorePosts() {
+  if (postsNextOffset === null || postsLoadPromise || postsLoadFailed) return;
+  const sentinel = document.querySelector("#posts-load-sentinel");
+  const nearBottom = sentinel
+    ? sentinel.getBoundingClientRect().top <= window.innerHeight + 1200
+    : window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1200;
+  if (!nearBottom) return;
+  loadNextPostsPage();
+}
+
+function bindPostsLoadObserver() {
+  postsLoadObserver?.disconnect();
+  postsLoadObserver = null;
+  const sentinel = document.querySelector("#posts-load-sentinel");
+  if (!sentinel || postsNextOffset === null || !("IntersectionObserver" in window)) return;
+  postsLoadObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) loadNextPostsPage();
+  }, { rootMargin: "1200px 0px" });
+  postsLoadObserver.observe(sentinel);
 }
 
 async function fetchAdminBoardMetadata() {
@@ -1916,6 +1950,11 @@ function render() {
           ? posts.map((post, index) => renderThreadCard(post, index, { profileTagKey })).join("")
           : `<div class="empty-state">No threads matched that search.</div>`}
       </main>
+      ${postsNextOffset !== null ? `
+        <div class="posts-load-more" id="posts-load-sentinel">
+          <button class="board-button" type="button" data-action="load-more-posts">${postsLoadFailed ? "Retry loading older posts" : "Load older posts"}</button>
+        </div>
+      ` : ""}
       ${adminComposer ? `
         <datalist id="admin-anonymous-options">
           ${adminAnonymousOptions.map((number) => `<option value="${number}">Anonymous ${number}</option>`).join("")}
@@ -1927,6 +1966,7 @@ function render() {
   `;
   bindAutopostCountdown();
   bindEvents();
+  bindPostsLoadObserver();
 }
 
 function handleNotificationOutsideClick(event) {
@@ -2110,6 +2150,16 @@ function bindEvents() {
       const action = button.dataset.action;
       const id = button.dataset.id || "";
       const commentId = button.dataset.commentId || "";
+      if (action === "load-more-posts") {
+        button.disabled = true;
+        button.textContent = "Loading…";
+        await loadNextPostsPage({ force: true });
+        if (button.isConnected) {
+          button.disabled = false;
+          button.textContent = postsLoadFailed ? "Retry loading older posts" : "Load older posts";
+        }
+        return;
+      }
       if (action.startsWith("autopost-") && autopostBusy) return;
       if (action.startsWith("instagram-")) {
         if (instagramBusy || currentUser()?.role !== "admin") return;
