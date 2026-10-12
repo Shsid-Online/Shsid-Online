@@ -270,7 +270,7 @@ async function fetchNotifications({ rerender = false } = {}) {
     return;
   }
   try {
-    const result = await apiRequest("/notifications", { optionalAuth: true });
+    const result = await apiRequest("/notifications", { optionalAuth: true, timeoutMs: 15000 });
     state.notifications = Array.isArray(result.notifications) ? result.notifications.map(normalizeNotification) : [];
     if (rerender) render();
   } catch {
@@ -336,9 +336,11 @@ function normalizeAutopostJob(job) {
 }
 
 async function fetchAutopostJob() {
+  let instagramRequest = Promise.resolve();
   if (currentUser()?.role === "admin") {
-    try { instagramQueue = (await apiRequest("/admin/instagram", { timeoutMs: 30000 })).queue; }
-    catch { instagramQueue = null; }
+    instagramRequest = apiRequest("/admin/instagram", { timeoutMs: 15000 })
+      .then((result) => { instagramQueue = result.queue; })
+      .catch(() => { instagramQueue = null; });
   } else instagramQueue = null;
   if (currentUser()?.role !== "admin") {
     state.autopostJob = null;
@@ -352,7 +354,7 @@ async function fetchAutopostJob() {
   }
   const previousJob = state.autopostJob;
   try {
-    const result = await apiRequest("/admin/autopost", { timeoutMs: 30000 });
+    const result = await apiRequest("/admin/autopost", { timeoutMs: 15000 });
     // A late refresh must not replace a draft or a newer save.
     if (state.autopostDirty || state.autopostJob !== previousJob) return;
     applyAutopostJob(result.job);
@@ -361,6 +363,7 @@ async function fetchAutopostJob() {
     autopostError = error.message || "Could not load admin queue";
     toast(autopostError);
   }
+  await instagramRequest;
 }
 
 async function markNotificationsRead() {
@@ -435,6 +438,9 @@ async function apiRequest(path, { method = "GET", body, auth = true, optionalAut
   try {
     response = await request();
   } catch (error) {
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      throw new Error("Request timed out. Please try again.");
+    }
     if (method !== "GET") throw error;
     await new Promise((resolve) => setTimeout(resolve, 750));
     response = await request();
@@ -522,44 +528,57 @@ function normalizePost(post) {
 
 async function fetchPosts() {
   removedPostIds.clear();
-  const result = await apiRequest("/posts?limit=100&offset=0", { auth: false, optionalAuth: true, timeoutMs: 30000 });
+  const result = await apiRequest("/posts?limit=10&offset=0", { auth: false, optionalAuth: true, timeoutMs: 30000 });
   postsSnapshot = String(result.pagination?.snapshot || new Date().toISOString());
   state.posts = (Array.isArray(result.posts) ? result.posts.map(normalizePost) : []).sort((a, b) => {
     if (a.sticky !== b.sticky) return Number(b.sticky) - Number(a.sticky);
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
-  state.adminAnonymousNumbers = Array.isArray(result.adminAnonymousNumbers)
-    ? result.adminAnonymousNumbers.map(Number).filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999)
-    : [];
   const nextOffset = Number(result.pagination?.nextOffset);
   postsNextOffset = Number.isFinite(nextOffset) && nextOffset > 0 ? nextOffset : null;
 }
 
 async function fetchRemainingPosts() {
-  const collected = [...state.posts];
-  const seenOffsets = new Set();
-  let offset = postsNextOffset;
+  const offset = postsNextOffset;
+  if (offset === null) return;
   try {
-    while (offset !== null && !seenOffsets.has(offset)) {
-      seenOffsets.add(offset);
-      const result = await apiRequest(`/posts?limit=100&offset=${offset}&before=${encodeURIComponent(postsSnapshot)}`, { auth: false, optionalAuth: true, timeoutMs: 30000 });
-      collected.push(...(Array.isArray(result.posts) ? result.posts.map(normalizePost) : []));
-      const nextOffset = Number(result.pagination?.nextOffset);
-      offset = Number.isFinite(nextOffset) && nextOffset > offset ? nextOffset : null;
-    }
-    state.posts = [...new Map([...collected, ...state.posts].filter((post) => !removedPostIds.has(post.id)).map((post) => [post.id, post])).values()].sort((a, b) => {
+    const result = await apiRequest(`/posts?limit=10&offset=${offset}&before=${encodeURIComponent(postsSnapshot)}`, { auth: false, optionalAuth: true, timeoutMs: 30000 });
+    const olderPosts = Array.isArray(result.posts) ? result.posts.map(normalizePost) : [];
+    const nextOffset = Number(result.pagination?.nextOffset);
+    postsNextOffset = Number.isFinite(nextOffset) && nextOffset > offset ? nextOffset : null;
+    state.posts = [...new Map([...state.posts, ...olderPosts].filter((post) => !removedPostIds.has(post.id)).map((post) => [post.id, post])).values()].sort((a, b) => {
       if (a.sticky !== b.sticky) return Number(b.sticky) - Number(a.sticky);
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-    postsNextOffset = null;
     render();
   } catch (error) {
-    state.posts = [...new Map([...collected, ...state.posts].filter((post) => !removedPostIds.has(post.id)).map((post) => [post.id, post])).values()].sort((a, b) => {
-      if (a.sticky !== b.sticky) return Number(b.sticky) - Number(a.sticky);
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
     console.warn("Older posts could not finish loading", error);
     toast("Some older posts could not load. Refresh to try again.");
+  }
+}
+
+function maybeLoadMorePosts() {
+  if (postsNextOffset === null || postsLoadPromise) return;
+  const nearBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1200;
+  if (!nearBottom) return;
+  postsLoadPromise = fetchRemainingPosts().finally(() => {
+    postsLoadPromise = null;
+    requestAnimationFrame(maybeLoadMorePosts);
+  });
+}
+
+async function fetchAdminBoardMetadata() {
+  if (currentUser()?.role !== "admin") {
+    state.adminAnonymousNumbers = [];
+    return;
+  }
+  try {
+    const result = await apiRequest("/admin/board-metadata", { timeoutMs: 15000 });
+    state.adminAnonymousNumbers = Array.isArray(result.adminAnonymousNumbers)
+      ? result.adminAnonymousNumbers.map(Number).filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999)
+      : [];
+  } catch (error) {
+    console.warn("Admin board metadata could not load", error);
   }
 }
 
@@ -2496,11 +2515,18 @@ async function initialize() {
   });
   await fetchCurrentUser();
   await fetchPosts();
-  await fetchNotifications();
-  await fetchAutopostJob();
   saveState();
   render();
-  if (postsNextOffset !== null) postsLoadPromise = fetchRemainingPosts().finally(() => { postsLoadPromise = null; });
+  window.addEventListener("scroll", maybeLoadMorePosts, { passive: true });
+  requestAnimationFrame(maybeLoadMorePosts);
+  void Promise.allSettled([
+    fetchNotifications(),
+    fetchAutopostJob(),
+    fetchAdminBoardMetadata()
+  ]).then(() => {
+    saveState();
+    render();
+  });
 }
 
 initialize().catch((error) => {

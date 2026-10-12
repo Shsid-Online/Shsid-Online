@@ -877,17 +877,41 @@ async function handleApi(request, env, url, route) {
     const postRows = await env.DB.prepare("select * from posts where deleted_at is null and created_at <= ? order by sticky desc, created_at desc, id desc limit ? offset ?").bind(before, limit, offset).all();
     const totalRow = await env.DB.prepare("select count(*) as count from posts where deleted_at is null and created_at <= ?").bind(before).first();
     const viewContext = await boardViewContext(env);
+    const rows = postRows.results || [];
+    const postIds = rows.map((post) => post.id);
+    const commentsByPostId = new Map();
+    let commentRows = [];
+    if (postIds.length) {
+      const placeholders = postIds.map(() => "?").join(",");
+      const comments = await env.DB.prepare(`select * from comments where deleted_at is null and post_id in (${placeholders}) order by created_at asc`).bind(...postIds).all();
+      commentRows = comments.results || [];
+      for (const comment of commentRows) {
+        const list = commentsByPostId.get(comment.post_id) || [];
+        list.push(comment);
+        commentsByPostId.set(comment.post_id, list);
+      }
+    }
+    const authorIds = [...new Set([...rows, ...commentRows].map((item) => item.author_id).filter(Boolean))];
+    viewContext.authorsById = new Map();
+    if (authorIds.length) {
+      const placeholders = authorIds.map(() => "?").join(",");
+      const authors = await env.DB.prepare(`select * from users where id in (${placeholders})`).bind(...authorIds).all();
+      viewContext.authorsById = new Map((authors.results || []).map((author) => [author.id, author]));
+    }
     const posts = [];
-    for (const post of postRows.results || []) {
-      const comments = await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(post.id).all();
-      posts.push(await boardPostView(env, post, authUser, ownerDigest, comments, viewContext));
+    for (const post of rows) {
+      posts.push(await boardPostView(env, post, authUser, ownerDigest, { results: commentsByPostId.get(post.id) || [] }, viewContext));
     }
     const total = Number(totalRow?.count || 0);
     return json({
       posts,
-      pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null, snapshot: before },
-      ...(authUser?.role === "admin" ? { adminAnonymousNumbers: await adminAnonymousNumbersView(env) } : {})
+      pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null, snapshot: before }
     }, 200);
+  }
+
+  if (method === "GET" && route === "/admin/board-metadata") {
+    if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
+    return json({ adminAnonymousNumbers: await adminAnonymousNumbersView(env) }, 200);
   }
 
   const postByIdMatch = route.match(/^\/posts\/([^/]+)$/);
@@ -2205,13 +2229,18 @@ async function boardCommentView(env, row, authUser, ownerDigest = "", viewContex
 async function boardPostView(env, row, authUser, ownerDigest = "", comments = null, viewContext = null) {
   const context = viewContext || await boardViewContext(env);
   const commentRows = comments || await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(row.id).all();
+  const shouldShowAuthor = !row.anonymous || authUser?.role === "admin";
+  const author = shouldShowAuthor
+    ? (context.authorsById?.get(row.author_id) || await getUserById(env, row.author_id))
+    : null;
+  const visibleAuthor = shouldShowAuthor ? await userView(env, author, authUser, { includeSocialCounts: false }) : null;
   return {
     ...fromDbPost(row),
     anonymousLabel: await anonymousAccountLabelForBoardRow(env, row, context),
     canDelete: canDeleteDbItem(authUser, row, ownerDigest),
     comments: await Promise.all((commentRows.results || []).map((comment) => boardCommentView(env, comment, authUser, ownerDigest, context))),
-    author: row.anonymous && authUser?.role !== "admin" ? null : await userView(env, await getUserById(env, row.author_id), authUser),
-    adminAuthor: authUser?.role === "admin" ? await userView(env, await getUserById(env, row.author_id), authUser) : undefined
+    author: visibleAuthor,
+    adminAuthor: authUser?.role === "admin" ? visibleAuthor : undefined
   };
 }
 
@@ -2716,7 +2745,7 @@ async function validateStudentUsername(env, username, user) {
   return null;
 }
 
-async function userView(env, target, viewer) {
+async function userView(env, target, viewer, { includeSocialCounts = true } = {}) {
   if (!target) return null;
   const safe = {
     id: target.id,
@@ -2739,6 +2768,10 @@ async function userView(env, target, viewer) {
   if (!canSeePrivate) {
     delete safe.email;
     delete safe.verificationVideo;
+  }
+
+  if (!includeSocialCounts) {
+    return safe;
   }
 
   const followingCountRow = await env.DB.prepare("select count(*) as count from follows where follower_id=?").bind(target.id).first();
@@ -2890,7 +2923,9 @@ async function anonymousAccountLabelForBoardRow(env, row, viewContext = null) {
     const number = await ensureGuestAliasForOwnerDigest(env, row.owner_token_digest, context);
     return number ? `Anonymous ${number}` : anonymousAccountLabelForOwnerDigest(row.owner_token_digest, context.reservedAnonymousNumbers);
   }
-  return anonymousAccountLabelForUserId(env, row.author_id);
+  const author = context.authorsById?.get(row.author_id) || await getUserById(env, row.author_id);
+  const number = await ensureAnonymousAccountForUser(env, author);
+  return number ? `Anonymous ${number}` : "Anonymous";
 }
 
 async function boardOwnerDigest(request) {

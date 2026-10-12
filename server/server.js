@@ -1935,7 +1935,13 @@ async function handleApi(req, res, url) {
     const { items, pagination } = paginate(visiblePosts, url, { limit: 25, maxLimit: 100 });
     const viewContext = boardViewContext();
     const posts = items.map((post) => boardPostView(post, user, ownerDigest, followIndexes, viewContext));
-    return sendJson(res, 200, { posts, pagination: { ...pagination, snapshot: beforeText }, ...(user?.role === "admin" ? { adminAnonymousNumbers: adminAnonymousNumbersView() } : {}) });
+    return sendJson(res, 200, { posts, pagination: { ...pagination, snapshot: beforeText } });
+  }
+
+  if (method === "GET" && url.pathname === "/api/admin/board-metadata") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    return sendJson(res, 200, { adminAnonymousNumbers: adminAnonymousNumbersView() }, req);
   }
 
   if (method === "POST" && url.pathname === "/api/posts") {
