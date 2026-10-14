@@ -3,6 +3,7 @@ import { loginUrl, exchangeConnection, mediaKey } from "../server/instagram-auth
 import { protectRequest, rejectDuplicate, rejection } from "./abuse-protection.mjs";
 export { BoardAbuseGuard } from './global-guard.mjs';
 import { feedSnapshot } from './feed-snapshot.mjs';
+import { runPostCleanup } from './post-cleanup.mjs';
 import { uploadSizeError, rememberUpload, ownsUpload, partSizeLimit, validParts } from './upload-limits.mjs';
 import { cachedRead, clearReadCache } from "./read-cache.mjs";
 import { ensureReadIndexes } from "./database-indexes.mjs";
@@ -181,6 +182,7 @@ export default {
 
   async scheduled(controller, env, ctx) {
     const time = controller?.scheduledTime || Date.now();
+    ctx.waitUntil(runPostCleanup(env).catch(() => console.error('Requested post cleanup deferred; retrying on the next scheduled tick.')));
     ctx.waitUntil((async () => {
       if (await env.SESSIONS.get('security:migration-v2-complete')) return;
       await ensureReadIndexes(env.DB);
