@@ -60,7 +60,7 @@ test('failed reads are not cached', async () => {
 });
 test('index installation coalesces and only runs once after success', async () => {
   let batches = 0;
-  const db = { prepare: sql => sql, batch: async statements => { batches++; assert.equal(statements.length, 3); } };
+  const db = { prepare: sql => sql, batch: async statements => { batches++; assert.equal(statements.length, 4); } };
   await Promise.all([ensureReadIndexes(db), ensureReadIndexes(db)]);
   await ensureReadIndexes(db); assert.equal(batches, 1);
 });

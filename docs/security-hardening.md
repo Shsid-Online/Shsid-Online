@@ -2,6 +2,13 @@
 
 ## Fixed
 
+- Second review follow-up (production Worker): anonymous message responses hide other senders' account IDs; new and historical message notifications use generic text. Senders still see their own IDs and administrators retain moderation access. Conversation membership and already-delivered notifications are not retroactively anonymous.
+- Banned authenticated sessions fail with 403 centrally rather than becoming guest sessions; password login also rejects banned users. This cannot stop someone removing their session and posting as a permitted guest.
+- Student directory requires verification or admin access, returns only verified student profiles, and uses bounded pages with no per-student social-count queries. A supporting index installs when D1 permits it.
+- Direct upload writes use atomic R2 create-only conditions; replay cannot overwrite a completed object. Signed links remain bearer capabilities until expiry, so keep them private.
+- Feed pagination uses signed, expiring snapshots instead of attacker-chosen timestamps. Existing open pages using the old snapshot format need a refresh. This closes arbitrary timestamp cache busting, not every possible source of database quota exhaustion.
+- These follow-up fixes target the deployed Worker. The standalone development server has not been brought to feature parity in this pass and should not be exposed publicly.
+
 - Follow-up: persisted rolling token buckets survive the midnight UTC quota reset (global capacity 300, refill 500/hour; writes capacity 60/refill 200/hour; content/auth/upload capacity 20/refill 120/hour). Separate auth and upload minute caps and weighted deep-pagination costs reduce burst/expensive-query abuse. These deliberately conservative shared limits can throttle legitimate traffic during attacks.
 - Uploads require a known HTTP body size; normal files are capped at 25 MiB and verification files at 100 MiB. Multipart chunk positions enforce the same aggregate bounds. Multipart operations now check a one-hour owner/key record; uploads started before this deployment must restart. Client-visible storage errors omit internal details. The local development server does not yet mirror these additional upload controls; production traffic uses the Worker.
 

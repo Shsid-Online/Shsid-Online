@@ -85,6 +85,7 @@ test('registration cannot bypass OTP attempt limits by skipping verify-code', as
 });
 test('real public feed serialization never emits hidden account IDs or owner digests', async () => {
   const e = baseEnv();
+  e.UPLOAD_SIGNING_SECRET = 'test-only-snapshot-key';
   const post = { id: 'post1', author_id: 'private-admin-id', owner_token_digest: 'private-owner', anonymous: 1,
     admin_anonymous_account_number: 1234, text: 'hello', media: '[]', likes: '["private-admin-id"]', hearts: '[]', saved_by: '[]' };
   const comment = { ...post, id: 'comment1', post_id: 'post1', admin_anonymous_account_number: 2345 };

@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { Miniflare } from 'miniflare';
 
+test('real R2 conditional writes prevent concurrent upload replacements', async () => {
+  const mf = new Miniflare({ compatibilityDate: '2026-05-08', r2Buckets: ['BUCKET'], modules: true,
+    script: `export default { async fetch(req,env) { const result=await env.BUCKET.put('test-key','test',{onlyIf:new Headers({'If-None-Match':'*'})}); return new Response(null,{status:result?201:409}); } };` });
+  try {
+    const responses = await Promise.all(Array.from({length:3}, () => mf.dispatchFetch('https://test.invalid/')));
+    assert.equal(responses.filter(r => r.status === 201).length, 1);
+    assert.equal(responses.filter(r => r.status === 409).length, 2);
+  } finally { await mf.dispose(); }
+});
+
 test('global limiter runs with real SQLite Durable Object storage', async () => {
   const mf = new Miniflare({ compatibilityDate: '2026-05-08', durableObjects: { GLOBAL_GUARD: { className: 'BoardAbuseGuard', useSQLite: true } }, modules: [
     { type: 'ESModule', path: 'entry.mjs', contents: `export {BoardAbuseGuard} from './global-guard.mjs'; export default {fetch(request,env) { return env.GLOBAL_GUARD.get(env.GLOBAL_GUARD.idFromName('test')).fetch('https://guard/content'); }};` },

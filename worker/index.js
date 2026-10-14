@@ -2,6 +2,7 @@ import { d1Queue, cleanedQueue, queueView, queueAction, runQueue } from "../serv
 import { loginUrl, exchangeConnection, mediaKey } from "../server/instagram-auth.mjs";
 import { protectRequest, rejectDuplicate, rejection } from "./abuse-protection.mjs";
 export { BoardAbuseGuard } from './global-guard.mjs';
+import { feedSnapshot } from './feed-snapshot.mjs';
 import { uploadSizeError, rememberUpload, ownsUpload, partSizeLimit, validParts } from './upload-limits.mjs';
 import { cachedRead, clearReadCache } from "./read-cache.mjs";
 import { ensureReadIndexes } from "./database-indexes.mjs";
@@ -168,6 +169,7 @@ export default {
       if (!['GET', 'HEAD'].includes(request.method) && response.ok) clearReadCache(env.DB);
       return withCors(response, origin);
     } catch (error) {
+      if (error.status === 403) return withCors(json({ error: 'Account access denied' }, 403), origin);
       console.error('API request failed', { category: String(error.message || '').includes('daily row read limit') ? 'database_quota' : 'request_error' });
       if (error.status === 413) return withCors(json({ error: 'Request is too large' }, 413), origin);
       if (String(error.message || '').includes("daily row read limit")) {
@@ -556,7 +558,8 @@ async function handleApi(request, env, url, route) {
     }
 
     try {
-      await env.R2_BUCKET.put(key, request.body, { httpMetadata: { contentType } });
+      const stored = await env.R2_BUCKET.put(key, request.body, { httpMetadata: { contentType }, onlyIf: new Headers({ 'If-None-Match': '*' }) });
+      if (!stored) return json({ error: 'This upload was already completed. Request a new upload link.' }, 409);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const lower = message.toLowerCase();
@@ -752,6 +755,7 @@ async function handleApi(request, env, url, route) {
     if (loginLock.locked) return json({ error: `Too many failed login attempts. Try again in ${loginLock.retryAfterSeconds}s.` }, 429);
     if (password.length > 256) return json({ error: "Password too long" }, 400);
     const user = await getUserByEmail(env, email);
+    if (user?.status === 'banned') return json({ error: 'Account access denied' }, 403);
     if (!user || !user.password_hash) {
       await recordFailedLoginAttempt(env, request, email);
       return json({ error: "Invalid email or password" }, 401);
@@ -919,24 +923,31 @@ async function handleApi(request, env, url, route) {
 
   if (method === "GET" && route === "/students") {
     if (!authUser) return json({ error: "Authentication required" }, 401);
+    if (authUser.status !== 'verified' && authUser.role !== 'admin') return json({ error: 'Verification required' }, 403);
+    await ensureReadIndexes(env.DB);
+    const { limit, offset } = pageParams(url, 30, 100);
+    if (offset > 1000) return json({ error: 'Invalid page' }, 400);
     const rows = await env.DB.prepare(`
-      select *
+      select id, role, status, english_name, chinese_name, grade, class_no, bio, profile_photo, created_at, updated_at
       from users
       where role='student'
+        and status='verified'
         and trim(coalesce(english_name, '')) != ''
         and grade between 1 and 12
         and class_no between 1 and 13
-      order by created_at desc
-    `).all();
-    return json({ students: await Promise.all((rows.results || []).map((row) => userView(env, row, authUser))), pagination: { limit: 100, offset: 0, total: (rows.results || []).length, nextOffset: null } }, 200);
+      order by created_at desc, id desc limit ? offset ?
+    `).bind(limit + 1, offset).all();
+    return json({ students: await Promise.all((rows.results || []).slice(0, limit).map((row) => userView(env, row, authUser, { includeSocialCounts: false }))), pagination: { limit, offset, total: null, nextOffset: (rows.results || []).length > limit ? offset + limit : null } }, 200);
   }
 
   if (method === "GET" && route === "/posts") {
+    const snapshot = await feedSnapshot(url.searchParams.get('before'), env.UPLOAD_SIGNING_SECRET);
+    if (!snapshot) return json({ error: 'Page expired. Refresh the board.' }, 400);
     await ensureReadIndexes(env.DB);
     const ownerDigest = await boardOwnerDigest(request);
     const { limit, offset } = pageParams(url, 10, 30);
     // Five-second snapshots let concurrent first-page visits share database work.
-    const before = String(url.searchParams.get("before") || new Date(Math.floor(Date.now() / 5000) * 5000).toISOString());
+    const before = snapshot.before;
     if (!Number.isFinite(Date.parse(before)) || offset > 10000) return json({ error: 'Invalid page' }, 400);
     const postRows = await cachedRead(env.DB, `feed:${before}:${limit}:${offset}`, () => env.DB.prepare("select * from posts where deleted_at is null and created_at <= ? order by sticky desc, created_at desc, id desc limit ? offset ?").bind(before, limit + 1, offset).all());
     const viewContext = await boardViewContext(env);
@@ -968,7 +979,7 @@ async function handleApi(request, env, url, route) {
     }
     return json({
       posts,
-      pagination: { limit, offset, total: null, nextOffset: hasMore ? offset + limit : null, snapshot: before }
+      pagination: { limit, offset, total: null, nextOffset: hasMore ? offset + limit : null, snapshot: snapshot.token }
     }, 200);
   }
 
@@ -1489,7 +1500,7 @@ async function handleApi(request, env, url, route) {
         members,
         group: Boolean(row.is_group),
         createdAt: row.created_at,
-        messages: (msgRows.results || []).map(messageViewModel)
+        messages: (msgRows.results || []).map(row => messageViewModel(row, authUser))
       });
     }
     return json({ conversations, pagination: { limit: 100, offset: 0, total: conversations.length, nextOffset: null } }, 200);
@@ -1582,7 +1593,7 @@ async function handleApi(request, env, url, route) {
       const msgRows = await env.DB.prepare("select * from messages where conversation_id = ? and deleted_at is null order by created_at asc limit 500")
         .bind(conversation.id)
         .all();
-      return json({ messages: (msgRows.results || []).map(messageViewModel), pagination: { limit: 500, offset: 0, total: (msgRows.results || []).length, nextOffset: null } }, 200);
+      return json({ messages: (msgRows.results || []).map(row => messageViewModel(row, authUser)), pagination: { limit: 500, offset: 0, total: (msgRows.results || []).length, nextOffset: null } }, 200);
     }
 
     const text = String(body.text || "").trim();
@@ -1598,10 +1609,10 @@ async function handleApi(request, env, url, route) {
     await audit(env, authUser.id, "message_created", { conversationId: conversation.id, messageId: message.id }, request);
     for (const memberId of members) {
       if (!memberId || memberId === authUser.id) continue;
-      await createNotification(env, memberId, "message_new", `${notificationActorName(authUser)} sent you a new message.`);
+      await createNotification(env, memberId, "message_new", 'You received a new message.');
     }
 
-    return json({ message: messageViewModel(message) }, 201);
+    return json({ message: messageViewModel(message, authUser) }, 201);
   }
 
   const followMatch = route.match(/^\/users\/([^/]+)\/follow$/);
@@ -1830,7 +1841,7 @@ async function handleApi(request, env, url, route) {
     if (!authUser) return json({ error: "Authentication required" }, 401);
     await hasNotificationTargetColumns(env);
     const rows = await env.DB.prepare("select * from notifications where user_id=? order by created_at desc").bind(authUser.id).all();
-    const notifications = (rows.results || []).map((n) => ({ id: n.id, userId: n.user_id, type: n.type || "notice", text: n.body || "", read: Boolean(n.read_at), postId: n.post_id || "", commentId: n.comment_id || "", createdAt: n.created_at }));
+    const notifications = (rows.results || []).map((n) => ({ id: n.id, userId: n.user_id, type: n.type || "notice", text: n.type === 'message_new' ? 'You received a new message.' : n.body || "", read: Boolean(n.read_at), postId: n.post_id || "", commentId: n.comment_id || "", createdAt: n.created_at }));
     return json({ notifications, pagination: { limit: 100, offset: 0, total: notifications.length, nextOffset: null } }, 200);
   }
 
@@ -2188,11 +2199,11 @@ function unpackMessagePayload(rawText) {
   }
 }
 
-function messageViewModel(row) {
+function messageViewModel(row, viewer) {
   const unpacked = unpackMessagePayload(row.text);
   return {
     id: row.id,
-    authorId: row.author_id,
+    authorId: row.anonymous && viewer?.role !== 'admin' && viewer?.id !== row.author_id ? null : row.author_id,
     text: unpacked.text,
     media: unpacked.media,
     anonymous: Boolean(row.anonymous),
@@ -2327,6 +2338,7 @@ async function maybeAuthUser(request, env) {
   const userId = await env.SESSIONS.get(`session:${digest}`);
   if (!userId || userId === 'usr_12996ce2-2ca5-45c5-95d3-0b7b5151fb45') return null;
   const user = await getUserById(env, userId);
+  if (user?.status === 'banned') throw Object.assign(new Error('Account banned'), { status: 403 });
   return user?.email?.toLowerCase() === 'admin-2@shsid.online' ? null : user;
 }
 
