@@ -28,14 +28,22 @@ function anonymousAccountNumber(users, preferredUserId = "") {
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
-  const hash = password;
-  return `${salt}:${hash}`;
+  const hash = crypto.scryptSync(password, salt, 32, { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 }).toString('hex');
+  return `scrypt$${salt}$${hash}`;
 }
 
 function verifyPassword(password, stored) {
-  const [salt, storedPassword] = String(stored).split(":");
-  if (!salt || !storedPassword) return false;
-  return password === storedPassword;
+  if (!password || password.length > 256) return false;
+  const value = String(stored || '');
+  if (/^[a-f0-9]{32}:[\s\S]+$/i.test(value)) {
+    const expected = Buffer.from(value.slice(33));
+    const actual = Buffer.from(password);
+    return expected.length === actual.length && crypto.timingSafeEqual(actual, expected);
+  }
+  if (!/^scrypt\$[a-f0-9]{32}\$[a-f0-9]{64}$/.test(value)) return false;
+  const [, salt, expected] = value.split('$');
+  const actual = crypto.scryptSync(password, salt, 32, { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 });
+  return crypto.timingSafeEqual(actual, Buffer.from(expected, 'hex'));
 }
 
 function tokenDigest(token) {
@@ -124,7 +132,7 @@ class Store {
     }
     this.data = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
     this.migrate();
-    this.rebuildIndexes();
+    this.save();
     return this.data;
   }
 
@@ -161,6 +169,9 @@ class Store {
       }
     }
     for (const user of this.data.users) {
+      if (/^[a-f0-9]{32}:[\s\S]+$/i.test(String(user.passwordHash || ''))) {
+        user.passwordHash = hashPassword(user.passwordHash.slice(33));
+      }
       const anonNumber = Number(user.anonymousAccountNumber);
       if (!Number.isInteger(anonNumber) || anonNumber < 1000 || anonNumber > 9999) {
         user.anonymousAccountNumber = anonymousAccountNumber(this.data.users, user.id);

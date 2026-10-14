@@ -16,6 +16,7 @@ function instagramCredentials() {
 loadEnvFile(path.resolve(__dirname, "..", ".env"));
 
 const { Store, hashPassword, verifyPassword, publicUser, id, now, tokenDigest } = require("./store");
+const { privateBoardItem, uploadExtension } = require('./board-privacy.cjs');
 
 const PORT = Number(process.env.PORT || 4174);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -154,7 +155,6 @@ const ALLOWED_UPLOAD_TYPES = new Set([
   "image/png",
   "image/gif",
   "image/webp",
-  "image/svg+xml",
   "video/mp4",
   "video/webm",
   "video/quicktime",
@@ -1230,6 +1230,7 @@ async function sendVerificationEmail({ to, code }) {
   }
 
   if (EMAIL_TRANSPORT === "log" || !SMTP_HOST) {
+    if (process.env.NODE_ENV === 'production') throw new Error('Email provider is not configured');
     console.log(`[email:${EMAIL_TRANSPORT}] to=${to} code=${code}`);
     return { transport: "log" };
   }
@@ -1451,6 +1452,7 @@ function userView(target, viewer, followIndexes = null) {
   if (!canSeePrivate) {
     delete safe.email;
     delete safe.verificationVideo;
+    if (target.role === 'admin') Object.assign(safe, { englishName: 'Administrator', chineseName: '', grade: null, classNo: null, bio: '', profilePhoto: '' });
   }
   const following = followIndexes?.followingByUser?.get(target.id) || [];
   const followers = followIndexes?.followersByUser?.get(target.id) || [];
@@ -1467,7 +1469,7 @@ function userView(target, viewer, followIndexes = null) {
 function boardCommentView(comment, viewer, ownerDigest = "", viewContext = null) {
   const context = viewContext || boardViewContext();
   return {
-    ...withoutOwnerTokenDigest(comment),
+    ...privateBoardItem(withoutOwnerTokenDigest(comment), viewer),
     anonymousLabel: anonymousAccountLabelForBoardItem(comment, context),
     canDelete: canDeleteBoardItem(viewer, comment, ownerDigest)
   };
@@ -1476,7 +1478,7 @@ function boardCommentView(comment, viewer, ownerDigest = "", viewContext = null)
 function boardPostView(post, viewer, ownerDigest = "", followIndexes = null, viewContext = null) {
   const context = viewContext || boardViewContext();
   return {
-    ...withoutOwnerTokenDigest(post),
+    ...privateBoardItem(withoutOwnerTokenDigest(post), viewer),
     anonymousLabel: anonymousAccountLabelForBoardItem(post, context),
     canDelete: canDeleteBoardItem(viewer, post, ownerDigest),
     comments: (post.comments || []).map((comment) => boardCommentView(comment, viewer, ownerDigest, context)),
@@ -1583,21 +1585,11 @@ async function handleApi(req, res, url) {
   }
 
   if (method === "GET" && url.pathname === "/auth/facebook/start") {
-    if (!FACEBOOK_APP_ID || !FACEBOOK_APP_SECRET || !FACEBOOK_REDIRECT_URI) {
-      return sendJson(res, 500, { error: "Facebook login is not configured on this server" }, req);
-    }
-    const authUrl = new URL("https://www.facebook.com/v26.0/dialog/oauth");
-    authUrl.searchParams.set("client_id", FACEBOOK_APP_ID);
-    authUrl.searchParams.set("redirect_uri", FACEBOOK_REDIRECT_URI);
-    authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("scope", "instagram_basic,pages_show_list");
-    if (FACEBOOK_CONFIG_ID) authUrl.searchParams.set("config_id", FACEBOOK_CONFIG_ID);
-    res.writeHead(302, { location: authUrl.toString() });
-    res.end();
-    return;
+    return sendJson(res, 403, { error: 'Start Instagram connection from the authenticated admin queue.' }, req);
   }
 
   if (method === "GET" && url.pathname === "/auth/facebook/callback") {
+    if (!url.searchParams.has('state')) return sendJson(res, 400, { error: 'Connection expired. Restart from the admin queue.' }, req);
     if (url.searchParams.has("state")) {
       const state = url.searchParams.get("state");
       const expires = instagramStates.get(state);
@@ -1665,7 +1657,7 @@ async function handleApi(req, res, url) {
       return sendJson(res, 415, { error: "Unsupported file type" }, req);
     }
     const folder = purpose === "verification" ? "verification" : "uploads";
-    const key = `${folder}/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+    const key = `${folder}/${crypto.randomUUID()}${uploadExtension(contentType)}`;
     const expiresAt = Math.floor(Date.now() / 1000) + UPLOAD_TTL_SECONDS;
     const token = signUploadToken(`${key}:${expiresAt}`);
     const uploadUrl = `${url.origin}/upload/${encodeURIComponent(key)}?exp=${expiresAt}&token=${token}`;
@@ -1707,6 +1699,12 @@ async function handleApi(req, res, url) {
   const mediaMatch = url.pathname.match(/^\/api\/media\/(.+)$/);
   if ((method === "GET" || method === "HEAD") && mediaMatch) {
     const key = decodeURIComponent(mediaMatch[1]);
+    const privateMedia = key.startsWith('verification/');
+    if (privateMedia) {
+      const user = requireAuth(req, res);
+      if (!user) return;
+      if (user.role !== 'admin') return sendJson(res, 403, { error: 'Admin access required' }, req);
+    }
     const filePath = uploadPathForKey(key);
     if (!fs.existsSync(filePath)) return notFound(res);
     const ext = path.extname(filePath).toLowerCase();
@@ -1716,7 +1714,11 @@ async function handleApi(req, res, url) {
       ...getCommonHeaders(req),
       "content-type": contentType,
       "content-length": stat.size,
-      "cache-control": "public, max-age=3600, stale-while-revalidate=300"
+      "cache-control": privateMedia ? 'private, no-store' : 'public, max-age=3600',
+      'content-security-policy': "sandbox; default-src 'none'",
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      ...(!/^(image\/(jpeg|png|gif|webp)|video\/(mp4|webm|quicktime))$/.test(contentType) ? { 'content-disposition': 'attachment' } : {})
     });
     if (method === "HEAD") {
       res.end();
@@ -1780,8 +1782,9 @@ async function handleApi(req, res, url) {
     if (email.length > 254) return sendJson(res, 400, { error: "Email address too long" }, req);
     const user = store.findUserByEmail(email);
     if (!user) return sendJson(res, 400, { error: "No account setup was started for this email" }, req);
-    const firebaseVerified = body.firebaseVerified === true;
-    if (!firebaseVerified) {
+    if (user.passwordHash) return sendJson(res, 409, { error: 'Account already registered. Please sign in.' }, req);
+    // A client-supplied flag is never proof of email ownership.
+    {
       const verification = user.emailVerification;
       if (!verification) return sendJson(res, 400, { error: "No verification code was requested for this email" }, req);
       if (new Date(verification.expiresAt).getTime() < Date.now()) {
@@ -1845,6 +1848,10 @@ async function handleApi(req, res, url) {
       return sendJson(res, 401, { error: "Invalid email or password" }, req);
     }
     clearFailedLogin(ip, email);
+    if (!user.passwordHash.startsWith('scrypt$')) {
+      user.passwordHash = hashPassword(String(body.password));
+      store.save();
+    }
     const session = store.createSession(user, SESSION_TTL_HOURS);
     return sendJson(res, 200, { user: userView(user, user), session }, req);
   }

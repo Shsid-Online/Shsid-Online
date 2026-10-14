@@ -1,5 +1,11 @@
 import { d1Queue, cleanedQueue, queueView, queueAction, runQueue } from "../server/instagram-queue.mjs";
 import { loginUrl, exchangeConnection, mediaKey } from "../server/instagram-auth.mjs";
+import { protectRequest, rejectDuplicate, rejection } from "./abuse-protection.mjs";
+import { cachedRead, clearReadCache } from "./read-cache.mjs";
+import { ensureReadIndexes } from "./database-indexes.mjs";
+import { hashPassword, verifyPassword, isLegacyPassword, migrateOneLegacyPassword } from "./passwords.mjs";
+import boardPrivacy from "../server/board-privacy.cjs";
+const { privateBoardItem, uploadExtension } = boardPrivacy;
 
 const ALLOWED_ORIGINS = ["https://www.shsid.online", "https://shsid.online", "http://127.0.0.1:4173", "http://localhost:4173"];
 
@@ -100,7 +106,7 @@ const AUTPOST_QUEUE = [
   "why do they make u feel special and then act like nothing happened"
 ];
 const ALLOWED_UPLOAD_TYPES = [
-  "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
+  "image/jpeg", "image/png", "image/gif", "image/webp",
   "video/mp4", "video/webm", "video/quicktime",
   "application/pdf"
 ];
@@ -154,15 +160,24 @@ export default {
     }
 
     try {
+      const blocked = await protectRequest(request, env, route);
+      if (blocked) return withCors(blocked, origin);
       const response = await handleApi(request, env, url, route, origin);
+      if (!['GET', 'HEAD'].includes(request.method) && response.ok) clearReadCache(env.DB);
       return withCors(response, origin);
     } catch (error) {
-      return json({ error: "Server error", detail: error instanceof Error ? error.message : String(error) }, 500);
+      console.error('API request failed', { category: String(error.message || '').includes('daily row read limit') ? 'database_quota' : 'request_error' });
+      if (error.status === 413) return withCors(json({ error: 'Request is too large' }, 413), origin);
+      if (String(error.message || '').includes("daily row read limit")) {
+        return withCors(rejection(503, 'The board is temporarily unavailable. Please try again later.'), origin);
+      }
+      return withCors(json({ error: "Server error" }, 500), origin);
     }
   },
 
   async scheduled(controller, env, ctx) {
     const time = controller?.scheduledTime || Date.now();
+    ctx.waitUntil(migrateOneLegacyPassword(env.DB).catch(() => console.error('Password migration deferred; database unavailable.')));
     // Preserve the existing website queue's hourly tick.
     if (new Date(time).getUTCMinutes() === 0) ctx.waitUntil(runAutopostCron(env, time));
     ctx.waitUntil(instagramCredentials(env).then(credentials => runQueue(d1Queue(env.DB), credentials,
@@ -286,25 +301,21 @@ async function handleApi(request, env, url, route) {
     route.startsWith("/multipart/")
   );
   const body = method === "GET" || method === "HEAD" || isBinaryUploadPut ? {} : await readJson(request);
+  if (method === 'POST' && (route === '/posts' || /^\/posts\/[^/]+\/comments$/.test(route))) {
+    const duplicate = await rejectDuplicate(env, route, body);
+    if (duplicate) return duplicate;
+  }
 
   if (method === "GET" && route === "/health") {
     return json({ ok: true, service: "shsid-social-api", time: new Date().toISOString() }, 200);
   }
 
   if (method === "GET" && route === "/auth/facebook/start") {
-    if (!env.FACEBOOK_APP_ID || !env.FACEBOOK_APP_SECRET || !env.FACEBOOK_REDIRECT_URI) {
-      return json({ error: "Facebook login is not configured on this server" }, 500);
-    }
-    const authUrl = new URL("https://www.facebook.com/v26.0/dialog/oauth");
-    authUrl.searchParams.set("client_id", String(env.FACEBOOK_APP_ID));
-    authUrl.searchParams.set("redirect_uri", String(env.FACEBOOK_REDIRECT_URI));
-    authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("scope", "instagram_basic,pages_show_list");
-    if (env.FACEBOOK_CONFIG_ID) authUrl.searchParams.set("config_id", String(env.FACEBOOK_CONFIG_ID));
-    return Response.redirect(authUrl.toString(), 302);
+    return json({ error: 'Start Instagram connection from the authenticated admin queue.' }, 403);
   }
 
   if (method === "GET" && route === "/auth/facebook/callback") {
+    if (!url.searchParams.has('state')) return json({ error: 'Connection expired. Restart from the admin queue.' }, 400);
     if (url.searchParams.has("state")) {
       const state = url.searchParams.get("state");
       const cookie = request.headers.get("cookie") || "";
@@ -364,12 +375,13 @@ async function handleApi(request, env, url, route) {
     const purpose = String(body.purpose || "media").trim().toLowerCase();
     if (!fileName) return json({ error: "fileName is required" }, 400);
     if (purpose === "verification") {
+      if (!(await maybeAuthUser(request, env))) return json({ error: 'Authentication required' }, 401);
       if (!contentType.startsWith("video/")) return json({ error: "Verification upload must be a video file" }, 415);
     } else if (!ALLOWED_UPLOAD_TYPES.includes(contentType)) {
       return json({ error: "Unsupported file type" }, 415);
     }
 
-    const key = `${purpose === "verification" ? "verification" : "uploads"}/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+    const key = `${purpose === "verification" ? "verification" : "uploads"}/${crypto.randomUUID()}${uploadExtension(contentType)}`;
     const expiresAt = Math.floor(Date.now() / 1000) + (purpose === "verification" ? VERIFICATION_UPLOAD_TTL_SECONDS : UPLOAD_TTL_SECONDS);
     const uploadSecret = requireUploadSigningSecret(env);
     const token = await signToken(uploadSecret, `${key}:${expiresAt}`);
@@ -385,7 +397,7 @@ async function handleApi(request, env, url, route) {
     const contentType = String(body.contentType || "").trim().toLowerCase();
     if (!fileName) return json({ error: "fileName is required" }, 400);
     if (!contentType.startsWith("video/")) return json({ error: "Verification upload must be a video file" }, 415);
-    const key = `verification/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+    const key = `verification/${crypto.randomUUID()}${uploadExtension(contentType)}`;
     const upload = await env.R2_BUCKET.createMultipartUpload(key, {
       httpMetadata: { contentType }
     });
@@ -406,7 +418,7 @@ async function handleApi(request, env, url, route) {
       return json({ error: "Unsupported file type" }, 415);
     }
     const prefix = purpose === "verification" ? "verification" : "uploads";
-    const key = `${prefix}/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+    const key = `${prefix}/${crypto.randomUUID()}${uploadExtension(contentType)}`;
     const upload = await env.R2_BUCKET.createMultipartUpload(key, {
       httpMetadata: { contentType }
     });
@@ -532,12 +544,24 @@ async function handleApi(request, env, url, route) {
   const mediaMatch = route.match(/^\/media\/(.+)$/);
   if ((method === "GET" || method === "HEAD") && mediaMatch) {
     const key = decodeURIComponent(mediaMatch[1]);
+    const privateMedia = key.startsWith('verification/');
+    if (privateMedia) {
+      const viewer = await maybeAuthUser(request, env);
+      if (!viewer || viewer.role !== 'admin') return json({ error: 'Admin access required' }, 403);
+    }
     const head = await env.R2_BUCKET.head(key);
     if (!head) return json({ error: "Not found" }, 404);
     const headers = new Headers();
     head.writeHttpMetadata(headers);
     headers.set("etag", head.httpEtag);
-    headers.set("cache-control", "public, max-age=3600");
+    headers.set("cache-control", privateMedia ? "private, no-store" : "public, max-age=3600");
+    headers.set('x-content-type-options', 'nosniff');
+    headers.set('referrer-policy', 'no-referrer');
+    headers.set('content-security-policy', "sandbox; default-src 'none'");
+    const mediaType = String(headers.get('content-type') || '').split(';')[0];
+    if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/webm', 'video/quicktime'].includes(mediaType)) {
+      headers.set('content-disposition', 'attachment');
+    }
     headers.set("accept-ranges", "bytes");
 
     const range = parseRangeHeader(request.headers.get("range"), head.size);
@@ -660,6 +684,7 @@ async function handleApi(request, env, url, route) {
 
     const user = await getUserByEmail(env, email);
     if (!user) return json({ error: "No account setup was started for this email" }, 400);
+    if (user.password_hash) return json({ error: 'Account already registered. Please sign in.' }, 409);
 
     const key = `email:${email}`;
     const raw = await env.SESSIONS.get(key);
@@ -670,7 +695,12 @@ async function handleApi(request, env, url, route) {
     const code = normalizeVerificationCode(body.code);
     if (code.length !== OTP_LENGTH) return json({ error: "Invalid verification code" }, 400);
     const codeHash = await sha256Hex(code);
-    if (codeHash !== record.codeHash) return json({ error: "Invalid verification code" }, 400);
+    if ((record.attempts || 0) >= EMAIL_CODE_MAX_ATTEMPTS) return json({ error: 'Too many invalid attempts' }, 429);
+    if (codeHash !== record.codeHash) {
+      record.attempts = (record.attempts || 0) + 1;
+      await env.SESSIONS.put(key, JSON.stringify(record), { expirationTtl: EMAIL_CODE_TTL_SECONDS });
+      return json({ error: "Invalid verification code" }, 400);
+    }
 
     const usernameError = await validateStudentUsername(env, username, user);
     if (usernameError) return json({ error: usernameError.error }, usernameError.status);
@@ -706,6 +736,10 @@ async function handleApi(request, env, url, route) {
     }
 
     await clearFailedLoginAttempts(env, request, email);
+    if (isLegacyPassword(user.password_hash)) {
+      const upgraded = await hashPassword(password);
+      await env.DB.prepare('update users set password_hash=? where id=? and password_hash=?').bind(upgraded, user.id, user.password_hash).run();
+    }
     const session = await createSession(env, user.id);
     await audit(env, user.id, "auth_login", { email: user.email }, request);
     return json({ user: await userView(env, user, user), session }, 200);
@@ -871,19 +905,22 @@ async function handleApi(request, env, url, route) {
   }
 
   if (method === "GET" && route === "/posts") {
+    await ensureReadIndexes(env.DB);
     const ownerDigest = await boardOwnerDigest(request);
     const { limit, offset } = pageParams(url, 10, 30);
-    const before = String(url.searchParams.get("before") || now());
-    const postRows = await env.DB.prepare("select * from posts where deleted_at is null and created_at <= ? order by sticky desc, created_at desc, id desc limit ? offset ?").bind(before, limit, offset).all();
-    const totalRow = await env.DB.prepare("select count(*) as count from posts where deleted_at is null and created_at <= ?").bind(before).first();
+    // Five-second snapshots let concurrent first-page visits share database work.
+    const before = String(url.searchParams.get("before") || new Date(Math.floor(Date.now() / 5000) * 5000).toISOString());
+    if (!Number.isFinite(Date.parse(before)) || offset > 10000) return json({ error: 'Invalid page' }, 400);
+    const postRows = await cachedRead(env.DB, `feed:${before}:${limit}:${offset}`, () => env.DB.prepare("select * from posts where deleted_at is null and created_at <= ? order by sticky desc, created_at desc, id desc limit ? offset ?").bind(before, limit + 1, offset).all());
     const viewContext = await boardViewContext(env);
-    const rows = postRows.results || [];
+    const hasMore = (postRows.results || []).length > limit;
+    const rows = (postRows.results || []).slice(0, limit);
     const postIds = rows.map((post) => post.id);
     const commentsByPostId = new Map();
     let commentRows = [];
     if (postIds.length) {
       const placeholders = postIds.map(() => "?").join(",");
-      const comments = await env.DB.prepare(`select * from comments where deleted_at is null and post_id in (${placeholders}) order by created_at asc`).bind(...postIds).all();
+      const comments = await cachedRead(env.DB, `comments:${postIds.join(',')}`, () => env.DB.prepare(`select * from comments where deleted_at is null and post_id in (${placeholders}) order by created_at asc`).bind(...postIds).all());
       commentRows = comments.results || [];
       for (const comment of commentRows) {
         const list = commentsByPostId.get(comment.post_id) || [];
@@ -895,17 +932,16 @@ async function handleApi(request, env, url, route) {
     viewContext.authorsById = new Map();
     if (authorIds.length) {
       const placeholders = authorIds.map(() => "?").join(",");
-      const authors = await env.DB.prepare(`select * from users where id in (${placeholders})`).bind(...authorIds).all();
+      const authors = await cachedRead(env.DB, `authors:${authorIds.join(',')}`, () => env.DB.prepare(`select * from users where id in (${placeholders})`).bind(...authorIds).all());
       viewContext.authorsById = new Map((authors.results || []).map((author) => [author.id, author]));
     }
     const posts = [];
     for (const post of rows) {
       posts.push(await boardPostView(env, post, authUser, ownerDigest, { results: commentsByPostId.get(post.id) || [] }, viewContext));
     }
-    const total = Number(totalRow?.count || 0);
     return json({
       posts,
-      pagination: { limit, offset, total, nextOffset: offset + limit < total ? offset + limit : null, snapshot: before }
+      pagination: { limit, offset, total: null, nextOffset: hasMore ? offset + limit : null, snapshot: before }
     }, 200);
   }
 
@@ -2220,7 +2256,7 @@ function fromDbComment(row) {
 async function boardCommentView(env, row, authUser, ownerDigest = "", viewContext = null) {
   const context = viewContext || await boardViewContext(env);
   return {
-    ...fromDbComment(row),
+    ...privateBoardItem(fromDbComment(row), authUser),
     anonymousLabel: await anonymousAccountLabelForBoardRow(env, row, context),
     canDelete: canDeleteDbItem(authUser, row, ownerDigest)
   };
@@ -2235,7 +2271,7 @@ async function boardPostView(env, row, authUser, ownerDigest = "", comments = nu
     : null;
   const visibleAuthor = shouldShowAuthor ? await userView(env, author, authUser, { includeSocialCounts: false }) : null;
   return {
-    ...fromDbPost(row),
+    ...privateBoardItem(fromDbPost(row), authUser),
     anonymousLabel: await anonymousAccountLabelForBoardRow(env, row, context),
     canDelete: canDeleteDbItem(authUser, row, ownerDigest),
     comments: await Promise.all((commentRows.results || []).map((comment) => boardCommentView(env, comment, authUser, ownerDigest, context))),
@@ -2768,6 +2804,14 @@ async function userView(env, target, viewer, { includeSocialCounts = true } = {}
   if (!canSeePrivate) {
     delete safe.email;
     delete safe.verificationVideo;
+    if (target.role === 'admin') {
+      safe.englishName = 'Administrator';
+      safe.chineseName = '';
+      safe.grade = null;
+      safe.classNo = null;
+      safe.bio = '';
+      safe.profilePhoto = '';
+    }
   }
 
   if (!includeSocialCounts) {
@@ -2860,9 +2904,9 @@ async function anonymousAccountLabelForUserId(env, userId) {
 
 async function boardViewContext(env) {
   await hasBoardGuestAliasesTable(env);
-  const boardGuest = await getUserByEmail(env, PUBLIC_BOARD_USER_EMAIL);
-  const aliasRows = await env.DB.prepare("select owner_token_digest, anonymous_account_number from board_guest_aliases").all();
-  const rows = await env.DB.prepare("select anonymous_account_number from users where anonymous_account_number is not null").all();
+  const boardGuest = await cachedRead(env.DB, 'board-guest', () => getUserByEmail(env, PUBLIC_BOARD_USER_EMAIL));
+  const aliasRows = await cachedRead(env.DB, 'guest-aliases', () => env.DB.prepare("select owner_token_digest, anonymous_account_number from board_guest_aliases").all());
+  const rows = await cachedRead(env.DB, 'anonymous-numbers', () => env.DB.prepare("select anonymous_account_number from users where anonymous_account_number is not null").all());
   const guestAliases = new Map((aliasRows.results || [])
     .map((row) => [String(row.owner_token_digest || ""), Number(row.anonymous_account_number)]));
   const reservedAnonymousNumbers = new Set([
@@ -3391,8 +3435,27 @@ function html(payload, status = 200, options = {}) {
 }
 
 async function readJson(request) {
+  // Enforce the actual streamed size too: Content-Length can be absent or forged.
+  const reader = request.body?.getReader();
+  if (!reader) return {};
+  const chunks = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > 256 * 1024) {
+      await reader.cancel();
+      throw Object.assign(new Error('Request is too large'), { status: 413 });
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   try {
-    return await request.json();
+    const parsed = JSON.parse(new TextDecoder().decode(bytes));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -3468,22 +3531,20 @@ function randomFourDigitNumber() {
 
 async function createPostNumber(env, preferredValue = null) {
   await hasPostsNumberColumn(env);
+  await ensureReadIndexes(env.DB);
   const preferredNumber = normalizePostNumber(preferredValue);
-  const rows = await env.DB.prepare("select post_number from posts where post_number is not null").all();
-  const used = new Set((rows.results || [])
-    .map((row) => Number(row.post_number))
-    .filter((value) => Number.isInteger(value)));
+  const isUsed = async number => Boolean(await env.DB.prepare("select 1 as found from posts where post_number=? limit 1").bind(number).first());
   if (preferredNumber !== null) {
-    if (used.has(preferredNumber)) {
+    if (await isUsed(preferredNumber)) {
       const error = new Error("That post number is already used");
       error.status = 409;
       throw error;
     }
     return preferredNumber;
   }
-  for (let attempt = 0; attempt < 10000; attempt += 1) {
+  for (let attempt = 0; attempt < 32; attempt += 1) {
     const candidate = randomFourDigitNumber();
-    if (!used.has(candidate)) return candidate;
+    if (!(await isUsed(candidate))) return candidate;
   }
   throw new Error("No unused post numbers are available");
 }
@@ -3543,13 +3604,8 @@ async function signToken(secret, message) {
 async function sendVerificationEmail(env, to, code) {
   const apiKey = String(env.RESEND_API_KEY || "").trim();
   const from = String(env.EMAIL_FROM || "").trim();
-  const allowDevOtp = String(env.ALLOW_DEV_OTP || "").trim().toLowerCase() === "true";
   if (!apiKey || !from) {
-    if (!allowDevOtp) {
-      throw new Error("Email provider is not configured. Set RESEND_API_KEY and EMAIL_FROM.");
-    }
-    console.log(`[OTP][dev] ${to} -> ${code}`);
-    return { transport: "log" };
+    throw new Error("Email provider is not configured.");
   }
 
   const payload = {
@@ -3688,19 +3744,6 @@ function pageParams(url, defaultLimit = 10, maxLimit = 30) {
 
 function normalizeVerificationCode(value) {
   return String(value || "").replace(/[\s-]+/g, "");
-}
-
-async function hashPassword(password) {
-  const salt = crypto.randomUUID().replaceAll("-", "");
-  return `${salt}:${password}`;
-}
-
-async function verifyPassword(password, stored) {
-  const rawPassword = String(password || "");
-  const rawStored = String(stored || "");
-  const parts = rawStored.split(":");
-  const storedPassword = parts.length >= 2 ? parts.slice(1).join(":") : rawStored;
-  return timingSafeEqual(rawPassword, storedPassword);
 }
 
 function timingSafeEqual(a, b) {

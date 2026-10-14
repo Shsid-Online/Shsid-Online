@@ -2,9 +2,6 @@ name = "shsid-online-api"
 main = "worker/index.js"
 compatibility_date = "2026-05-08"
 
-[vars]
-INSTAGRAM_USER_ID = "17841475807417225"
-
 routes = [
   { pattern = "www.shsid.online/api/*", zone_name = "shsid.online" },
   { pattern = "shsid.online/api/*", zone_name = "shsid.online" },
@@ -17,6 +14,29 @@ routes = [
   { pattern = "www.shsid.online/health", zone_name = "shsid.online" },
   { pattern = "shsid.online/health", zone_name = "shsid.online" }
 ]
+
+[vars]
+INSTAGRAM_USER_ID = "17841475807417225"
+
+[[ratelimits]]
+name = "API_RATE_LIMIT"
+namespace_id = "10101"
+simple = { limit = 240, period = 60 }
+
+[[ratelimits]]
+name = "WRITE_RATE_LIMIT"
+namespace_id = "10102"
+simple = { limit = 40, period = 60 }
+
+[[ratelimits]]
+name = "POST_RATE_LIMIT"
+namespace_id = "10103"
+simple = { limit = 6, period = 60 }
+
+[[ratelimits]]
+name = "DUPLICATE_RATE_LIMIT"
+namespace_id = "10104"
+simple = { limit = 1, period = 60 }
 
 [observability]
 enabled = true
