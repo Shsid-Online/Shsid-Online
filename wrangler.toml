@@ -41,6 +41,14 @@ simple = { limit = 1, period = 60 }
 [observability]
 enabled = true
 
+[[durable_objects.bindings]]
+name = "GLOBAL_GUARD"
+class_name = "BoardAbuseGuard"
+
+[[migrations]]
+tag = "global-abuse-guard-v1"
+new_sqlite_classes = ["BoardAbuseGuard"]
+
 [triggers]
 crons = ["* * * * *"]
 

@@ -1309,7 +1309,8 @@ function getAuthUser(req) {
   const header = req.headers.authorization || "";
   const [scheme, token] = header.split(" ");
   if (scheme !== "Bearer" || !token) return null;
-  return store.findUserByToken(token);
+  const user = store.findUserByToken(token);
+  return user?.email?.toLowerCase() === 'admin-2@shsid.online' ? null : user;
 }
 
 function requireAuth(req, res) {
@@ -1579,6 +1580,9 @@ async function handleApi(req, res, url) {
   const method = req.method || "GET";
   const isBinaryUploadPut = method === "PUT" && url.pathname.startsWith("/upload/");
   const body = method === "GET" || method === "HEAD" || isBinaryUploadPut ? {} : await parseBody(req);
+  if (url.pathname.startsWith('/api/auth/') && String(body.email || '').trim().toLowerCase() === 'admin-2@shsid.online') {
+    return sendJson(res, 403, { error: 'This account requires administrator-assisted credential recovery.' }, req);
+  }
 
   if (method === "GET" && url.pathname === "/api/health") {
     return sendJson(res, 200, { ok: true, service: "shsid-social-api", time: now() });

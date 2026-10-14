@@ -7,7 +7,7 @@ import worker from '../worker/index.js';
 const require = createRequire(import.meta.url);
 const local = require('../server/store.js');
 const allow = { limit: async () => ({ success: true }) };
-const baseEnv = () => ({ API_RATE_LIMIT: allow, WRITE_RATE_LIMIT: allow, POST_RATE_LIMIT: allow, DUPLICATE_RATE_LIMIT: allow });
+const baseEnv = () => ({ GLOBAL_GUARD: { idFromName: x => x, get: () => ({ fetch: async () => new Response(null, { status: 204 }) }) }, API_RATE_LIMIT: allow, WRITE_RATE_LIMIT: allow, POST_RATE_LIMIT: allow, DUPLICATE_RATE_LIMIT: allow });
 
 test('anonymous responses remove account linkage and preserve only own reaction identity', () => {
   const raw = { anonymous: true, authorId: 'secret-admin', ownerTokenDigest: 'secret', adminAnonymousAccountNumber: 1234, likes: ['secret-admin', 'me'], hearts: ['other'], savedBy: ['other'] };

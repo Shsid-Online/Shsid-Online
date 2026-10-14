@@ -9,7 +9,7 @@ function limiter(max) {
   const counts = new Map();
   return { async limit({ key }) { const count = (counts.get(key) || 0) + 1; counts.set(key, count); return { success: count <= max }; } };
 }
-function env() { return { API_RATE_LIMIT: limiter(240), WRITE_RATE_LIMIT: limiter(40), POST_RATE_LIMIT: limiter(6), DUPLICATE_RATE_LIMIT: limiter(1) }; }
+function env() { return { GLOBAL_GUARD: { idFromName: x => x, get: () => ({ fetch: async () => new Response(null, { status: 204 }) }) }, API_RATE_LIMIT: limiter(240), WRITE_RATE_LIMIT: limiter(40), POST_RATE_LIMIT: limiter(6), DUPLICATE_RATE_LIMIT: limiter(1) }; }
 function request(method = 'POST', owner = 'device', ip = '192.0.2.1') {
   return new Request('https://www.shsid.online/api/posts', { method, headers: { 'CF-Connecting-IP': ip, 'X-Board-Owner-Token': owner } });
 }

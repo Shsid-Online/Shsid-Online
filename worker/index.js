@@ -1,6 +1,7 @@
 import { d1Queue, cleanedQueue, queueView, queueAction, runQueue } from "../server/instagram-queue.mjs";
 import { loginUrl, exchangeConnection, mediaKey } from "../server/instagram-auth.mjs";
 import { protectRequest, rejectDuplicate, rejection } from "./abuse-protection.mjs";
+export { BoardAbuseGuard } from './global-guard.mjs';
 import { cachedRead, clearReadCache } from "./read-cache.mjs";
 import { ensureReadIndexes } from "./database-indexes.mjs";
 import { hashPassword, verifyPassword, isLegacyPassword, migrateOneLegacyPassword } from "./passwords.mjs";
@@ -177,7 +178,13 @@ export default {
 
   async scheduled(controller, env, ctx) {
     const time = controller?.scheduledTime || Date.now();
-    ctx.waitUntil(migrateOneLegacyPassword(env.DB).catch(() => console.error('Password migration deferred; database unavailable.')));
+    ctx.waitUntil((async () => {
+      if (await env.SESSIONS.get('security:migration-v2-complete')) return;
+      await ensureReadIndexes(env.DB);
+      // Invalidate the published credential, not merely its readable encoding.
+      await env.DB.prepare("update users set password_hash = NULL where lower(email) = ? and password_hash is not NULL").bind('admin-2@shsid.online').run();
+      if (!(await migrateOneLegacyPassword(env.DB))) await env.SESSIONS.put('security:migration-v2-complete', '1');
+    })().catch(() => console.error('Security migration deferred; database unavailable.')));
     // Preserve the existing website queue's hourly tick.
     if (new Date(time).getUTCMinutes() === 0) ctx.waitUntil(runAutopostCron(env, time));
     ctx.waitUntil(instagramCredentials(env).then(credentials => runQueue(d1Queue(env.DB), credentials,
@@ -301,6 +308,9 @@ async function handleApi(request, env, url, route) {
     route.startsWith("/multipart/")
   );
   const body = method === "GET" || method === "HEAD" || isBinaryUploadPut ? {} : await readJson(request);
+  if (route.startsWith('/auth/') && String(body.email || '').trim().toLowerCase() === 'admin-2@shsid.online') {
+    return json({ error: 'This account requires administrator-assisted credential recovery.' }, 403);
+  }
   if (method === 'POST' && (route === '/posts' || /^\/posts\/[^/]+\/comments$/.test(route))) {
     const duplicate = await rejectDuplicate(env, route, body);
     if (duplicate) return duplicate;
@@ -2298,8 +2308,9 @@ async function maybeAuthUser(request, env) {
   if (!token) return null;
   const digest = await sha256Hex(token);
   const userId = await env.SESSIONS.get(`session:${digest}`);
-  if (!userId) return null;
-  return getUserById(env, userId);
+  if (!userId || userId === 'usr_12996ce2-2ca5-45c5-95d3-0b7b5151fb45') return null;
+  const user = await getUserById(env, userId);
+  return user?.email?.toLowerCase() === 'admin-2@shsid.online' ? null : user;
 }
 
 function getBearerToken(request) {

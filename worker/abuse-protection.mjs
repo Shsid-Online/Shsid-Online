@@ -17,7 +17,16 @@ export async function protectRequest(request, env, route) {
     if (!binding) return rejection(503, 'Protection temporarily unavailable. Please try again shortly.');
     if (!(await binding.limit({ key })).success) return rejection(429, 'Too many requests. Please wait a minute and try again.');
   }
-  return null;
+  // Media reads do not hit D1 unless they require private-media authorization.
+  if (['GET', 'HEAD'].includes(request.method) && route.startsWith('/media/uploads')) return null;
+  if (!env.GLOBAL_GUARD) return rejection(503, 'Protection temporarily unavailable.');
+  try {
+    const guard = env.GLOBAL_GUARD.get(env.GLOBAL_GUARD.idFromName('board-budget-v1'));
+    const result = await guard.fetch(`https://guard/${isContent ? 'content' : isWrite ? 'write' : 'read'}`);
+    return result.status === 204 ? null : rejection(result.status === 429 ? 429 : 503, 'The board is temporarily limiting traffic. Please try again later.');
+  } catch {
+    return rejection(503, 'Protection temporarily unavailable.');
+  }
 }
 
 export function rejection(status, error) {
