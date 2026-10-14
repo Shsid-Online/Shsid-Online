@@ -22,7 +22,13 @@ export async function protectRequest(request, env, route) {
   if (!env.GLOBAL_GUARD) return rejection(503, 'Protection temporarily unavailable.');
   try {
     const guard = env.GLOBAL_GUARD.get(env.GLOBAL_GUARD.idFromName('board-budget-v1'));
-    const result = await guard.fetch(`https://guard/${isContent ? 'content' : isWrite ? 'write' : 'read'}`);
+    const isUpload = /^\/(upload(?:-url)?|verification-upload|multipart)(?:\/|$)/.test(route);
+    const kind = isContent ? 'content' : isUpload ? 'upload' : isWrite && route.startsWith('/auth/') ? 'auth' : isWrite ? 'write' : 'read';
+    const offset = Number(new URL(request.url).searchParams.get('offset') || 0);
+    if (route === '/posts' && (!Number.isInteger(offset) || offset < 0 || offset > 10000)) return rejection(400, 'Invalid page');
+    // Deep OFFSET scans cost more than a first-page read and cannot cheaply burn D1.
+    const cost = route === '/posts' && !isWrite ? 1 + Math.ceil(offset / 100) : 1;
+    const result = await guard.fetch(`https://guard/${kind}?cost=${cost}`);
     return result.status === 204 ? null : rejection(result.status === 429 ? 429 : 503, 'The board is temporarily limiting traffic. Please try again later.');
   } catch {
     return rejection(503, 'Protection temporarily unavailable.');

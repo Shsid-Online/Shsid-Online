@@ -2,6 +2,9 @@
 
 ## Fixed
 
+- Follow-up: persisted rolling token buckets survive the midnight UTC quota reset (global capacity 300, refill 500/hour; writes capacity 60/refill 200/hour; content/auth/upload capacity 20/refill 120/hour). Separate auth and upload minute caps and weighted deep-pagination costs reduce burst/expensive-query abuse. These deliberately conservative shared limits can throttle legitimate traffic during attacks.
+- Uploads require a known HTTP body size; normal files are capped at 25 MiB and verification files at 100 MiB. Multipart chunk positions enforce the same aggregate bounds. Multipart operations now check a one-hour owner/key record; uploads started before this deployment must restart. Client-visible storage errors omit internal details. The local development server does not yet mirror these additional upload controls; production traffic uses the Worker.
+
 - Worker request limits run before body parsing, sessions, or D1. Native per-IP limits are supplemented by one SQLite-backed Durable Object across regions: 180 dynamic requests/minute, 12,000/day UTC, 60 writes/minute and 20 content submissions/minute. Fixed persisted counters contain no IPs or account identifiers. Public upload reads bypass this database-protection budget. Failures fail closed.
 - The exposed moderator account is quarantined: login/registration and existing sessions are denied in both backends. The scheduled migration clears its database password when D1 recovers. Administrator-assisted recovery is required before re-enabling it; this is revocation, not a completed replacement-password workflow.
 - Feed queries no longer count all posts on every page; post-number allocation uses indexed equality lookups. Raw database reads coalesce for five seconds without sharing viewer permissions. Additive indexes install when D1 recovers.

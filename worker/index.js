@@ -2,6 +2,7 @@ import { d1Queue, cleanedQueue, queueView, queueAction, runQueue } from "../serv
 import { loginUrl, exchangeConnection, mediaKey } from "../server/instagram-auth.mjs";
 import { protectRequest, rejectDuplicate, rejection } from "./abuse-protection.mjs";
 export { BoardAbuseGuard } from './global-guard.mjs';
+import { uploadSizeError, rememberUpload, ownsUpload, partSizeLimit, validParts } from './upload-limits.mjs';
 import { cachedRead, clearReadCache } from "./read-cache.mjs";
 import { ensureReadIndexes } from "./database-indexes.mjs";
 import { hashPassword, verifyPassword, isLegacyPassword, migrateOneLegacyPassword } from "./passwords.mjs";
@@ -411,7 +412,8 @@ async function handleApi(request, env, url, route) {
     const upload = await env.R2_BUCKET.createMultipartUpload(key, {
       httpMetadata: { contentType }
     });
-    await audit(env, authUser.id, "verification_upload_init", { fileName, contentType }, request);
+    await rememberUpload(env, key, upload.uploadId, authUser.id);
+    await audit(env, authUser.id, "verification_upload_init", { contentType }, request);
     return json({ key, uploadId: upload.uploadId, chunkSize: VERIFICATION_CHUNK_SIZE }, 200);
   }
 
@@ -432,24 +434,30 @@ async function handleApi(request, env, url, route) {
     const upload = await env.R2_BUCKET.createMultipartUpload(key, {
       httpMetadata: { contentType }
     });
+    await rememberUpload(env, key, upload.uploadId, authUser.id);
     return json({ key, uploadId: upload.uploadId, chunkSize: MULTIPART_CHUNK_SIZE }, 200);
   }
 
   const multipartPartMatch = route.match(/^\/multipart\/([^/]+)\/(\d+)$/);
   if (method === "PUT" && multipartPartMatch) {
+    const sizeError = uploadSizeError(request, MAX_UPLOAD_BYTES);
+    if (sizeError) return sizeError;
     const authUser = await maybeAuthUser(request, env);
     if (!authUser) return json({ error: "Authentication required" }, 401);
     const uploadId = multipartPartMatch[1];
     const partNumber = Number(multipartPartMatch[2]);
     const key = String(url.searchParams.get("key") || "");
     if (!key || !uploadId || !partNumber) return json({ error: "Missing upload parameters" }, 400);
+    if (!(await ownsUpload(env, key, uploadId, authUser.id))) return json({ error: 'Upload access denied; restart the upload.' }, 403);
+    const partError = uploadSizeError(request, partSizeLimit(key, partNumber));
+    if (partError) return partError;
     try {
       const upload = env.R2_BUCKET.resumeMultipartUpload(key, uploadId);
       const result = await upload.uploadPart(partNumber, request.body);
       return json({ ok: true, partNumber, etag: result.etag }, 200);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return json({ error: "Upload part failed", detail: message }, 502);
+      return json({ error: "Upload part failed" }, 502);
     }
   }
 
@@ -460,6 +468,8 @@ async function handleApi(request, env, url, route) {
     const uploadId = String(body.uploadId || "");
     const parts = Array.isArray(body.parts) ? body.parts : [];
     if (!key || !uploadId || !parts.length) return json({ error: "Missing completion payload" }, 400);
+    if (!(await ownsUpload(env, key, uploadId, authUser.id))) return json({ error: 'Upload access denied; restart the upload.' }, 403);
+    if (!validParts(key, parts)) return json({ error: 'Invalid upload parts' }, 400);
     try {
       const upload = env.R2_BUCKET.resumeMultipartUpload(key, uploadId);
       await upload.complete(parts.map((part) => ({
@@ -470,12 +480,14 @@ async function handleApi(request, env, url, route) {
       return json({ ok: true, key, mediaUrl }, 200);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return json({ error: "Complete upload failed", detail: message }, 502);
+      return json({ error: "Complete upload failed" }, 502);
     }
   }
 
   const verificationPartMatch = route.match(/^\/verification-upload\/([^/]+)\/(\d+)$/);
   if (method === "PUT" && verificationPartMatch) {
+    const sizeError = uploadSizeError(request, MAX_UPLOAD_BYTES);
+    if (sizeError) return sizeError;
     const authUser = await maybeAuthUser(request, env);
     if (!authUser) return json({ error: "Authentication required" }, 401);
     const uploadId = verificationPartMatch[1];
@@ -483,13 +495,16 @@ async function handleApi(request, env, url, route) {
     const key = String(url.searchParams.get("key") || "");
     if (!key || !uploadId || !partNumber) return json({ error: "Missing upload parameters" }, 400);
     if (!key.startsWith("verification/")) return json({ error: "Invalid upload key" }, 400);
+    if (!(await ownsUpload(env, key, uploadId, authUser.id))) return json({ error: 'Upload access denied; restart the upload.' }, 403);
+    const partError = uploadSizeError(request, partSizeLimit(key, partNumber));
+    if (partError) return partError;
     try {
       const upload = env.R2_BUCKET.resumeMultipartUpload(key, uploadId);
       const result = await upload.uploadPart(partNumber, request.body);
       return json({ ok: true, partNumber, etag: result.etag }, 200);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return json({ error: "Upload part failed", detail: message }, 502);
+      return json({ error: "Upload part failed" }, 502);
     }
   }
 
@@ -501,6 +516,8 @@ async function handleApi(request, env, url, route) {
     const parts = Array.isArray(body.parts) ? body.parts : [];
     if (!key || !uploadId || !parts.length) return json({ error: "Missing completion payload" }, 400);
     if (!key.startsWith("verification/")) return json({ error: "Invalid upload key" }, 400);
+    if (!(await ownsUpload(env, key, uploadId, authUser.id))) return json({ error: 'Upload access denied; restart the upload.' }, 403);
+    if (!validParts(key, parts)) return json({ error: 'Invalid upload parts' }, 400);
     try {
       const upload = env.R2_BUCKET.resumeMultipartUpload(key, uploadId);
       await upload.complete(parts.map((part) => ({
@@ -513,7 +530,7 @@ async function handleApi(request, env, url, route) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await audit(env, authUser.id, "verification_upload_complete_failed", { key, detail: String(message || "").slice(0, 300) }, request);
-      return json({ error: "Complete upload failed", detail: message }, 502);
+      return json({ error: "Complete upload failed" }, 502);
     }
   }
 
@@ -529,8 +546,8 @@ async function handleApi(request, env, url, route) {
     if (!timingSafeEqual(token, expected)) return json({ error: "Invalid upload signature" }, 401);
 
     const isVerificationUpload = key.startsWith("verification/");
-    const contentLength = Number(request.headers.get("content-length") || "0");
-    if (!isVerificationUpload && contentLength > MAX_UPLOAD_BYTES) return json({ error: "File too large. Max 25 MiB." }, 413);
+    const sizeError = uploadSizeError(request, isVerificationUpload ? 100 * 1024 * 1024 : MAX_UPLOAD_BYTES);
+    if (sizeError) return sizeError;
     const contentType = (request.headers.get("content-type") || "application/octet-stream").toLowerCase();
     if (isVerificationUpload) {
       if (!contentType.startsWith("video/")) return json({ error: "Verification upload must be a video file" }, 415);
@@ -546,7 +563,7 @@ async function handleApi(request, env, url, route) {
       if (lower.includes("too large") || lower.includes("entity too large") || lower.includes("request body") || lower.includes("resource limits")) {
         return json({ error: "Verification video is too large for current Cloudflare upload limits. Please compress the file and try again." }, 413);
       }
-      return json({ error: "Upload storage failed", detail: message }, 502);
+      return json({ error: "Upload storage failed" }, 502);
     }
     return json({ ok: true, key }, 200);
   }

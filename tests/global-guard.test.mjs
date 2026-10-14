@@ -16,7 +16,30 @@ test('concurrent distributed submissions share one budget, persisted across rest
   assert.equal(results.filter(r => r.status === 204).length, 20);
   assert.equal((await new BoardAbuseGuard(s).fetch(request('content'))).status, 429);
   assert.equal((await guard.fetch(request('read'))).status, 204);
-  assert.equal(s.data.size, 4);
+  assert.equal(s.data.size, 7);
+});
+test('rolling budget is not replenished by the daily quota reset', async () => {
+  const s = state(); const guard = new BoardAbuseGuard(s);
+  s.data.set('rolling-all-v1', { tokens: 0, at: Date.now() });
+  s.data.set('day', { bucket: -1, count: 12000 });
+  assert.equal((await guard.fetch(request('read'))).status, 429);
+  s.data.set('rolling-all-v1', { tokens: 0, at: Date.now() - 3600000 });
+  assert.equal((await guard.fetch(request('read'))).status, 204);
+});
+test('deep pagination is charged proportionally and malformed costs are rejected', async () => {
+  const s = state(); const guard = new BoardAbuseGuard(s);
+  assert.equal((await guard.fetch(request('read?cost=101'))).status, 204);
+  assert.equal((await guard.fetch(request('read?cost=101'))).status, 429);
+  assert.equal((await guard.fetch(request('read?cost=NaN'))).status, 400);
+});
+test('auth and upload limits leave read capacity available', async () => {
+  for (const kind of ['auth', 'upload']) {
+    const guard = new BoardAbuseGuard(state());
+    const count = kind === 'auth' ? 20 : 10;
+    for (let i = 0; i < count; i++) assert.equal((await guard.fetch(request(kind))).status, 204);
+    assert.equal((await guard.fetch(request(kind))).status, 429);
+    assert.equal((await guard.fetch(request('read'))).status, 204);
+  }
 });
 test('expired buckets reset while daily exhaustion survives minute boundaries', async () => {
   const s = state(); const guard = new BoardAbuseGuard(s);
