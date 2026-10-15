@@ -7,9 +7,11 @@ test('admin migration preserves the user id, removes the personal email, resets 
   const user = { id: 'admin-id', email: 'old@example.invalid', english_name: 'Old Name', role: 'admin', status: 'verified' };
   const values = new Map([
     ['session:mine', user.id],
-    ['session:other', 'other-id']
+    ['session:other', 'other-id'],
+    ['email:old@example.invalid', 'verification-record']
   ]);
   let updateArgs;
+  let auditScrubArgs;
   const env = {
     ADMIN_ACCOUNT_MIGRATION_SOURCE: user.email,
     ADMIN_ACCOUNT_MIGRATION_PASSWORD: 'new-test-password',
@@ -24,6 +26,7 @@ test('admin migration preserves the user id, removes the personal email, resets 
         const statement = {
           bind(...args) {
             if (sql.startsWith('update users set')) updateArgs = args;
+            if (sql.startsWith('update audit_logs set')) auditScrubArgs = args;
             statement.args = args;
             return statement;
           },
@@ -48,7 +51,9 @@ test('admin migration preserves the user id, removes the personal email, resets 
   assert.equal(updateArgs.includes('old@example.invalid'), true);
   assert.equal(values.has('session:mine'), false);
   assert.equal(values.get('session:other'), 'other-id');
-  const marker = JSON.parse(values.get('maintenance:admin-username-migration-v1'));
+  assert.deepEqual(auditScrubArgs, ['old@example.invalid', 'old@example.invalid']);
+  assert.equal(values.has('email:old@example.invalid'), false);
+  const marker = JSON.parse(values.get('maintenance:admin-username-migration-v2'));
   assert.equal(marker.userId, user.id);
   assert.equal(JSON.stringify(marker).includes('old@example.invalid'), false);
 });
@@ -62,4 +67,3 @@ test('admin migration refuses to promote a non-admin account', async () => {
   };
   await assert.rejects(runAdminAccountMigration(env), /not an admin/);
 });
-

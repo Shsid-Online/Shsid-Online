@@ -1,6 +1,6 @@
 import { hashPassword } from './passwords.mjs';
 
-const MARKER_KEY = 'maintenance:admin-username-migration-v1';
+const MARKER_KEY = 'maintenance:admin-username-migration-v2';
 const TARGET_USERNAME = 'anon2221';
 const INTERNAL_EMAIL_DOMAIN = 'system.local';
 
@@ -53,8 +53,10 @@ export async function runAdminAccountMigration(env) {
     if (Number(result?.meta?.changes ?? result?.changes ?? 0) !== 1) throw new Error('Admin migration update was not applied');
   }
 
+  await env.DB.prepare("update audit_logs set metadata=replace(metadata, ?, '[redacted]') where instr(lower(metadata), ?) > 0")
+    .bind(sourceEmail, sourceEmail).run();
+  await env.SESSIONS.delete(`email:${sourceEmail}`);
   await revokeUserSessions(env.SESSIONS, user.id);
   await env.SESSIONS.put(MARKER_KEY, JSON.stringify({ completedAt: new Date().toISOString(), userId: user.id }));
   return { status: 'migrated', userId: user.id };
 }
-
