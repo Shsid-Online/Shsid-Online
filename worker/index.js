@@ -10,7 +10,9 @@ import { ensureReadIndexes } from "./database-indexes.mjs";
 import { hashPassword, verifyPassword, isLegacyPassword, migrateOneLegacyPassword } from "./passwords.mjs";
 import { runAdminAccountMigration } from './admin-account-migration.mjs';
 import boardPrivacy from "../server/board-privacy.cjs";
+import postSpam from '../server/post-spam.cjs';
 const { privateBoardItem, uploadExtension } = boardPrivacy;
+const { blockedPostReason } = postSpam;
 
 const ALLOWED_ORIGINS = ["https://www.shsid.online", "https://shsid.online", "http://127.0.0.1:4173", "http://localhost:4173"];
 
@@ -1006,10 +1008,11 @@ async function handleApi(request, env, url, route) {
 
   if (method === "POST" && route === "/posts") {
     if (authUser?.status === "banned") return json({ error: "Account banned" }, 403);
-    const ownerDigest = await boardOwnerDigest(request);
-    const actor = authUser || await ensureBoardGuestUser(env);
     const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN);
     const text = String(body.text || "").trim();
+    if (blockedPostReason(title, text)) return json({ error: 'This post matches a blocked spam pattern' }, 400);
+    const ownerDigest = await boardOwnerDigest(request);
+    const actor = authUser || await ensureBoardGuestUser(env);
     if (hasTooManyMediaItems(body.media, 9)) return json({ error: "Posts can include at most 9 photos" }, 400);
     const media = sanitizeMediaItems(body.media, 9);
     const quoteRef = await sanitizeQuoteRef(env, body.quoteRef);

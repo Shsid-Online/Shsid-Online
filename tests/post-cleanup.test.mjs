@@ -8,16 +8,19 @@ test('real SQL removes only matching live posts and preserves comments and prior
   try {
     db.exec('CREATE TABLE posts (id TEXT, title TEXT, text TEXT, deleted_at TEXT); CREATE TABLE comments (text TEXT);');
     const insert = db.prepare('INSERT INTO posts VALUES (?,?,?,?)');
-    insert.run('title', '马蜂万岁!', 'body', null);
-    insert.run('body', 'title', 'hello 马蜂万岁 hello', null);
-    insert.run('safe', '马蜂', '万岁', null);
+    insert.run('title', '马校长万岁！', 'body', null);
+    insert.run('body', 'title', 'hello 马校长万岁 hello', null);
+    insert.run('gay-title', ' GaY ', '', null);
+    insert.run('gay-body', '', 'gay', null);
+    insert.run('gay-sentence', '', 'I am gay', null);
+    insert.run('safe', '马校长', '万岁', null);
     insert.run('nulls', null, null, null);
-    insert.run('deleted', '马蜂万岁', '', 'old-timestamp');
-    db.prepare('INSERT INTO comments VALUES (?)').run('马蜂万岁');
+    insert.run('deleted', '马校长万岁', '', 'old-timestamp');
+    db.prepare('INSERT INTO comments VALUES (?)').run('马校长万岁');
     const env = { SESSIONS: { get: async k => markers.get(k), put: async (k,v) => markers.set(k,v) },
       DB: { prepare(sql) { return { bind(...args) { return { run: async () => ({success:true,meta:{changes:db.prepare(sql).run(...args).changes}}) }; } }; } } };
-    assert.equal((await runPostCleanup(env)).matchedPosts, 2);
-    assert.deepEqual(db.prepare('SELECT id FROM posts WHERE deleted_at IS NULL ORDER BY id').all().map(r => r.id), ['nulls','safe']);
+    assert.equal((await runPostCleanup(env)).matchedPosts, 4);
+    assert.deepEqual(db.prepare('SELECT id FROM posts WHERE deleted_at IS NULL ORDER BY id').all().map(r => r.id), ['gay-sentence','nulls','safe']);
     assert.equal(db.prepare("SELECT deleted_at FROM posts WHERE id='deleted'").get().deleted_at, 'old-timestamp');
     assert.equal(db.prepare('SELECT count(*) AS n FROM comments').get().n, 1);
     assert.deepEqual(await runPostCleanup(env), {skipped:true});
@@ -32,6 +35,8 @@ function setup() {
       assert.match(sql, /WHERE deleted_at IS NULL/);
       assert.match(sql, /instr\(coalesce\(title/);
       assert.match(sql, /instr\(coalesce\(text/);
+      assert.match(sql, /lower\(trim\(coalesce\(title/);
+      assert.match(sql, /lower\(trim\(coalesce\(text/);
       assert.doesNotMatch(sql, /DELETE FROM|comments/);
       return { bind(timestamp, title, text) {
         assert.ok(Number.isFinite(Date.parse(timestamp)));

@@ -17,6 +17,7 @@ loadEnvFile(path.resolve(__dirname, "..", ".env"));
 
 const { Store, hashPassword, verifyPassword, publicUser, id, now, tokenDigest } = require("./store");
 const { privateBoardItem, uploadExtension } = require('./board-privacy.cjs');
+const { blockedPostReason } = require('./post-spam.cjs');
 
 const PORT = Number(process.env.PORT || 4174);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -1966,6 +1967,7 @@ async function handleApi(req, res, url) {
     if (user) ensureAnonymousAccount(user);
     const title = String(body.title || "").trim().slice(0, MAX_TITLE_LEN);
     const text = String(body.text || "").trim();
+    if (blockedPostReason(title, text)) return sendJson(res, 400, { error: 'This post matches a blocked spam pattern' }, req);
     if (hasTooManyMediaItems(body.media, 9)) return sendJson(res, 400, { error: "Posts can include at most 9 photos" }, req);
     const media = sanitizeMediaItems(body.media, 9);
     const quoteRef = sanitizeQuoteRef(body.quoteRef);
