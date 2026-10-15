@@ -10,6 +10,38 @@ function state() {
   return { storage: { transaction(fn) { const pending = tail.then(() => fn(tx)); tail = pending.catch(() => {}); return pending; } }, data };
 }
 const request = kind => new Request(`https://guard/${kind}`);
+test('unused post metadata cannot evade duplicate detection', async () => {
+  const s = state();
+  const env = { DUPLICATE_RATE_LIMIT: {limit: async()=>({success:true})}, GLOBAL_GUARD: {
+    idFromName: x=>x, get:()=>({fetch:req=>new BoardAbuseGuard(s).fetch(req)})
+  }};
+  assert.equal(await rejectDuplicate(env,'/posts',{text:'Identical post',replyTo:'unused-1'}),null);
+  assert.equal((await rejectDuplicate(env,'/posts',{text:'Identical post',replyTo:'unused-2'})).status,429);
+});
+test('discarded text suffixes are rejected before duplicate storage', async () => {
+  for (const body of [{text:'x'.repeat(10001)},{title:'x'.repeat(201)}]) {
+    assert.equal((await rejectDuplicate({},'/posts',body)).status,400);
+  }
+});
+test('sustained device budget survives address rotation and object restarts', async () => {
+  const s = state(); const owner='b'.repeat(64);
+  for(let i=0;i<6;i++) {
+    const response=await new BoardAbuseGuard(s).fetch(new Request('https://guard/submission',{
+      method:'POST',body:JSON.stringify({owner,client:i.toString(16).padStart(64,'0'),fingerprint:i.toString(16).padStart(64,'0')})
+    }));
+    assert.equal(response.status,i<5?204:429);
+  }
+  assert.equal((await new BoardAbuseGuard(s).fetch(request('read'))).status,204);
+});
+test('device daily budget limits slow repeated posting across networks', async () => {
+  const s=state();const owner='b'.repeat(64);
+  s.data.set('submissions-v1',{duplicates:{},clients:{['owner:'+owner]:{tokens:5,daily:0,at:Date.now()}}});
+  const response=await new BoardAbuseGuard(s).fetch(new Request('https://guard/submission',{
+    method:'POST',body:JSON.stringify({owner,client:'a'.repeat(64),fingerprint:'c'.repeat(64)})
+  }));
+  assert.equal(response.status,429);
+  assert.equal(Object.keys(s.data.get('submissions-v1').duplicates).length,0);
+});
 test('global duplicates persist across time, clients, counters and object restarts', async () => {
   const s = state();
   const allow = { limit: async () => ({ success: true }) };

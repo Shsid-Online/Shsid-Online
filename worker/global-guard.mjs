@@ -9,6 +9,7 @@ export class BoardAbuseGuard {
     if (kind === 'submission') {
       const body = await request.json();
       if (!/^[a-f0-9]{64}$/.test(body.fingerprint || '') || !/^[a-f0-9]{64}$/.test(body.client || '')) return new Response(null, { status: 400 });
+      if (body.owner !== undefined && !/^[a-f0-9]{64}$/.test(body.owner)) return new Response(null, { status: 400 });
       const now = Date.now();
       const allowed = await this.storage.transaction(async tx => {
         const records = await tx.get('submissions-v1') || { duplicates: {}, clients: {} };
@@ -20,6 +21,16 @@ export class BoardAbuseGuard {
         const previous = records.clients[body.client];
         const tokens = previous ? Math.min(5, previous.tokens + Math.max(0, now - previous.at) * 10 / 3600000) : 5;
         if (tokens < 1) return false;
+        // A device token cannot escape sustained limits merely by changing IP.
+        // This supplements the IP budget; rotating or omitting it never removes that budget.
+        if (body.owner) {
+          const key = `owner:${body.owner}`;
+          const old = records.clients[key];
+          const hourly = old ? Math.min(5, old.tokens + Math.max(0, now - old.at) * 10 / 3600000) : 5;
+          const daily = old ? Math.min(30, (old.daily ?? 30) + Math.max(0, now - old.at) * 30 / 86400000) : 30;
+          if (hourly < 1 || daily < 1) return false;
+          records.clients[key] = { tokens: hourly - 1, daily: daily - 1, at: now };
+        }
         records.clients[body.client] = { tokens: tokens - 1, at: now };
         records.duplicates[body.fingerprint] = now + 86400000;
         await tx.put({ 'submissions-v1': records });

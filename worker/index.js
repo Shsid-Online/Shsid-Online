@@ -321,6 +321,7 @@ async function handleApi(request, env, url, route) {
     return json({ error: 'This account requires administrator-assisted credential recovery.' }, 403);
   }
   if (method === 'POST' && (route === '/posts' || /^\/posts\/[^/]+\/comments$/.test(route))) {
+    if (blockedPostReason(route === '/posts' ? body.title : '', body.text)) return json({ error: 'This submission matches a blocked spam pattern' }, 400);
     const duplicate = await rejectDuplicate(env, route, body, request);
     if (duplicate) return duplicate;
   }

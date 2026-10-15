@@ -42,27 +42,31 @@ export function rejection(status, error) {
 }
 
 export async function rejectDuplicate(env, route, body, request) {
-  const content = JSON.stringify([route, String(body.title || '').trim().toLowerCase(),
-    String(body.text || '').trim().toLowerCase(), body.media || [], body.replyTo || '', body.quoteRef || null]);
-  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
-  const key = Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');
-  if (!env.DUPLICATE_RATE_LIMIT) return rejection(503, 'Protection temporarily unavailable.');
-  if (!(await env.DUPLICATE_RATE_LIMIT.limit({ key })).success) {
-    return rejection(429, 'This was recently submitted. Check the board before posting again.');
+  if (String(body.text || '').trim().length > 10000 || String(body.title || '').trim().length > 200) {
+    return rejection(400, 'Post text or title is too long.');
   }
-  if (!env.GLOBAL_GUARD) return rejection(503, 'Protection temporarily unavailable.');
   // Fingerprint meaningful text, not attacker-controlled metadata or counters.
   const normalize = value => String(value || '').normalize('NFKC').toLowerCase()
     .replace(/[\u200B-\u200F\u2060\uFEFF]/g, '').replace(/#\s*\d+/g, '')
     .replace(/[\p{P}\p{Z}\s]+/gu, ' ').trim();
   const text = normalize(body.text);
   const title = normalize(body.title);
-  const canonical = JSON.stringify([route, body.replyTo || '', text || title || body.media || []]);
+  // Posts have no replyTo field: ignored metadata must never change identity.
+  const target = route === '/posts' ? '' : String(body.replyTo || '').trim();
+  const canonical = JSON.stringify([route, target, text || title || body.media || []]);
   const hash = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))), b => b.toString(16).padStart(2, '0')).join('');
+  const fingerprint = await hash(canonical);
+  if (!env.DUPLICATE_RATE_LIMIT) return rejection(503, 'Protection temporarily unavailable.');
+  if (!(await env.DUPLICATE_RATE_LIMIT.limit({ key: fingerprint })).success) {
+    return rejection(429, 'This was recently submitted. Check the board before posting again.');
+  }
+  if (!env.GLOBAL_GUARD) return rejection(503, 'Protection temporarily unavailable.');
   try {
     const guard = env.GLOBAL_GUARD.get(env.GLOBAL_GUARD.idFromName('board-budget-v1'));
     const response = await guard.fetch(new Request('https://guard/submission', { method: 'POST', body: JSON.stringify({
-      fingerprint: await hash(canonical), client: await hash(request?.headers.get('CF-Connecting-IP') || 'unknown')
+      fingerprint, client: await hash(request?.headers.get('CF-Connecting-IP') || 'unknown'),
+      owner: request?.headers.get('X-Board-Owner-Token')
+        ? await hash(request.headers.get('X-Board-Owner-Token').slice(0, 256)) : undefined
     }) }));
     if (response.status !== 204) return rejection(response.status === 429 ? 429 : 503, 'Repeated submission or posting limit reached. Please wait before posting again.');
   } catch { return rejection(503, 'Protection temporarily unavailable.'); }

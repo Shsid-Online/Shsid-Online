@@ -37,6 +37,17 @@ test('blocked requests never touch D1, sessions, or parse their body', async () 
   assert.equal(result.status, 429);
   assert.equal(result.headers.get('Retry-After'), '60');
 });
+test('blocked reply phrases including invisible characters fail before database access', async () => {
+  for(const text of ['马校长万岁','马\u200b校长万岁','gay']) {
+    const e=env();
+    Object.defineProperty(e,'DB',{get(){throw new Error('D1 accessed');}});
+    const result=await worker.fetch(new Request('https://www.shsid.online/api/posts/test/comments',{
+      method:'POST',body:JSON.stringify({text})
+    }),e);
+    assert.equal(result.status,400);
+    assert.match((await result.json()).error,/spam pattern/);
+  }
+});
 test('missing limit binding fails closed; health remains available', async () => {
   assert.equal((await worker.fetch(request(), {})).status, 503);
   assert.equal((await worker.fetch(new Request('https://www.shsid.online/health'), {})).status, 200);

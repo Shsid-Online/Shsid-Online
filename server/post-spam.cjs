@@ -3,7 +3,7 @@
 const BLOCKED_CHINESE_PHRASE = '马校长万岁';
 
 function normalize(value) {
-  return String(value || '').normalize('NFKC').replace(/\s+/gu, ' ').trim().toLowerCase();
+  return String(value || '').normalize('NFKC').replace(/[\u200B-\u200F\u2060\uFEFF]/g, '').replace(/\s+/gu, ' ').trim().toLowerCase();
 }
 
 function compact(value) {

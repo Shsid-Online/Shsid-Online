@@ -2075,6 +2075,7 @@ async function handleApi(req, res, url) {
     const post = store.data.posts.find((item) => item.id === postCommentMatch[1] && !item.deletedAt);
     if (!post) return notFound(res);
     const text = String(body.text || "").trim();
+    if (blockedPostReason('', text)) return sendJson(res, 400, { error: 'This submission matches a blocked spam pattern' }, req);
     if (hasTooManyMediaItems(body.media, 5)) return sendJson(res, 400, { error: "Replies can include at most 5 photos" }, req);
     const media = sanitizeMediaItems(body.media, 5);
     if (!text && !media.length) return sendJson(res, 400, { error: "Comment text or media is required" }, req);
