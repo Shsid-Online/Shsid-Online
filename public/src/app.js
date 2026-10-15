@@ -2,7 +2,7 @@ const STORAGE_KEY = "shsid-board-state-v1";
 const LEGACY_STATE_KEY = "shsid-social-state-v2";
 const API_BASE = window.SHSID_API_BASE || (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
   ? "http://127.0.0.1:4174/api"
-  : "https://www.shsid.online/api");
+  : window.location.hostname === "shsid.online" ? "https://shsid.online/api" : "https://www.shsid.online/api");
 
 const BOARDS = [
   { category: "school", slug: "/campus/", name: "/campus/", blurb: "" },
@@ -435,6 +435,16 @@ function hasUnsavedBoardChanges() {
   return state.autopostDirty || autopostBusy || hasUnsavedComposerDraft() || hasUnsavedReplyDrafts();
 }
 
+function checkBrowserChallenge(response) {
+  if (response.headers.get("cf-mitigated") !== "challenge") return;
+  // Do not replay writes, reload away from drafts, or mistake an edge challenge
+  // for an expired login. A top-level navigation can renew browser clearance.
+  throw Object.assign(new Error("Browser verification is needed. Copy any unsent text, then reload the homepage to complete the security check and try again."), {
+    status: response.status,
+    code: "BROWSER_VERIFICATION_REQUIRED"
+  });
+}
+
 async function apiRequest(path, { method = "GET", body, auth = true, optionalAuth = false, timeoutMs } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (state.boardOwnerToken) headers["X-Board-Owner-Token"] = state.boardOwnerToken;
@@ -459,6 +469,7 @@ async function apiRequest(path, { method = "GET", body, auth = true, optionalAut
     await new Promise((resolve) => setTimeout(resolve, 750));
     response = await request();
   }
+  checkBrowserChallenge(response);
   let payload = {};
   let responseText = "";
   try {
@@ -490,6 +501,7 @@ async function fetchCurrentUser() {
     const result = await apiRequest("/me", { optionalAuth: true, timeoutMs: 15000 });
     state.currentUser = result.user || null;
   } catch (error) {
+    if (error.code === "BROWSER_VERIFICATION_REQUIRED") throw error;
     if (error.status === 401 || error.status === 403) state.token = "";
     state.currentUser = null;
     if (String(error.message || "").toLowerCase().includes("banned")) {
@@ -684,6 +696,7 @@ async function uploadSinglePhoto(file) {
     body: file,
     signal: AbortSignal.timeout(60000)
   });
+  checkBrowserChallenge(response);
   if (!response.ok) throw new Error("Photo upload failed");
   return { url: signed.mediaUrl, type: contentType, name: fileName };
 }

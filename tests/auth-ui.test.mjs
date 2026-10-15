@@ -32,18 +32,18 @@ test('transient failures preserve session, authentication denial clears it', asy
   }
 });
 test('API errors preserve HTTP status for authentication decisions', async () => {
-  const u=ui(); u.context.fetch=async()=>({ok:false,status:403,text:async()=>JSON.stringify({error:'Denied'})});
+  const u=ui(); u.context.fetch=async()=>new Response(JSON.stringify({error:'Denied'}),{status:403});
   await assert.rejects(u.run('apiRequest("/me")'), e=>e.status===403);
 });
 test('hosting quota errors explain the reset without retrying', async () => {
   const u=ui(); let requests=0;
-  u.context.fetch=async()=>{requests++;return {ok:false,status:429,text:async()=> 'error code: 1027'};};
+  u.context.fetch=async()=>{requests++;return new Response('error code: 1027',{status:429});};
   await assert.rejects(u.run('apiRequest("/posts")'), e=>e.status===429 && /daily hosting limit/.test(e.message));
   assert.equal(requests,1);
 });
 test('ordinary throttling is not mistaken for daily quota exhaustion', async () => {
   const u=ui();
-  u.context.fetch=async()=>({ok:false,status:429,text:async()=>JSON.stringify({error:'Slow down'})});
+  u.context.fetch=async()=>new Response(JSON.stringify({error:'Slow down'}),{status:429});
   await assert.rejects(u.run('apiRequest("/posts")'), e=>e.message==='Slow down');
 });
 test('login accepts a username and sends it as an identifier', async () => {

@@ -54,3 +54,52 @@ test('fallback scroll bursts perform one pagination check per frame', () => {
   assert.equal(u.timers.size,1);u.flush();assert.equal(u.run('checks'),1);
   u.run('schedulePostsScrollCheck();');u.flush();assert.equal(u.run('checks'),2);
 });
+
+test('edge challenges give recovery instructions without retrying writes or losing drafts', async () => {
+  const u = ui(); let calls = 0;
+  u.context.fetch = async () => { calls++; return new Response('<html>challenge</html>', {
+    status: 403, headers: { 'cf-mitigated': 'challenge' }
+  }); };
+  u.run('state.composerBody = "keep this draft";');
+  await assert.rejects(u.run('apiRequest("/posts", {method:"POST", body:{body:"draft"}})'),
+    error => error.code === 'BROWSER_VERIFICATION_REQUIRED' && /Copy any unsent text/.test(error.message));
+  assert.equal(calls, 1);
+  assert.equal(u.run('state.composerBody'), 'keep this draft');
+});
+
+test('edge challenge on profile fetch preserves the login token', async () => {
+  const u = ui(); u.run('state.token = "existing-token";');
+  u.context.fetch = async () => new Response('', {status:403, headers:{'cf-mitigated':'challenge'}});
+  await assert.rejects(u.run('fetchCurrentUser()'), error => error.code === 'BROWSER_VERIFICATION_REQUIRED');
+  assert.equal(u.run('state.token'), 'existing-token');
+});
+
+test('real authentication failures still clear invalid tokens', async () => {
+  const u = ui(); u.run('state.token = "expired";');
+  u.context.fetch = async () => new Response('{"error":"Unauthorized"}', {status:401});
+  await u.run('fetchCurrentUser()');
+  assert.equal(u.run('state.token'), '');
+});
+
+test('successful API responses are unchanged', async () => {
+  const u = ui();
+  u.context.fetch = async () => new Response('{"posts":[]}');
+  assert.equal(JSON.stringify(await u.run('apiRequest("/posts")')), '{"posts":[]}');
+});
+
+test('photo upload challenges are explained without replaying the upload', async () => {
+  const u = ui(); let calls = 0;
+  u.context.fetch = async () => ++calls === 1
+    ? new Response('{"uploadUrl":"https://www.shsid.online/upload/example","method":"PUT"}')
+    : new Response('', {status:403, headers:{'cf-mitigated':'challenge'}});
+  await assert.rejects(u.run('uploadSinglePhoto({name:"photo.png", type:"image/png"})'),
+    error => error.code === 'BROWSER_VERIFICATION_REQUIRED');
+  assert.equal(calls, 2);
+});
+
+test('apex board API stays on the same host for browser clearance', () => {
+  const u = ui();
+  const context = vm.createContext({...u.context, window:{location:{hostname:'shsid.online'}}});
+  vm.runInContext(source, context);
+  assert.equal(vm.runInContext('API_BASE', context), 'https://shsid.online/api');
+});
