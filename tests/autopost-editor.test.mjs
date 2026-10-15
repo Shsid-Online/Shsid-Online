@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import boardPrivacy from '../server/board-privacy.cjs';
+import postSpam from '../server/post-spam.cjs';
 
 const appSource = fs.readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8').split('initialize().catch(')[0];
 function editor(job = { entries: [] }) {
@@ -105,7 +106,7 @@ test('late refresh cannot overwrite typing', async () => {
 
 const workerSource=fs.readFileSync(new URL('../worker/index.js',import.meta.url),'utf8').replace(/^import .*;$/gm,'').replace(/^export \{.*\} from .*;$/gm,'').replace('export default {','const worker = {');
 test('autopost quiet hours run from 03:00 through 07:59 in Seoul',()=>{
-  const context=vm.createContext({crypto:webcrypto,TextEncoder,console,boardPrivacy});
+  const context=vm.createContext({crypto:webcrypto,TextEncoder,console,boardPrivacy,postSpam});
   vm.runInContext(workerSource,context);
   assert.equal(vm.runInContext('isAutopostQuietTime(Date.parse("2026-10-04T17:59:00Z"))',context),false);
   assert.equal(vm.runInContext('isAutopostQuietTime(Date.parse("2026-10-04T18:00:00Z"))',context),true);
@@ -115,7 +116,7 @@ test('autopost quiet hours run from 03:00 through 07:59 in Seoul',()=>{
 });
 
 test('worker removes posted drafts and does not resurrect a post published since the editor loaded',async()=>{
-  const context=vm.createContext({crypto:webcrypto,TextEncoder,console,boardPrivacy});
+  const context=vm.createContext({crypto:webcrypto,TextEncoder,console,boardPrivacy,postSpam});
   vm.runInContext(workerSource,context);
   context.body={entries:[entry('done','stale pending'),entry('apq_local_blank',''),entry('new','new draft')]};
   context.job={id:'job',category:'school',next_index:1,queue_json:JSON.stringify([entry('done','published',{postedAt:'2026-01-01'}),entry('new','new draft')])};
