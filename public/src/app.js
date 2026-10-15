@@ -449,13 +449,19 @@ async function apiRequest(path, { method = "GET", body, auth = true, optionalAut
     response = await request();
   }
   let payload = {};
+  let responseText = "";
   try {
-    payload = await response.json();
+    responseText = await response.text();
+    payload = JSON.parse(responseText);
   } catch {
     payload = {};
   }
   if (!response.ok) {
-    throw Object.assign(new Error(payload.error || "Request failed"), { status: response.status });
+    const quotaExhausted = response.status === 429 && /\berror code:\s*1027\b/i.test(responseText);
+    const message = quotaExhausted
+      ? "The board has reached its daily hosting limit. Please return after 00:00 UTC when the allowance resets. Refreshing repeatedly will not restore it sooner."
+      : payload?.error || (response.status === 429 ? "Too many requests. Please wait a little before trying again." : "Request failed");
+    throw Object.assign(new Error(message), { status: response.status });
   }
   return payload;
 }

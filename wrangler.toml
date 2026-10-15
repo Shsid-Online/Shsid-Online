@@ -1,6 +1,8 @@
 name = "shsid-online-api"
 main = "worker/index.js"
 compatibility_date = "2026-05-08"
+workers_dev = false
+preview_urls = false
 
 routes = [
   { pattern = "www.shsid.online/api/*", zone_name = "shsid.online" },
