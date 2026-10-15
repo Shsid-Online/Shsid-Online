@@ -2604,7 +2604,22 @@ async function handleApi(req, res, url) {
         const file = uploadPathForKey(key);
         if (!fs.existsSync(file) || fs.statSync(file).size > 8 * 1024 * 1024) throw new Error("Screenshot is missing or exceeds 8 MB");
       }
-      const job = await queue.queueAction(repo, action, body, credentials, post, body.imageUrl);
+      let job = await queue.queueAction(repo, action, body, credentials, post, body.imageUrl);
+      if (action === 'post-now') {
+        await queue.runQueue(repo, credentials, (id, commentId) => {
+          const source = store.data.posts.find(p => p.id === id && !p.deletedAt);
+          if (!source || !commentId) return source;
+          const seen = new Set();
+          while (commentId && !seen.has(commentId)) {
+            seen.add(commentId);
+            const comment = (source.comments || []).find(c => c.id === commentId && !c.deletedAt);
+            if (!comment) return null;
+            commentId = comment.replyTo || '';
+          }
+          return commentId ? null : source;
+        });
+        job = await repo.read();
+      }
       store.audit(admin.id, `instagram_${action}`, { postId: post?.id || null, commentId: String(body.commentId || "").trim() || null });
       store.save();
       return sendJson(res, 200, { queue: queue.queueView(job, credentials) }, req);

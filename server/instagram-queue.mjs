@@ -62,6 +62,12 @@ export async function queueAction(repo, action, body, credentials, post, imageUr
       entry.error = "";
       delete entry.containerId;
       delete entry.processingAt;
+    } else if (action === "post-now") {
+      if (!credentials?.token || !credentials?.userId) fail("Connect Instagram before publishing");
+      if (job.lockUntil > time || job.immediateId || job.entries.some(e => ["review", "publishing"].includes(e.status))) fail("Another publication is pending or needs review", 409);
+      const entry = job.entries.find(e => e.id === body.id);
+      if (!entry || !["queued", "processing"].includes(entry.status)) fail("Select a queued item to publish", 409);
+      job.immediateId = entry.id;
     } else if (action === "start") {
       if (!credentials?.token || !credentials?.userId) fail("Connect Instagram before starting the queue");
       if (job.entries.some(e => ["failed", "review", "publishing"].includes(e.status))) fail("Resolve the stopped item before restarting");
@@ -70,6 +76,7 @@ export async function queueAction(repo, action, body, credentials, post, imageUr
       job.active = true;
     } else if (action === "pause") {
       job.active = false;
+      delete job.immediateId;
     } else if (action === "resolve") {
       const entry = job.entries.find(e => e.id === body.id);
       if (!entry || entry.status !== "review" || job.lockUntil > time) fail("Only a stopped item awaiting review can be archived", 409);
@@ -80,6 +87,7 @@ export async function queueAction(repo, action, body, credentials, post, imageUr
       if (!entry) fail("Queue item not found", 404);
       if (["publishing", "published", "review"].includes(entry.status) || job.lockUntil > time) fail("This item cannot be removed while publishing or awaiting review", 409);
       entry.status = "removed";
+      if (job.immediateId === entry.id) delete job.immediateId;
     } else fail("Unknown queue action", 404);
   });
 }
@@ -101,9 +109,10 @@ export async function runQueue(repo, credentials, getPost, time = Date.now()) {
   let claimed = false;
   let job = await changeQueue(repo, job => {
     claimed = false;
-    if (!job.active || job.nextAt > time || job.lockUntil > time) return;
+    if (job.lockUntil > time || (!job.immediateId && (!job.active || job.nextAt > time))) return;
     if (job.entries.some(e => e.status === "publishing")) {
       job.active = false;
+      delete job.immediateId;
       for (const e of job.entries.filter(e => e.status === "publishing")) {
         e.status = "review";
         e.error = "Publishing was interrupted. Check Instagram before taking further action; no automatic retry was made.";
@@ -114,14 +123,14 @@ export async function runQueue(repo, credentials, getPost, time = Date.now()) {
     claimed = true;
   });
   if (!claimed) return;
-  const entry = job.entries.find(e => ["queued", "processing"].includes(e.status));
+  const entry = job.immediateId ? job.entries.find(e => e.id === job.immediateId && ["queued", "processing"].includes(e.status)) : job.entries.find(e => ["queued", "processing"].includes(e.status));
   const update = async fn => changeQueue(repo, current => {
     const item = current.entries.find(e => e.id === entry?.id);
     fn(current, item);
   });
   let publishing = false;
   try {
-    if (!entry) { await update(j => { j.active = false; }); return; }
+    if (!entry) { await update(j => { j.active = false; delete j.immediateId; }); return; }
     if (!credentials?.token || !credentials?.userId) fail("Instagram is not connected");
     if (!await getPost(entry.postId, entry.commentId || "")) fail(entry.commentId
       ? "Original board post or selected reply was deleted. Remove this item."
@@ -141,7 +150,7 @@ export async function runQueue(repo, credentials, getPost, time = Date.now()) {
     if (status.status_code !== "FINISHED") fail(`Image is not ready (${status.status_code || "unknown"}). Check Instagram before requeuing.`);
     let canPublish = false;
     await update((j, e) => {
-      canPublish = j.active && e?.status === "processing";
+      canPublish = (j.active || j.immediateId === e?.id) && e?.status === "processing";
       if (canPublish) e.status = "publishing";
     });
     if (!canPublish) return;
@@ -150,12 +159,14 @@ export async function runQueue(repo, credentials, getPost, time = Date.now()) {
     if (!result.id) fail("Instagram did not confirm publication");
     await update((j, e) => {
       j.entries = j.entries.filter(row => row.id !== e.id);
+      if (j.immediateId === e.id) delete j.immediateId;
       j.nextAt = Date.now() + INTERVAL_MS;
       if (!j.entries.some(row => ["queued", "processing"].includes(row.status))) j.active = false;
     });
   } catch (error) {
     await update((j, e) => {
       j.active = false;
+      delete j.immediateId;
       if (e) {
         e.status = publishing ? "review" : "failed";
         e.error = publishing ? "Publication could not be confirmed. Check Instagram; this item will not be retried automatically." :

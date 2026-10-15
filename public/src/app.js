@@ -904,6 +904,7 @@ function renderInstagramQueue() {
       <a href="${escapeHtml(e.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(e.imageUrl)}" alt="${escapeHtml(e.caption)}" loading="lazy"></a>
       <div><strong>${escapeHtml(e.caption)}${e.commentId ? " · selected reply" : ""}</strong><p>${escapeHtml(e.title)}</p><p>${index + 1} of ${entries.length} in line · ${escapeHtml(e.status)}</p>
       ${e.error ? `<p role="alert">${escapeHtml(e.error)}</p>` : ""}
+      ${["queued", "processing"].includes(e.status) ? `<button class="board-button small primary" data-action="instagram-post-now" data-id="${escapeHtml(e.id)}" ${queue?.connected ? "" : "disabled"}>Post now</button>` : ""}
       ${["queued", "processing", "failed"].includes(e.status) ? `<button class="board-button small" data-action="instagram-remove" data-id="${escapeHtml(e.id)}">Remove</button>` : ""}
       ${e.status === "review" ? `<button class="board-button small" data-action="instagram-resolve" data-id="${escapeHtml(e.id)}">I checked Instagram: archive item</button>` : ""}
       </div></article>`).join("") : "<p>No posts selected.</p>"}</div>
@@ -2216,9 +2217,14 @@ function bindEvents() {
             toast(`Refreshed ${available.length} queued Instagram ${available.length === 1 ? "image" : "images"}${skipped ? `; left ${skipped} unavailable ${skipped === 1 ? "post" : "posts"} unchanged` : ""}`);
           } else {
             const command = action.slice("instagram-".length);
-            if (command === "start" && !window.confirm("Publish the selected screenshots to Instagram, one every 10 minutes? The first post will publish in 10 minutes.")) return;
+            if (command === "start" && !window.confirm("Publish the selected screenshots to Instagram, one every hour? The first post will publish in one hour.")) return;
+            if (command === "post-now" && !window.confirm("Publish this screenshot to Instagram now, skipping the hourly wait?")) return;
             if (command === "resolve" && !window.confirm("Have you checked Instagram? This will archive the uncertain item without retrying it. If it was not published, you can queue the post again.")) return;
-            instagramQueue = (await apiRequest(`/admin/instagram/${command}`, { method: "POST", body: { id } })).queue;
+            instagramQueue = (await apiRequest(`/admin/instagram/${command}`, { method: "POST", body: { id }, timeoutMs: command === "post-now" ? 90000 : 30000 })).queue;
+            if (command === "post-now") {
+              const item = instagramQueue.entries.find(entry => entry.id === id);
+              toast(!item ? "Published to Instagram" : item.error || "Instagram is preparing the image. Publishing will continue automatically.");
+            }
           }
           render();
         } catch (error) { toast(error.message || "Instagram queue action failed"); }

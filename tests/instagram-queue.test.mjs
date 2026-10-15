@@ -14,6 +14,39 @@ async function add(repo, p = post) {
 }
 const response = data => new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } });
 
+test('post now publishes only the selected item from a paused queue and prevents concurrent duplicates', async () => {
+  const { repo } = fixture();
+  await add(repo);
+  const job = await add(repo, { ...post, id: 'post2' });
+  const selected = job.entries[1].id;
+  await queueAction(repo, 'post-now', { id: selected }, credentials, null, null, 1);
+  await assert.rejects(queueAction(repo, 'post-now', { id: selected }, credentials, null, null, 1), /pending/);
+  const originalFetch = globalThis.fetch;
+  let publications = 0;
+  globalThis.fetch = async url => {
+    if (String(url).includes('media_publish')) { publications++; return response({ id: 'published' }); }
+    if (String(url).includes('status_code')) return response({ status_code: 'FINISHED' });
+    return response({ id: 'container' });
+  };
+  try {
+    await Promise.all([runQueue(repo, credentials, id => id === 'post2', 2), runQueue(repo, credentials, id => id === 'post2', 2)]);
+    const result = await repo.read();
+    assert.equal(publications, 1);
+    assert.equal(result.active, false);
+    assert.equal(result.immediateId, undefined);
+    assert.deepEqual(result.entries.map(e => e.postId), ['post1']);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('post now refuses unconnected and uncertain publications', async () => {
+  const { repo, store } = fixture();
+  const job = await add(repo);
+  const id = job.entries[0].id;
+  await assert.rejects(queueAction(repo, 'post-now', { id }, null, null, null, 1), /Connect/);
+  store.data.instagramQueue.entries[0].status = 'review';
+  await assert.rejects(queueAction(repo, 'post-now', { id }, credentials, null, null, 1), /review/);
+});
+
 test("queue is paused, deduplicates posts and builds board-number caption", async () => {
   const { repo } = fixture();
   const job = await add(repo);

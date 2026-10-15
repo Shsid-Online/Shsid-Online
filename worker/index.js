@@ -818,7 +818,11 @@ async function handleApi(request, env, url, route) {
         const image = await env.R2_BUCKET.head(key);
         if (!image || image.httpMetadata?.contentType !== "image/jpeg" || image.size > 8 * 1024 * 1024) return json({ error: "Screenshot is missing or exceeds 8 MB" }, 400);
       }
-      const job = await queueAction(repo, action, body, credentials, post, body.imageUrl);
+      let job = await queueAction(repo, action, body, credentials, post, body.imageUrl);
+      if (action === 'post-now') {
+        await runQueue(repo, credentials, (id, commentId) => instagramSourceExists(env, id, commentId));
+        job = await repo.read();
+      }
       await audit(env, authUser.id, `instagram_${action}`, { postId: post?.id || null, commentId: String(body.commentId || "").trim() || null }, request);
       return json({ queue: queueView(job, credentials) });
     } catch (error) { return json({ error: error.message }, error.status || 400); }
