@@ -17,3 +17,12 @@ test('blocks only standalone gay posts and preserves ordinary sentences', () => 
   assert.equal(blockedPostReason('discussion', 'gay rights'), '');
   assert.equal(blockedPostReason('gay', 'context'), '');
 });
+
+test('numbered spam and automated test batches are blocked', () => {
+  assert.equal(blockedPostReason('GAY #384', 'GAY'), 'single_word_spam');
+  assert.equal(blockedPostReason('gay', 'gay'), 'single_word_spam');
+  assert.equal(blockedPostReason('spam #753', 'automated spam PoC — delete me'), 'automated_spam');
+  assert.equal(blockedPostReason('', 'STRESS 20261014-144037-fb97ba53 #54/100 please ignore, will delete'), 'automated_spam');
+  assert.equal(blockedPostReason('GAY #384 discussion', 'GAY'), '');
+  assert.equal(blockedPostReason('', 'stress about exams'), '');
+});

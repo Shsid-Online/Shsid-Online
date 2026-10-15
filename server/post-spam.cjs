@@ -15,7 +15,9 @@ function blockedPostReason(title, text) {
   const normalizedText = normalize(text);
   if (compact(`${normalizedTitle} ${normalizedText}`).includes(BLOCKED_CHINESE_PHRASE)) return 'blocked_phrase';
   const nonEmptyParts = [normalizedTitle, normalizedText].filter(Boolean);
-  if (nonEmptyParts.length === 1 && nonEmptyParts[0] === 'gay') return 'single_word_spam';
+  if (nonEmptyParts.length && nonEmptyParts.every(part => /^gay(?:\s*#\d+)?$/.test(part))) return 'single_word_spam';
+  if (normalizedText === 'automated spam poc — delete me') return 'automated_spam';
+  if (/^stress \d{8}-\d{6}-[a-f0-9]+ #\d+\/\d+ please ignore, will delete$/.test(normalizedText)) return 'automated_spam';
   return '';
 }
 
