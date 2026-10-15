@@ -1195,7 +1195,7 @@ async function finishAuthFlow() {
 async function handleEmailIntent(intent) {
   if (authBusy) return;
   const email = String(document.querySelector("#auth-email")?.value || "").trim().toLowerCase();
-  if (!email) return toast("Please enter your email");
+  if (!email) return toast(intent === "register" ? "Please enter your email" : "Please enter your email or username");
   authBusy = true;
   state.pendingEmail = email;
   state.authMode = intent === "register" ? "register" : "login";
@@ -1284,7 +1284,7 @@ async function submitPassword(event) {
       const result = await apiRequest("/auth/login", {
         method: "POST",
         body: {
-          email: state.pendingEmail,
+          identifier: state.pendingEmail,
           password
         },
         auth: false
@@ -1713,9 +1713,10 @@ function renderAuthModal() {
   const body = step === "email" ? `
     <form id="auth-email-form" class="auth-form">
       <label class="auth-field">
-        <span>Email</span>
-        <input id="auth-email" type="email" value="${escapeHtml(state.pendingEmail || "")}" placeholder="you@example.com" required>
+        <span>Email or username</span>
+        <input id="auth-email" type="text" value="${escapeHtml(state.pendingEmail || "")}" placeholder="Email or username" autocomplete="username" required>
       </label>
+      <div class="form-note">Creating an account still requires an email.</div>
       <div class="auth-actions">
         <button class="board-button primary" type="submit" data-auth-intent="login"${authBusy ? " disabled" : ""}>Sign in</button>
         <button class="board-button" type="submit" data-auth-intent="register"${authBusy ? " disabled" : ""}>Create account</button>
@@ -1724,7 +1725,7 @@ function renderAuthModal() {
   ` : step === "verify" ? `
     <form id="auth-verify-form" class="auth-form">
       <label class="auth-field">
-        <span>Email</span>
+        <span>${mode === "register" ? "Email" : "Email or username"}</span>
         <input type="text" value="${escapeHtml(state.pendingEmail || "")}" disabled>
       </label>
       <label class="auth-field">

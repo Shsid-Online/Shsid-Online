@@ -83,6 +83,33 @@ test('registration cannot bypass OTP attempt limits by skipping verify-code', as
   for (let i = 0; i < 5; i++) assert.equal((await worker.fetch(req(), e)).status, 400);
   assert.equal((await worker.fetch(req(), e)).status, 429);
 });
+test('username login hides the internal system identifier even from the account owner', async () => {
+  const password = 'username-login-test';
+  const user = { id: 'admin-id', email: 'admin-private@system.local', password_hash: await hashPassword(password), role: 'admin', status: 'verified', english_name: 'anon2221' };
+  const e = baseEnv();
+  const kv = new Map();
+  e.SESSIONS = { get: async key => kv.get(key) || null, put: async (key, value) => kv.set(key, value), delete: async key => kv.delete(key) };
+  e.DB = {
+    prepare(sql) {
+      const statement = {
+        bind() { return statement; },
+        all: async () => ({ results: sql.includes('from users where lower(trim') ? [user] : [] }),
+        first: async () => sql.includes('count(*)') ? ({ count: 0 }) : null,
+        run: async () => ({})
+      };
+      return statement;
+    }
+  };
+  const response = await worker.fetch(new Request('https://www.shsid.online/api/auth/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ identifier: 'anon2221', password })
+  }), e);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.user.role, 'admin');
+  assert.equal(body.user.englishName, 'anon2221');
+  assert.equal(body.user.email, undefined);
+  assert.ok(body.session.token);
+});
 test('real public feed serialization never emits hidden account IDs or owner digests', async () => {
   const e = baseEnv();
   e.UPLOAD_SIGNING_SECRET = 'test-only-snapshot-key';

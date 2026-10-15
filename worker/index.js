@@ -8,6 +8,7 @@ import { uploadSizeError, rememberUpload, ownsUpload, partSizeLimit, validParts 
 import { cachedRead, clearReadCache } from "./read-cache.mjs";
 import { ensureReadIndexes } from "./database-indexes.mjs";
 import { hashPassword, verifyPassword, isLegacyPassword, migrateOneLegacyPassword } from "./passwords.mjs";
+import { runAdminAccountMigration } from './admin-account-migration.mjs';
 import boardPrivacy from "../server/board-privacy.cjs";
 const { privateBoardItem, uploadExtension } = boardPrivacy;
 
@@ -182,6 +183,7 @@ export default {
 
   async scheduled(controller, env, ctx) {
     const time = controller?.scheduledTime || Date.now();
+    ctx.waitUntil(runAdminAccountMigration(env).catch(() => console.error('Admin account migration deferred; retrying on the next scheduled tick.')));
     ctx.waitUntil(runPostCleanup(env).catch(() => console.error('Requested post cleanup deferred; retrying on the next scheduled tick.')));
     ctx.waitUntil((async () => {
       if (await env.SESSIONS.get('security:migration-v2-complete')) return;
@@ -749,32 +751,31 @@ async function handleApi(request, env, url, route) {
 
   if (method === "POST" && route === "/auth/login") {
     if (isAuthRateLimited(request, "auth_login")) return json({ error: "Too many requests. Please try again later." }, 429);
-    const email = String(body.email || "").trim().toLowerCase();
+    const identifier = String(body.identifier || body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
-    if (email.length > 254) return json({ error: "Email address too long" }, 400);
-    if (!isEmailAddress(email)) return json({ error: "Enter a valid email address" }, 400);
-    const loginLock = await getLoginFailureLockState(env, request, email);
+    if (!identifier || identifier.length > 254) return json({ error: "Enter a valid email or username" }, 400);
+    const loginLock = await getLoginFailureLockState(env, request, identifier);
     if (loginLock.locked) return json({ error: `Too many failed login attempts. Try again in ${loginLock.retryAfterSeconds}s.` }, 429);
     if (password.length > 256) return json({ error: "Password too long" }, 400);
-    const user = await getUserByEmail(env, email);
+    const user = await getUserByLoginIdentifier(env, identifier);
     if (user?.status === 'banned') return json({ error: 'Account access denied' }, 403);
     if (!user || !user.password_hash) {
-      await recordFailedLoginAttempt(env, request, email);
-      return json({ error: "Invalid email or password" }, 401);
+      await recordFailedLoginAttempt(env, request, identifier);
+      return json({ error: "Invalid email/username or password" }, 401);
     }
     const ok = await verifyPassword(password, user.password_hash);
     if (!ok) {
-      await recordFailedLoginAttempt(env, request, email);
-      return json({ error: "Invalid email or password" }, 401);
+      await recordFailedLoginAttempt(env, request, identifier);
+      return json({ error: "Invalid email/username or password" }, 401);
     }
 
-    await clearFailedLoginAttempts(env, request, email);
+    await clearFailedLoginAttempts(env, request, identifier);
     if (isLegacyPassword(user.password_hash)) {
       const upgraded = await hashPassword(password);
       await env.DB.prepare('update users set password_hash=? where id=? and password_hash=?').bind(upgraded, user.id, user.password_hash).run();
     }
     const session = await createSession(env, user.id);
-    await audit(env, user.id, "auth_login", { email: user.email }, request);
+    await audit(env, user.id, "auth_login", { method: isEmailAddress(identifier) ? 'email' : 'username' }, request);
     return json({ user: await userView(env, user, user), session }, 200);
   }
 
@@ -2363,6 +2364,17 @@ async function getUserByEmail(env, email) {
   return env.DB.prepare("select * from users where email = ? limit 1").bind(email).first();
 }
 
+async function getUserByLoginIdentifier(env, identifier) {
+  const value = String(identifier || '').trim().toLowerCase();
+  if (isEmailAddress(value)) {
+    if (value.endsWith('@system.local')) return null;
+    return getUserByEmail(env, value);
+  }
+  if (!value || value.includes('@') || value.length > MAX_NAME_LEN) return null;
+  const rows = await env.DB.prepare("select * from users where lower(trim(coalesce(english_name, ''))) = ? limit 2").bind(value).all();
+  return (rows.results || []).length === 1 ? rows.results[0] : null;
+}
+
 async function getUserById(env, idValue) {
   return env.DB.prepare("select * from users where id = ? limit 1").bind(idValue).first();
 }
@@ -2843,6 +2855,7 @@ async function userView(env, target, viewer, { includeSocialCounts = true } = {}
   };
 
   const canSeePrivate = viewer?.role === "admin" || viewer?.id === target.id;
+  if (String(target.email || '').toLowerCase().endsWith('@system.local')) delete safe.email;
   if (!canSeePrivate) {
     delete safe.email;
     delete safe.verificationVideo;

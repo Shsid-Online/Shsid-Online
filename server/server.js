@@ -1451,6 +1451,7 @@ function userView(target, viewer, followIndexes = null) {
   if (!safe) return null;
   safe.canModerateReports = canViewFlaggedReports(target);
   const canSeePrivate = viewer?.role === "admin" || viewer?.id === target.id;
+  if (String(target.email || '').toLowerCase().endsWith('@system.local')) delete safe.email;
   if (!canSeePrivate) {
     delete safe.email;
     delete safe.verificationVideo;
@@ -1843,16 +1844,16 @@ async function handleApi(req, res, url) {
   if (method === "POST" && url.pathname === "/api/auth/login") {
     const ip = getClientIp(req);
     if (!checkRateLimit(ip, "auth")) return sendJson(res, 429, { error: "Too many requests, please try again later" }, req);
-    const email = String(body.email || "").trim().toLowerCase();
-    if (!isEmailAddress(email)) return sendJson(res, 400, { error: "Enter a valid email address" }, req);
-    const loginStatus = getLoginFailureStatus(ip, email);
+    const identifier = String(body.identifier || body.email || "").trim().toLowerCase();
+    if (!identifier || identifier.length > 254) return sendJson(res, 400, { error: "Enter a valid email or username" }, req);
+    const loginStatus = getLoginFailureStatus(ip, identifier);
     if (loginStatus.locked) return sendJson(res, 429, { error: `Too many failed login attempts. Try again in ${loginStatus.retryAfterSeconds}s.` }, req);
-    const user = store.findUserByEmail(email);
+    const user = store.findUserByLoginIdentifier(identifier);
     if (!user || !user.passwordHash || !verifyPassword(String(body.password || ""), user.passwordHash)) {
-      recordFailedLogin(ip, email);
-      return sendJson(res, 401, { error: "Invalid email or password" }, req);
+      recordFailedLogin(ip, identifier);
+      return sendJson(res, 401, { error: "Invalid email/username or password" }, req);
     }
-    clearFailedLogin(ip, email);
+    clearFailedLogin(ip, identifier);
     if (!user.passwordHash.startsWith('scrypt$')) {
       user.passwordHash = hashPassword(String(body.password));
       store.save();

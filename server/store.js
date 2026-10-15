@@ -228,6 +228,17 @@ class Store {
     return this.indexes.usersByEmail.get(email) || null;
   }
 
+  findUserByLoginIdentifier(identifier) {
+    const value = String(identifier || '').trim().toLowerCase();
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      if (value.endsWith('@system.local')) return null;
+      return this.findUserByEmail(value);
+    }
+    if (!value || value.includes('@') || value.length > 100) return null;
+    const matches = this.data.users.filter(user => String(user.englishName || '').trim().toLowerCase() === value);
+    return matches.length === 1 ? matches[0] : null;
+  }
+
   audit(actorId, action, metadata = {}) {
     this.data.auditLogs.push({
       id: id("aud"),
