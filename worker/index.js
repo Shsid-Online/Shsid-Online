@@ -186,7 +186,7 @@ export default {
   async scheduled(controller, env, ctx) {
     const time = controller?.scheduledTime || Date.now();
     ctx.waitUntil(runAdminAccountMigration(env).catch(() => console.error('Admin account migration deferred; retrying on the next scheduled tick.')));
-    ctx.waitUntil(runPostCleanup(env).catch(() => console.error('Requested post cleanup deferred; retrying on the next scheduled tick.')));
+    ctx.waitUntil(runPostCleanup(env).catch(error => console.error('Requested post cleanup deferred:', String(error.message || 'Unknown database error'))));
     ctx.waitUntil((async () => {
       if (await env.SESSIONS.get('security:migration-v2-complete')) return;
       await ensureReadIndexes(env.DB);

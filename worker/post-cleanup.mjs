@@ -14,7 +14,8 @@ export async function runPostCleanup(env) {
         (trim(coalesce(title, '')) = '' OR lower(trim(title)) = 'gay' OR
           (lower(trim(title)) GLOB 'gay #[0-9]*' AND substr(trim(title), 6) NOT GLOB '*[^0-9]*'))) OR
       lower(trim(coalesce(text, ''))) = 'automated spam poc — delete me' OR
-      lower(trim(coalesce(text, ''))) GLOB 'stress [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]* #[0-9]*/* please ignore, will delete')`)
+      (instr(lower(trim(coalesce(text, ''))), 'stress 20261014-144037-fb97ba53 #') = 1
+       AND substr(trim(text), -length('please ignore, will delete')) = 'please ignore, will delete'))`)
     .bind(deletedAt, CLEANUP_PHRASE, CLEANUP_PHRASE).run();
   if (result.success === false) throw new Error('Post cleanup did not succeed');
   clearReadCache(env.DB);
