@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BoardAbuseGuard } from '../worker/global-guard.mjs';
-import { protectRequest } from '../worker/abuse-protection.mjs';
+import { protectRequest, rejectDuplicate } from '../worker/abuse-protection.mjs';
 import worker from '../worker/index.js';
 
 function state() {
@@ -10,6 +10,37 @@ function state() {
   return { storage: { transaction(fn) { const pending = tail.then(() => fn(tx)); tail = pending.catch(() => {}); return pending; } }, data };
 }
 const request = kind => new Request(`https://guard/${kind}`);
+test('global duplicates persist across time, clients, counters and object restarts', async () => {
+  const s = state();
+  const allow = { limit: async () => ({ success: true }) };
+  const env = { DUPLICATE_RATE_LIMIT: allow, GLOBAL_GUARD: {
+    idFromName: name => name, get: () => ({ fetch: req => new BoardAbuseGuard(s).fetch(req) })
+  } };
+  const originalNow = Date.now;
+  let time = originalNow(); Date.now = () => time;
+  const req = ip => new Request('https://www.shsid.online/api/posts', { headers: { 'CF-Connecting-IP': ip } });
+  try {
+    const results = await Promise.all(Array.from({length: 8}, (_, i) => rejectDuplicate(env, '/posts', { text: 'Repeated campaign', title: `spam #${i}` }, req(`192.0.2.${i}`))));
+    assert.equal(results.filter(r => r === null).length, 1);
+    time += 3600000;
+    assert.equal((await rejectDuplicate(env, '/posts', { text: 'Repeated\u200b campaign', title: 'different' }, req('192.0.2.55'))).status, 429);
+    assert.equal((await rejectDuplicate(env, '/posts', { text: ' REPEATED   CAMPAIGN!!!', title: 'different' }, req('192.0.2.56'))).status, 429);
+    time += 86400001;
+    assert.equal(await rejectDuplicate(env, '/posts', { text: 'Repeated campaign' }, req('192.0.2.1')), null);
+  } finally { Date.now = originalNow; }
+});
+test('sustained distinct submissions share a persistent client budget across endpoints', async () => {
+  const s = state(); const originalNow = Date.now; let time = originalNow(); Date.now = () => time;
+  const client = 'a'.repeat(64);
+  const submit = n => new BoardAbuseGuard(s).fetch(new Request('https://guard/submission', { method:'POST', body:JSON.stringify({ client, fingerprint:n.toString(16).padStart(64,'0') }) }));
+  try {
+    for(let i=0;i<5;i++) { assert.equal((await submit(i)).status,204); time+=30000; }
+    assert.equal((await submit(5)).status,429);
+    time+=360000;
+    assert.equal((await submit(6)).status,204);
+    assert.equal((await new BoardAbuseGuard(s).fetch(request('read'))).status,204);
+  } finally { Date.now=originalNow; }
+});
 test('concurrent distributed submissions share one budget, persisted across restarts', async () => {
   const s = state(); const guard = new BoardAbuseGuard(s);
   const results = await Promise.all(Array.from({ length: 30 }, () => guard.fetch(request('content'))));

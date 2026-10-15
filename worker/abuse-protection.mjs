@@ -41,7 +41,7 @@ export function rejection(status, error) {
   } });
 }
 
-export async function rejectDuplicate(env, route, body) {
+export async function rejectDuplicate(env, route, body, request) {
   const content = JSON.stringify([route, String(body.title || '').trim().toLowerCase(),
     String(body.text || '').trim().toLowerCase(), body.media || [], body.replyTo || '', body.quoteRef || null]);
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
@@ -50,5 +50,21 @@ export async function rejectDuplicate(env, route, body) {
   if (!(await env.DUPLICATE_RATE_LIMIT.limit({ key })).success) {
     return rejection(429, 'This was recently submitted. Check the board before posting again.');
   }
+  if (!env.GLOBAL_GUARD) return rejection(503, 'Protection temporarily unavailable.');
+  // Fingerprint meaningful text, not attacker-controlled metadata or counters.
+  const normalize = value => String(value || '').normalize('NFKC').toLowerCase()
+    .replace(/[\u200B-\u200F\u2060\uFEFF]/g, '').replace(/#\s*\d+/g, '')
+    .replace(/[\p{P}\p{Z}\s]+/gu, ' ').trim();
+  const text = normalize(body.text);
+  const title = normalize(body.title);
+  const canonical = JSON.stringify([route, body.replyTo || '', text || title || body.media || []]);
+  const hash = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))), b => b.toString(16).padStart(2, '0')).join('');
+  try {
+    const guard = env.GLOBAL_GUARD.get(env.GLOBAL_GUARD.idFromName('board-budget-v1'));
+    const response = await guard.fetch(new Request('https://guard/submission', { method: 'POST', body: JSON.stringify({
+      fingerprint: await hash(canonical), client: await hash(request?.headers.get('CF-Connecting-IP') || 'unknown')
+    }) }));
+    if (response.status !== 204) return rejection(response.status === 429 ? 429 : 503, 'Repeated submission or posting limit reached. Please wait before posting again.');
+  } catch { return rejection(503, 'Protection temporarily unavailable.'); }
   return null;
 }

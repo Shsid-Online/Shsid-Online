@@ -13,6 +13,7 @@ function compact(value) {
 function blockedPostReason(title, text) {
   const normalizedTitle = normalize(title);
   const normalizedText = normalize(text);
+  if (compact(normalizedText) === compact('sniped by 张永臻，u L guys s my dik')) return 'automated_spam';
   if (compact(`${normalizedTitle} ${normalizedText}`).includes(BLOCKED_CHINESE_PHRASE)) return 'blocked_phrase';
   const nonEmptyParts = [normalizedTitle, normalizedText].filter(Boolean);
   if (nonEmptyParts.length && nonEmptyParts.every(part => /^gay(?:\s*#\d+)?$/.test(part))) return 'single_word_spam';

@@ -321,7 +321,7 @@ async function handleApi(request, env, url, route) {
     return json({ error: 'This account requires administrator-assisted credential recovery.' }, 403);
   }
   if (method === 'POST' && (route === '/posts' || /^\/posts\/[^/]+\/comments$/.test(route))) {
-    const duplicate = await rejectDuplicate(env, route, body);
+    const duplicate = await rejectDuplicate(env, route, body, request);
     if (duplicate) return duplicate;
   }
 

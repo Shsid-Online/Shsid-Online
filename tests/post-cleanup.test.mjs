@@ -17,6 +17,7 @@ test('real SQL removes only matching live posts and preserves comments and prior
     insert.run('stress', '', 'STRESS 20261014-144037-fb97ba53 #54/100 please ignore, will delete', null);
     insert.run('numbered-safe', 'GAY #384 discussion', 'GAY', null);
     insert.run('hacked-spam', 'YOU ARE HACKED #527', 'FUCK YOU UR HACKED', null);
+    insert.run('new-campaign', '', 'sniped by 张永臻，u L guys s my dik', null);
     insert.run('gay-sentence', '', 'I am gay', null);
     insert.run('safe', '马校长', '万岁', null);
     insert.run('nulls', null, null, null);
@@ -24,7 +25,7 @@ test('real SQL removes only matching live posts and preserves comments and prior
     db.prepare('INSERT INTO comments VALUES (?)').run('马校长万岁');
     const env = { SESSIONS: { get: async k => markers.get(k), put: async (k,v) => markers.set(k,v) },
       DB: { prepare(sql) { return { bind(...args) { return { run: async () => ({success:true,meta:{changes:db.prepare(sql).run(...args).changes}}) }; } }; } } };
-    assert.equal((await runPostCleanup(env)).matchedPosts, 8);
+    assert.equal((await runPostCleanup(env)).matchedPosts, 9);
     assert.deepEqual(db.prepare('SELECT id FROM posts WHERE deleted_at IS NULL ORDER BY id').all().map(r => r.id), ['gay-sentence','nulls','numbered-safe','safe']);
     assert.equal(db.prepare("SELECT deleted_at FROM posts WHERE id='deleted'").get().deleted_at, 'old-timestamp');
     assert.equal(db.prepare('SELECT count(*) AS n FROM comments').get().n, 1);

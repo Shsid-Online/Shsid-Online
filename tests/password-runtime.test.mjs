@@ -15,13 +15,16 @@ test('real R2 conditional writes prevent concurrent upload replacements', async 
 
 test('global limiter runs with real SQLite Durable Object storage', async () => {
   const mf = new Miniflare({ compatibilityDate: '2026-05-08', durableObjects: { GLOBAL_GUARD: { className: 'BoardAbuseGuard', useSQLite: true } }, modules: [
-    { type: 'ESModule', path: 'entry.mjs', contents: `export {BoardAbuseGuard} from './global-guard.mjs'; export default {fetch(request,env) { return env.GLOBAL_GUARD.get(env.GLOBAL_GUARD.idFromName('test')).fetch('https://guard/content'); }};` },
+    { type: 'ESModule', path: 'entry.mjs', contents: `export {BoardAbuseGuard} from './global-guard.mjs'; export default {fetch(request,env) { return env.GLOBAL_GUARD.get(env.GLOBAL_GUARD.idFromName('test')).fetch(request.method === 'POST' ? new Request('https://guard/submission', request) : 'https://guard/content'); }};` },
     ...await Promise.all(['global-guard.mjs', 'abuse-protection.mjs'].map(async name => ({ type: 'ESModule', path: name, contents: await readFile(new URL('../worker/' + name, import.meta.url), 'utf8') })))
   ] });
   try {
     const responses = await Promise.all(Array.from({ length: 25 }, () => mf.dispatchFetch('https://test.invalid/')));
     assert.equal(responses.filter(r => r.status === 204).length, 20);
     assert.equal(responses.filter(r => r.status === 429).length, 5);
+    const submissions = await Promise.all(Array.from({ length: 8 }, (_, i) => mf.dispatchFetch('https://test.invalid/', { method: 'POST', body: JSON.stringify({ fingerprint: 'a'.repeat(64), client: i.toString(16).padStart(64, '0') }) })));
+    assert.equal(submissions.filter(r => r.status === 204).length, 1);
+    assert.equal(submissions.filter(r => r.status === 429).length, 7);
   } finally { await mf.dispose(); }
 });
 
