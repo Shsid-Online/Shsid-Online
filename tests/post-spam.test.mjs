@@ -25,4 +25,6 @@ test('numbered spam and automated test batches are blocked', () => {
   assert.equal(blockedPostReason('', 'STRESS 20261014-144037-fb97ba53 #54/100 please ignore, will delete'), 'automated_spam');
   assert.equal(blockedPostReason('GAY #384 discussion', 'GAY'), '');
   assert.equal(blockedPostReason('', 'stress about exams'), '');
+  assert.equal(blockedPostReason('YOU ARE HACKED #527', 'FUCK YOU UR HACKED'), 'automated_spam');
+  assert.equal(blockedPostReason('Were you hacked?', 'How do I secure my account?'), '');
 });
