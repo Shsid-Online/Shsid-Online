@@ -69,3 +69,20 @@ test('signed upload replay is rejected with an atomic conditional storage write'
   const put = () => worker.fetch(new Request(signed.uploadUrl, { method: 'PUT', body: 'abc', headers: { 'Content-Type': 'image/png', 'Content-Length': '3' } }), s.env);
   assert.equal((await put()).status, 200); assert.equal((await put()).status, 409); assert.equal(writes, 1);
 });
+
+test('public synthetic owner token cannot delete existing automatic posts', async () => {
+  const s = setup();
+  s.env.DB.prepare = () => { throw new Error('Unauthorized delete reached database'); };
+  const response = await worker.fetch(new Request('https://www.shsid.online/api/posts/fake', {method:'DELETE',headers:{'X-Board-Owner-Token':'autopost:board-synthetic-seed-v1'}}),s.env);
+  assert.equal(response.status,401);
+});
+test('anonymous Q&A and reel comments hide identity from other viewers', async () => {
+  const s=setup();
+  s.env.DB.prepare=sql=>({bind(){return this},run:async()=>({}),
+    first:async()=>sql.includes('from reels')?{id:'reel'}:s.user,
+    all:async()=>({results:sql.includes('from reel_comments')?[{id:'comment',reel_id:'reel',author_id:'private-person',anonymous:1}]:sql.includes('from qna')?[{id:'question',profile_id:'viewer',asker_id:'private-person',anonymous:1}]:[]})});
+  for(const path of ['reels/reel/comments','users/viewer/qna']) {
+    const response=await s.call(path); assert.equal(response.status,200);
+    assert.equal(JSON.stringify(await response.json()).includes('private-person'),false);
+  }
+});

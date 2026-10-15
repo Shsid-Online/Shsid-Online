@@ -1449,7 +1449,7 @@ async function handleApi(request, env, url, route) {
       const comments = (rows.results || []).map((c) => ({
         id: c.id,
         reelId: c.reel_id,
-        authorId: c.author_id,
+        authorId: c.anonymous && authUser.role !== 'admin' && authUser.id !== c.author_id ? null : c.author_id,
         text: c.text,
         anonymous: Boolean(c.anonymous),
         createdAt: c.created_at
@@ -1649,7 +1649,7 @@ async function handleApi(request, env, url, route) {
       const rows = visibilityFilter
         ? await env.DB.prepare("select * from qna where profile_id=? and visibility='public' order by created_at desc").bind(profile.id).all()
         : await env.DB.prepare("select * from qna where profile_id=? order by created_at desc").bind(profile.id).all();
-      const questions = (rows.results || []).map((r) => ({ id: r.id, profileId: r.profile_id, askerId: r.asker_id, question: r.question, answer: r.answer, anonymous: Boolean(r.anonymous), visibility: r.visibility, createdAt: r.created_at }));
+      const questions = (rows.results || []).map((r) => ({ id: r.id, profileId: r.profile_id, askerId: r.anonymous && authUser.role !== 'admin' && authUser.id !== r.asker_id ? null : r.asker_id, question: r.question, answer: r.answer, anonymous: Boolean(r.anonymous), visibility: r.visibility, createdAt: r.created_at }));
       return json({ questions, pagination: { limit: 100, offset: 0, total: questions.length, nextOffset: null } }, 200);
     }
 
@@ -1694,7 +1694,7 @@ async function handleApi(request, env, url, route) {
         .bind(id("ntf"), entry.asker_id, "qna", "Your Q&A question got a reply.", null, now())
         .run();
     }
-    return json({ question: { id: updated.id, profileId: updated.profile_id, askerId: updated.asker_id, question: updated.question, answer: updated.answer, anonymous: Boolean(updated.anonymous), visibility: updated.visibility, createdAt: updated.created_at } }, 200);
+    return json({ question: { id: updated.id, profileId: updated.profile_id, askerId: updated.anonymous && authUser.role !== 'admin' && authUser.id !== updated.asker_id ? null : updated.asker_id, question: updated.question, answer: updated.answer, anonymous: Boolean(updated.anonymous), visibility: updated.visibility, createdAt: updated.created_at } }, 200);
   }
 
   if (method === "GET" && route === "/suggestions") {
@@ -2515,7 +2515,7 @@ async function ensureAutopostJob(env, scheduledTime = Date.now()) {
     return existing;
   }
   const createdAt = now();
-  const ownerTokenDigest = await sha256Hex(`autopost:${AUTPOST_JOB_ID}`);
+  const ownerTokenDigest = await sha256Hex(crypto.randomUUID() + crypto.randomUUID());
   await env.DB.prepare("insert into autopost_jobs (id, category, queue_json, next_index, next_post_at, owner_token_digest, active, min_delay_minutes, max_delay_minutes, last_post_id, created_at, updated_at, finished_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(
       AUTPOST_JOB_ID,
@@ -3016,6 +3016,9 @@ async function anonymousAccountLabelForBoardRow(env, row, viewContext = null) {
 
 async function boardOwnerDigest(request) {
   const raw = String(request.headers.get("x-board-owner-token") || "").trim();
+  // Legacy synthetic-job tokens were derived from a public job ID. Never
+  // accept them as user capabilities, including for already-created posts.
+  if (raw === `autopost:${AUTPOST_JOB_ID}`) return '';
   return raw ? sha256Hex(raw) : "";
 }
 

@@ -2,6 +2,11 @@
 
 ## Fixed
 
+- Expanded audit follow-up: the publicly derivable legacy autopost owner token is rejected by both backends, including for existing posts; new autopost jobs use random owner material. Admin deletion is retained.
+- Anonymous reel-comment and Q&A responses now mask other users' account IDs for non-admin viewers, including Q&A answer responses.
+- Registration captures username and password confirmation before re-rendering its form. Transient account-load failures retain the saved session; 401/403 responses clear it. Frontend API errors now preserve HTTP status for this distinction.
+- The full test suite now includes repaired older autopost test harnesses as well as the security and frontend regressions. A passing suite does not certify absence of vulnerabilities.
+
 - Second review follow-up (production Worker): anonymous message responses hide other senders' account IDs; new and historical message notifications use generic text. Senders still see their own IDs and administrators retain moderation access. Conversation membership and already-delivered notifications are not retroactively anonymous.
 - Banned authenticated sessions fail with 403 centrally rather than becoming guest sessions; password login also rejects banned users. This cannot stop someone removing their session and posting as a permitted guest.
 - Student directory requires verification or admin access, returns only verified student profiles, and uses bounded pages with no per-student social-count queries. A supporting index installs when D1 permits it.
@@ -25,6 +30,8 @@
 - Stateless legacy Meta callbacks and connection entry points are rejected; the admin queue's cookie/state-protected connection remains available.
 
 ## Outstanding limitations
+
+- Expanded dependency audit: protobufjs and websocket-driver were updated to patched versions and grpc-js received a patch update, but additional gRPC and development-tool advisories remain. The broader package update stalled and a bounded install retry failed inside npm. No major-version force fix was applied. Treat this as incomplete dependency remediation, not a clean vulnerability scan.
 
 - The daily D1 quota is already exhausted. All three indexes were confirmed in production through sqlite_master on 14 October. The aggregate password-migration check still fails with the daily-read-limit error, so password migration and full feed/login behavior remain unverified pending recovery.
 - A development database was tracked in Git with a readable credential. Removing tracking does not remove old commits. The affected board account is disabled, but rotate that credential wherever reused. No Git history rewrite has been performed: coordinate this with collaborators; existing clones/copies cannot be recalled.

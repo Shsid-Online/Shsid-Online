@@ -676,7 +676,7 @@ function ensureAutopostJob() {
     entries: defaultAutopostQueueEntries(),
     nextIndex: 0,
     nextPostAt: "",
-    ownerTokenDigest: tokenDigest(`autopost:${AUTPOST_JOB_ID}`),
+    ownerTokenDigest: tokenDigest(crypto.randomUUID() + crypto.randomUUID()),
     active: false,
     minDelayMinutes: AUTPOST_MIN_DELAY_MINUTES,
     maxDelayMinutes: AUTPOST_MAX_DELAY_MINUTES,
@@ -932,6 +932,7 @@ function anonymousAccountLabelForBoardItem(item, viewContext = null) {
 
 function boardOwnerDigest(req) {
   const raw = String(req.headers["x-board-owner-token"] || "").trim();
+  if (raw === `autopost:${AUTPOST_JOB_ID}`) return '';
   return raw ? tokenDigest(raw) : "";
 }
 

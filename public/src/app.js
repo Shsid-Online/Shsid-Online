@@ -455,7 +455,7 @@ async function apiRequest(path, { method = "GET", body, auth = true, optionalAut
     payload = {};
   }
   if (!response.ok) {
-    throw new Error(payload.error || "Request failed");
+    throw Object.assign(new Error(payload.error || "Request failed"), { status: response.status });
   }
   return payload;
 }
@@ -473,7 +473,7 @@ async function fetchCurrentUser() {
     const result = await apiRequest("/me", { optionalAuth: true, timeoutMs: 15000 });
     state.currentUser = result.user || null;
   } catch (error) {
-    state.token = "";
+    if (error.status === 401 || error.status === 403) state.token = "";
     state.currentUser = null;
     if (String(error.message || "").toLowerCase().includes("banned")) {
       toast("This account can no longer sign in.");
@@ -1251,13 +1251,13 @@ async function submitPassword(event) {
   event.preventDefault();
   if (authBusy) return;
   const password = String(document.querySelector("#auth-password")?.value || "");
+  const username = normalizeUsernameInput(document.querySelector("#auth-username")?.value || "");
+  const confirm = String(document.querySelector("#auth-password-confirm")?.value || "");
   if (!password) return toast("Please enter a password");
   authBusy = true;
   render();
   try {
     if (state.authMode === "register") {
-      const username = normalizeUsernameInput(document.querySelector("#auth-username")?.value || "");
-      const confirm = String(document.querySelector("#auth-password-confirm")?.value || "");
       const usernameError = reservedUsernameMessage(username);
       if (usernameError) throw new Error(usernameError);
       if (!confirm) throw new Error("Please confirm your password");
