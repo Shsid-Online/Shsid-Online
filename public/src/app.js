@@ -104,8 +104,12 @@ function loadState() {
   return base;
 }
 
+let lastSavedState = "";
+let searchRenderTimer = null;
+let postsScrollFrame = null;
+
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+  const serialized = JSON.stringify({
     token: state.token,
     currentUser: state.currentUser,
     board: state.board,
@@ -120,7 +124,14 @@ function saveState() {
     pendingEmail: state.pendingEmail,
     pendingCode: state.pendingCode,
     pendingUsername: state.pendingUsername
-  }));
+  });
+  if (serialized === lastSavedState) return;
+  try {
+    localStorage.setItem(STORAGE_KEY, serialized);
+    lastSavedState = serialized;
+  } catch {
+    // Storage may be full or disabled; keep the current session usable.
+  }
 }
 
 function clearAutopostCountdownTimer() {
@@ -594,6 +605,14 @@ function maybeLoadMorePosts() {
     : window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1200;
   if (!nearBottom) return;
   loadNextPostsPage();
+}
+
+function schedulePostsScrollCheck() {
+  if (postsScrollFrame !== null) return;
+  postsScrollFrame = requestAnimationFrame(() => {
+    postsScrollFrame = null;
+    maybeLoadMorePosts();
+  });
 }
 
 function bindPostsLoadObserver() {
@@ -1831,6 +1850,8 @@ function renderNotificationBell() {
 }
 
 function render() {
+  clearTimeout(searchRenderTimer);
+  searchRenderTimer = null;
   const app = document.querySelector("#app");
   const posts = filteredPosts();
   const activeBoard = state.board === "all" ? null : boardMeta(state.board);
@@ -2008,18 +2029,27 @@ function bindEvents() {
     render();
   });
 
-  document.querySelector("#search-input")?.addEventListener("input", (event) => {
-    const cursorStart = event.target.selectionStart;
-    const cursorEnd = event.target.selectionEnd;
+  const handleSearchInput = (event) => {
     state.search = String(event.target.value || "");
-    saveState();
-    render();
-    const searchInput = document.querySelector("#search-input");
-    searchInput?.focus();
-    if (searchInput && cursorStart !== null && cursorEnd !== null) {
-      searchInput.setSelectionRange(cursorStart, cursorEnd);
-    }
-  });
+    clearTimeout(searchRenderTimer);
+    if (event.isComposing) return;
+    const input = event.target;
+    searchRenderTimer = setTimeout(() => {
+      searchRenderTimer = null;
+      const restoreFocus = document.activeElement === input;
+      const cursorStart = input.selectionStart;
+      const cursorEnd = input.selectionEnd;
+      saveState();
+      render();
+      const searchInput = document.querySelector("#search-input");
+      if (restoreFocus && searchInput) {
+        searchInput.focus({ preventScroll: true });
+        if (cursorStart !== null && cursorEnd !== null) searchInput.setSelectionRange(cursorStart, cursorEnd);
+      }
+    }, 180);
+  };
+  document.querySelector("#search-input")?.addEventListener("input", handleSearchInput);
+  document.querySelector("#search-input")?.addEventListener("compositionend", handleSearchInput);
 
   document.querySelector("#sort-filter")?.addEventListener("change", (event) => {
     state.sort = String(event.target.value || "recent") === "trending" ? "trending" : "recent";
@@ -2585,7 +2615,9 @@ async function initialize() {
   await fetchPosts();
   saveState();
   render();
-  window.addEventListener("scroll", maybeLoadMorePosts, { passive: true });
+  if (!("IntersectionObserver" in window)) {
+    window.addEventListener("scroll", schedulePostsScrollCheck, { passive: true });
+  }
   requestAnimationFrame(maybeLoadMorePosts);
   void Promise.allSettled([
     fetchNotifications(),
