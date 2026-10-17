@@ -103,3 +103,25 @@ test('apex board API stays on the same host for browser clearance', () => {
   vm.runInContext(source, context);
   assert.equal(vm.runInContext('API_BASE', context), 'https://shsid.online/api');
 });
+
+test('verification configuration failure never sends or retries a post', async () => {
+  const u=ui(); const calls=[];
+  u.context.fetch=async (url,options)=>{calls.push([url,options.method]);return Response.json({error:'temporarily unavailable'},{status:503});};
+  u.run('state.composerBody="unsent draft";');
+  await assert.rejects(u.run('apiRequest("/posts",{method:"POST",body:{text:"unsent draft"}})'),/temporarily unavailable/);
+  assert.equal(calls.length,1);
+  assert.match(calls[0][0],/\/posting-config$/);
+  assert.equal(calls[0][1],'GET');
+  assert.equal(u.run('state.composerBody'),'unsent draft');
+});
+
+test('staged rollout submits once and never replays a failed write', async () => {
+  const u=ui();const calls=[];
+  u.context.fetch=async (url,options)=>{
+    calls.push([url,options.method]);
+    if(url.endsWith('/posting-config')) return Response.json({required:false,siteKey:''});
+    throw Error('network changed');
+  };
+  await assert.rejects(u.run('apiRequest("/posts",{method:"POST",body:{text:"draft"}})'),/network changed/);
+  assert.deepEqual(calls.map(c=>c[1]),['GET','POST']);
+});

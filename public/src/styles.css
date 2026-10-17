@@ -1092,3 +1092,19 @@ main.thread-list > .thread-card:nth-child(even) {
 .autopost-editor-controls:disabled {
   opacity: 0.75;
 }
+.submission-check {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  max-width: calc(100vw - 2rem);
+  padding: .8rem;
+  color: #182033;
+  background: #fff;
+  border: 1px solid #b7c3d6;
+  border-radius: .5rem;
+  box-shadow: 0 3px 16px #18203322;
+}

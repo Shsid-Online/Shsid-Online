@@ -1,5 +1,5 @@
 // Cloudflare's counters are shared across isolates in a location, without D1/KV reads.
-export async function protectRequest(request, env, route) {
+export async function protectRequest(request, env, route, { deferContentBudget = false } = {}) {
   if (route === '/health' || request.method === 'OPTIONS') return null;
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
   const isWrite = !['GET', 'HEAD'].includes(request.method);
@@ -9,7 +9,7 @@ export async function protectRequest(request, env, route) {
     (route === '/posts' || /^\/posts\/[^/]+\/comments$/.test(route));
   if (isContent) {
     checks.push([env.POST_RATE_LIMIT, `ip:${ip}`]);
-    const owner = request.headers.get('X-Board-Owner-Token');
+    const owner = env.SUBMISSION_VERIFICATION === 'required' ? null : request.headers.get('X-Board-Owner-Token');
     if (owner) checks.push([env.POST_RATE_LIMIT, `owner:${owner.slice(0, 256)}`]);
   }
   for (const [binding, key] of checks) {
@@ -17,6 +17,14 @@ export async function protectRequest(request, env, route) {
     if (!binding) return rejection(503, 'Protection temporarily unavailable. Please try again shortly.');
     if (!(await binding.limit({ key })).success) return rejection(429, 'Too many requests. Please wait a minute and try again.');
   }
+  // Missing/replayed verification must not consume the shared database budget.
+  if ((isContent && deferContentBudget) || (request.method === 'GET' && route === '/posting-config')) return null;
+  return protectGlobalBudget(request, env, route);
+}
+
+export async function protectGlobalBudget(request, env, route) {
+  const isWrite = !['GET', 'HEAD'].includes(request.method);
+  const isContent = request.method === 'POST' && (route === '/posts' || /^\/posts\/[^/]+\/comments$/.test(route));
   // Media reads do not hit D1 unless they require private-media authorization.
   if (['GET', 'HEAD'].includes(request.method) && route.startsWith('/media/uploads')) return null;
   if (!env.GLOBAL_GUARD) return rejection(503, 'Protection temporarily unavailable.');
@@ -41,7 +49,7 @@ export function rejection(status, error) {
   } });
 }
 
-export async function rejectDuplicate(env, route, body, request) {
+export async function rejectDuplicate(env, route, body, request, verifiedVisitor) {
   if (String(body.text || '').trim().length > 10000 || String(body.title || '').trim().length > 200) {
     return rejection(400, 'Post text or title is too long.');
   }
@@ -65,7 +73,7 @@ export async function rejectDuplicate(env, route, body, request) {
     const guard = env.GLOBAL_GUARD.get(env.GLOBAL_GUARD.idFromName('board-budget-v1'));
     const response = await guard.fetch(new Request('https://guard/submission', { method: 'POST', body: JSON.stringify({
       fingerprint, client: await hash(request?.headers.get('CF-Connecting-IP') || 'unknown'),
-      owner: request?.headers.get('X-Board-Owner-Token')
+      owner: verifiedVisitor ? await hash(`verified:${verifiedVisitor}`) : request?.headers.get('X-Board-Owner-Token')
         ? await hash(request.headers.get('X-Board-Owner-Token').slice(0, 256)) : undefined
     }) }));
     if (response.status !== 204) return rejection(response.status === 429 ? 429 : 503, 'Repeated submission or posting limit reached. Please wait before posting again.');

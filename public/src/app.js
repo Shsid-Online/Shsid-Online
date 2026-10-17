@@ -447,6 +447,13 @@ function checkBrowserChallenge(response) {
 
 async function apiRequest(path, { method = "GET", body, auth = true, optionalAuth = false, timeoutMs } = {}) {
   const headers = { "Content-Type": "application/json" };
+  if (method === 'POST' && (path === '/posts' || /^\/posts\/[^/]+\/comments$/.test(path))) {
+    const config = await apiRequest('/posting-config', { auth: false, timeoutMs: 10000 });
+    if (config.required) {
+      const { submissionToken } = await import('./submission-verification.mjs?v=20261017');
+      headers['X-Submission-Token'] = await submissionToken(config.siteKey, path === '/posts' ? 'post' : 'comment');
+    }
+  }
   if (state.boardOwnerToken) headers["X-Board-Owner-Token"] = state.boardOwnerToken;
   if ((auth || optionalAuth) && state.token) {
     headers.Authorization = `Bearer ${state.token}`;
@@ -483,7 +490,7 @@ async function apiRequest(path, { method = "GET", body, auth = true, optionalAut
     const message = quotaExhausted
       ? "The board has reached its daily hosting limit. Please return after 00:00 UTC when the allowance resets. Refreshing repeatedly will not restore it sooner."
       : payload?.error || (response.status === 429 ? "Too many requests. Please wait a little before trying again." : "Request failed");
-    throw Object.assign(new Error(message), { status: response.status });
+    throw Object.assign(new Error(message), { status: response.status, code: payload?.code });
   }
   return payload;
 }

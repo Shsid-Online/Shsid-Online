@@ -1,6 +1,7 @@
 import { d1Queue, cleanedQueue, queueView, queueAction, runQueue } from "../server/instagram-queue.mjs";
 import { loginUrl, exchangeConnection, mediaKey } from "../server/instagram-auth.mjs";
-import { protectRequest, rejectDuplicate, rejection } from "./abuse-protection.mjs";
+import { protectRequest, protectGlobalBudget, rejectDuplicate, rejection } from "./abuse-protection.mjs";
+import { submissionAction, verificationEnabled, verifySubmission } from "./submission-verification.mjs";
 export { BoardAbuseGuard } from './global-guard.mjs';
 import { feedSnapshot } from './feed-snapshot.mjs';
 import { runPostCleanup } from './post-cleanup.mjs';
@@ -167,11 +168,23 @@ export default {
     }
 
     try {
-      const blocked = await protectRequest(request, env, route);
+      const action = submissionAction(request.method, route);
+      const verify = Boolean(action && verificationEnabled(env));
+      const blocked = await protectRequest(request, env, route, { deferContentBudget: verify });
       if (blocked) return withCors(blocked, origin);
-      const response = await handleApi(request, env, url, route, origin);
+      const verification = verify ? await verifySubmission(request, env, action) : {};
+      if (verification.response) return withCors(verification.response, origin);
+      const attachVisitor = response => {
+        if (verification.cookie) response.headers.append('Set-Cookie', verification.cookie);
+        return withCors(response, origin);
+      };
+      if (verify) {
+        const budget = await protectGlobalBudget(request, env, route);
+        if (budget) return attachVisitor(budget);
+      }
+      const response = await handleApi(request, env, url, route, origin, verification.visitor);
       if (!['GET', 'HEAD'].includes(request.method) && response.ok) clearReadCache(env.DB);
-      return withCors(response, origin);
+      return attachVisitor(response);
     } catch (error) {
       if (error.status === 403) return withCors(json({ error: 'Account access denied' }, 403), origin);
       console.error('API request failed', { category: String(error.message || '').includes('daily row read limit') ? 'database_quota' : 'request_error' });
@@ -309,8 +322,11 @@ async function instagramCredentials(env) {
   return stored && stored.expiresAt > Date.now() ? stored : null;
 }
 
-async function handleApi(request, env, url, route) {
+async function handleApi(request, env, url, route, origin, verifiedVisitor) {
   const method = request.method || "GET";
+  if (method === 'GET' && route === '/posting-config') {
+    return Response.json({ required: verificationEnabled(env), siteKey: env.TURNSTILE_SITE_KEY || '' }, { headers: { 'Cache-Control': 'no-store' } });
+  }
   const isBinaryUploadPut = method === "PUT" && (
     route.startsWith("/upload/") ||
     route.startsWith("/verification-upload/") ||
@@ -322,7 +338,7 @@ async function handleApi(request, env, url, route) {
   }
   if (method === 'POST' && (route === '/posts' || /^\/posts\/[^/]+\/comments$/.test(route))) {
     if (blockedPostReason(route === '/posts' ? body.title : '', body.text)) return json({ error: 'This submission matches a blocked spam pattern' }, 400);
-    const duplicate = await rejectDuplicate(env, route, body, request);
+    const duplicate = await rejectDuplicate(env, route, body, request, verifiedVisitor);
     if (duplicate) return duplicate;
   }
 
@@ -3473,7 +3489,7 @@ function withCors(response, origin) {
     headers.set("access-control-allow-credentials", "true");
   }
   headers.set("access-control-allow-methods", "GET,HEAD,POST,PATCH,DELETE,OPTIONS");
-  headers.set("access-control-allow-headers", "Content-Type, Authorization, Range, X-Board-Owner-Token");
+  headers.set("access-control-allow-headers", "Content-Type, Authorization, Range, X-Board-Owner-Token, X-Submission-Token");
   headers.set("vary", "Origin");
   return new Response(response.body, { status: response.status, headers });
 }

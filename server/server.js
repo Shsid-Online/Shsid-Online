@@ -6,6 +6,7 @@ const path = require("node:path");
 const tls = require("node:tls");
 const instagramModules = Promise.all([import("./instagram-queue.mjs"), import("./instagram-auth.mjs")]);
 const instagramStates = new Map();
+const submissionVerification = import('../worker/submission-verification.mjs');
 
 function instagramCredentials() {
   if (process.env.INSTAGRAM_ACCESS_TOKEN && process.env.INSTAGRAM_USER_ID) return { token: process.env.INSTAGRAM_ACCESS_TOKEN, userId: process.env.INSTAGRAM_USER_ID };
@@ -184,6 +185,7 @@ function loadEnvFile(filePath) {
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
@@ -207,8 +209,8 @@ const commonHeaders = {
   "x-xss-protection": "1; mode=block",
   "strict-transport-security": "max-age=31536000; includeSubDomains",
   "access-control-allow-methods": "GET,HEAD,POST,PATCH,DELETE,OPTIONS",
-  "access-control-allow-headers": "Content-Type,Authorization,Range,X-Board-Owner-Token",
-  "content-security-policy": "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; img-src 'self' data: https: blob:; media-src 'self' https: blob:; connect-src 'self' https://www.shsid.online https://shsid.online; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'self'"
+  "access-control-allow-headers": "Content-Type,Authorization,Range,X-Board-Owner-Token,X-Submission-Token",
+  "content-security-policy": "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; frame-src https://challenges.cloudflare.com; img-src 'self' data: https: blob:; media-src 'self' https: blob:; connect-src 'self' https://www.shsid.online https://shsid.online https://challenges.cloudflare.com; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; form-action 'self'"
 };
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "https://www.shsid.online,https://shsid.online").split(",").map((o) => o.trim());
 function getCorsOrigin(origin) {
@@ -1581,6 +1583,16 @@ function notFound(res) {
 
 async function handleApi(req, res, url) {
   const method = req.method || "GET";
+  const { submissionAction, verificationEnabled, verifySubmission } = await submissionVerification;
+  if (method === 'GET' && url.pathname === '/api/posting-config') {
+    return sendJson(res, 200, { required: verificationEnabled(process.env), siteKey: process.env.TURNSTILE_SITE_KEY || '' }, req);
+  }
+  const action = submissionAction(method, url.pathname.replace(/^\/api\//, '/'));
+  if (action && verificationEnabled(process.env)) {
+    const verification = await verifySubmission(new Request(`https://${req.headers.host}${url.pathname}`, { method, headers: req.headers }), process.env, action);
+    if (verification.response) return sendJson(res, verification.response.status, await verification.response.json(), req);
+    if (verification.cookie) res.setHeader('Set-Cookie', verification.cookie);
+  }
   const isBinaryUploadPut = method === "PUT" && url.pathname.startsWith("/upload/");
   const body = method === "GET" || method === "HEAD" || isBinaryUploadPut ? {} : await parseBody(req);
   if (url.pathname.startsWith('/api/auth/') && String(body.email || '').trim().toLowerCase() === 'admin-2@shsid.online') {

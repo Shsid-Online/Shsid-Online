@@ -3,6 +3,23 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { Miniflare } from 'miniflare';
 
+test('submission verification and signed visitor cookies run in the Cloudflare runtime', async () => {
+  const mf = new Miniflare({compatibilityDate:'2026-05-08',modules:[
+    {type:'ESModule',path:'entry.mjs',contents:`import {verifySubmission} from './submission-verification.mjs';
+    export default { async fetch() {
+      const env={SUBMISSION_VERIFICATION:'required',TURNSTILE_SITE_KEY:'site',TURNSTILE_SECRET_KEY:'secret',UPLOAD_SIGNING_SECRET:'signing'};
+      const accepted=async()=>Response.json({success:true,hostname:'www.shsid.online',action:'post'});
+      const req=cookie=>new Request('https://www.shsid.online/api/posts',{method:'POST',headers:{'X-Submission-Token':'token',Cookie:cookie||''}});
+      const a=await verifySubmission(req(),env,'post',accepted);
+      const b=await verifySubmission(req(a.cookie.split(';')[0]),env,'post',accepted);
+      return Response.json({signed:Boolean(a.cookie),stable:a.visitor===b.visitor,noRenewal:b.cookie===undefined});
+    }};`},
+    {type:'ESModule',path:'submission-verification.mjs',contents:await readFile(new URL('../worker/submission-verification.mjs',import.meta.url),'utf8')}
+  ]});
+  try { assert.deepEqual(await (await mf.dispatchFetch('https://test.invalid/')).json(),{signed:true,stable:true,noRenewal:true}); }
+  finally { await mf.dispose(); }
+});
+
 test('real R2 conditional writes prevent concurrent upload replacements', async () => {
   const mf = new Miniflare({ compatibilityDate: '2026-05-08', r2Buckets: ['BUCKET'], modules: true,
     script: `export default { async fetch(req,env) { const result=await env.BUCKET.put('test-key','test',{onlyIf:new Headers({'If-None-Match':'*'})}); return new Response(null,{status:result?201:409}); } };` });
