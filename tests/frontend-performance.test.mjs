@@ -12,7 +12,7 @@ function ui() {
   const document = { activeElement: input, querySelector: s => s === '#search-input' ? input : null,
     querySelectorAll: () => [], addEventListener() {} };
   const context = vm.createContext({ crypto: webcrypto, structuredClone, console, AbortSignal,
-    window: { location: { hostname: 'localhost' } }, document,
+    window: { location: { hostname: 'localhost' }, addEventListener() {} }, document,
     localStorage: { getItem: () => null, setItem() { writes++; } },
     setTimeout: fn => { timers.set(++id, fn); return id; }, clearTimeout: id => timers.delete(id),
     setInterval: () => 0, clearInterval() {},
@@ -168,6 +168,95 @@ test('moderator page renders without composer or administration panels', () => {
   assert.match(app.innerHTML,/Moderator/);
   assert.doesNotMatch(app.innerHTML,/id="composer-(?:title|body)"/);
   assert.doesNotMatch(app.innerHTML,/data-action="instagram-/);
+});
+
+test('startup renders before network settles and hydrates the session and feed in one request', async () => {
+  const u=ui(); let finish; const calls=[];
+  u.run('state.token="mod-token";');
+  u.context.fetch=async url=>{ calls.push(url); return new Promise(resolve=>{finish=resolve;}); };
+  const pending=u.run('initialize()');
+  assert.equal(u.renders,1);
+  assert.equal(calls.length,1);
+  assert.match(calls[0],/includeViewer=1/);
+  finish(Response.json({viewer:{id:'mod',role:'moderator'},posts:[{id:'p',canHide:true}]}));
+  await pending;
+  assert.equal(u.run('state.currentUser.role'),'moderator');
+  assert.equal(u.run('state.posts.length'),1);
+  assert.equal(calls.length,1);
+});
+
+test('startup failure keeps the usable interface and existing token', async () => {
+  const u=ui(); u.run('state.token="valid";');
+  u.context.fetch=async()=>Response.json({error:'temporarily unavailable'},{status:503});
+  await u.run('initialize()');
+  assert.ok(u.renders>=2);
+  assert.equal(u.run('postsLoading'),false);
+  assert.equal(u.run('postsError'),'temporarily unavailable');
+  assert.equal(u.run('state.token'),'valid');
+});
+
+test('expired session becomes a guest from the same feed response', async () => {
+  const u=ui(); u.run('state.token="expired";');
+  u.context.fetch=async()=>Response.json({viewer:null,posts:[{id:'public'}]});
+  await u.run('initialize()');
+  assert.equal(u.run('state.token'),'');
+  assert.equal(u.run('state.currentUser'),null);
+  assert.equal(u.run('state.posts[0].id'),'public');
+});
+
+test('successful login closes immediately and does not await secondary account requests', async () => {
+  const u=ui();
+  u.run('state.token="new";state.currentUser={id:"admin",role:"admin"};state.authOpen=true;fetchNotifications=()=>new Promise(()=>{});fetchAutopostJob=()=>new Promise(()=>{});fetchAdminBoardMetadata=()=>new Promise(()=>{});');
+  u.context.fetch=async()=>Response.json({posts:[]});
+  const done=u.run('finishAuthFlow()');
+  assert.equal(u.run('state.authOpen'),false);
+  assert.equal(u.renders,1);
+  await done;
+  assert.equal(u.run('state.token'),'new');
+});
+
+test('board refresh failure after login does not report failed authentication', async () => {
+  const u=ui();
+  u.run('state.token="new";state.currentUser={id:"mod",role:"moderator"};state.authOpen=true;');
+  u.context.fetch=async()=>Response.json({error:'Feed unavailable'},{status:503});
+  await u.run('finishAuthFlow()');
+  assert.equal(u.run('state.authOpen'),false);
+  assert.equal(u.run('state.token'),'new');
+  assert.equal(u.run('postsError'),'Feed unavailable');
+});
+
+test('old notifications and admin metadata cannot reappear after logout', async () => {
+  const u=ui(); const complete=[];
+  u.run('state.token="admin";state.currentUser={role:"admin"};');
+  u.context.fetch=async()=>new Promise(resolve=>complete.push(resolve));
+  const notification=u.run('fetchNotifications()');
+  const metadata=u.run('fetchAdminBoardMetadata()');
+  u.run('state.token="";state.currentUser=null;');
+  complete[0](Response.json({notifications:[{id:'private'}]}));
+  complete[1](Response.json({adminAnonymousNumbers:[1234]}));
+  await Promise.all([notification,metadata]);
+  assert.equal(u.run('state.notifications.length'),0);
+  assert.equal(u.run('state.adminAnonymousNumbers.length'),0);
+});
+
+test('background refresh does not redraw a login form being edited', async () => {
+  const u=ui();u.run('state.authOpen=true;');
+  await u.run('refreshSecondaryData()');
+  assert.equal(u.renders,0);
+});
+
+test('feed rendering preserves a password and cursor already being entered', () => {
+  const u=ui(); const app={innerHTML:''};
+  const oldInput={id:'auth-password',value:'unsent-password',selectionStart:4,selectionEnd:4};
+  const newInput={value:'',type:'password',focus(){this.focused=true;},setSelectionRange(a,b){this.selection=[a,b];}};
+  u.document.activeElement=oldInput;
+  u.document.querySelector=s=>s==='#app'?app:null;
+  u.document.querySelectorAll=s=>s==='#auth-modal input'?[oldInput]:[];
+  u.document.getElementById=()=>newInput;
+  u.run('state.authOpen=true;state.authStep="password";renderPage();');
+  assert.equal(newInput.value,'unsent-password');
+  assert.equal(newInput.focused,true);
+  assert.deepEqual(newInput.selection,[4,4]);
 });
 
 test('verification configuration failure never sends or retries a post', async () => {

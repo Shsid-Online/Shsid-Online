@@ -1451,7 +1451,7 @@ function buildFollowIndexes() {
   return { followingByUser, followersByUser };
 }
 
-function userView(target, viewer, followIndexes = null) {
+function userView(target, viewer, followIndexes = null, { includeSocialCounts = true } = {}) {
   const safe = publicUser(target);
   if (!safe) return null;
   safe.canModerateReports = canViewFlaggedReports(target);
@@ -1462,6 +1462,7 @@ function userView(target, viewer, followIndexes = null) {
     delete safe.verificationVideo;
     if (target.role === 'admin') Object.assign(safe, { englishName: 'Administrator', chineseName: '', grade: null, classNo: null, bio: '', profilePhoto: '' });
   }
+  if (!includeSocialCounts) return safe;
   const following = followIndexes?.followingByUser?.get(target.id) || [];
   const followers = followIndexes?.followersByUser?.get(target.id) || [];
   safe.followingCount = following.length;
@@ -1886,7 +1887,7 @@ async function handleApi(req, res, url) {
       store.save();
     }
     const session = store.createSession(user, SESSION_TTL_HOURS);
-    return sendJson(res, 200, { user: userView(user, user), session }, req);
+    return sendJson(res, 200, { user: userView(user, user, null, { includeSocialCounts: body.compact !== true }), session }, req);
   }
 
   if (method === "POST" && url.pathname === "/api/auth/logout") {
@@ -1975,7 +1976,9 @@ async function handleApi(req, res, url) {
     const { items, pagination } = paginate(visiblePosts, url, { limit: 25, maxLimit: 100 });
     const viewContext = boardViewContext();
     const posts = items.map((post) => boardPostView(post, user, ownerDigest, followIndexes, viewContext));
-    return sendJson(res, 200, { posts, pagination: { ...pagination, snapshot: beforeText } });
+    return sendJson(res, 200, { posts,
+      ...(url.searchParams.get('includeViewer') === '1' ? { viewer: userView(user, user, null, { includeSocialCounts: false }) } : {}),
+      pagination: { ...pagination, snapshot: beforeText } });
   }
 
   if (method === "GET" && url.pathname === "/api/admin/board-metadata") {

@@ -72,6 +72,12 @@ Frontend (Pages):
 - Output directory: `public`
 - Do not use `npx wrangler deploy` as the Pages deploy command.
 
+After editing `public/src/app.js`, run `npm run build:frontend` and commit
+`public/src/app.min.js` alongside the source. Pages serves this lightweight build;
+`tests/frontend-build.test.mjs` rejects a stale build. Run `node --test tests/*.test.mjs`
+before publishing. Startup fetches the viewer with the first page of posts, while
+notification and admin queue requests run after the interface is already visible.
+
 Worker API:
 
 ```bash

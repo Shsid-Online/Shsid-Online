@@ -4,6 +4,7 @@
   "private": true,
   "description": "Production-track web and API foundation for the SHSID Social Platform.",
   "scripts": {
+    "build:frontend": "esbuild public/src/app.js --minify --format=esm --outfile=public/src/app.min.js",
     "dev": "node server/server.js",
     "dev:static": "npx serve public -l 4173",
     "check": "node --check public/src/app.js && node --check server/server.js && node --check server/store.js && node --check worker/index.js && node --check server/instagram-queue.mjs && node --check server/instagram-auth.mjs",
@@ -25,6 +26,7 @@
     "html2canvas": "^1.4.1"
   },
   "devDependencies": {
+    "esbuild": "0.27.3",
     "wrangler": "^4.90.0"
   }
 }

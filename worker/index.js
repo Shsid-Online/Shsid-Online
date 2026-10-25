@@ -805,7 +805,7 @@ async function handleApi(request, env, url, route, origin, verifiedVisitor) {
     }
     const session = await createSession(env, user.id);
     await audit(env, user.id, "auth_login", { method: isEmailAddress(identifier) ? 'email' : 'username' }, request);
-    return json({ user: await userView(env, user, user), session }, 200);
+    return json({ user: await userView(env, user, user, { includeSocialCounts: body.compact !== true }), session }, 200);
   }
 
   if (method === "POST" && route === "/auth/logout") {
@@ -1022,6 +1022,7 @@ async function handleApi(request, env, url, route, origin, verifiedVisitor) {
     }
     return json({
       posts,
+      ...(url.searchParams.get('includeViewer') === '1' ? { viewer: await userView(env, authUser, authUser, { includeSocialCounts: false, roleResolved: true }) } : {}),
       pagination: { limit, offset, total: null, nextOffset: hasMore ? offset + limit : null, snapshot: snapshot.token }
     }, 200);
   }
@@ -2898,9 +2899,9 @@ async function validateStudentUsername(env, username, user) {
   return null;
 }
 
-async function userView(env, target, viewer, { includeSocialCounts = true } = {}) {
+async function userView(env, target, viewer, { includeSocialCounts = true, roleResolved = false } = {}) {
   if (!target) return null;
-  if (viewer?.id === target.id) target = await withModeratorRole(env, target);
+  if (!roleResolved && viewer?.id === target.id) target = await withModeratorRole(env, target);
   const safe = {
     id: target.id,
     email: target.email,

@@ -67,6 +67,8 @@ let postsLoadPromise = null;
 let postsLoadObserver = null;
 let postsLoadFailed = false;
 let postsRequestGeneration = 0;
+let postsLoading = false;
+let postsError = '';
 const replySubmittingPostIds = new Set();
 const replyPhotoFilesByPostId = new Map();
 const autopostPhotoFilesByEntryId = new Map();
@@ -101,6 +103,12 @@ function loadState() {
   base.replyDrafts = {};
   base.replyAnonymousNumbers = {};
   base.replyTargets = {};
+  // Never restore privileged content or permissions from an older browser cache.
+  base.posts = [];
+  base.currentUser = null;
+  base.notifications = [];
+  base.autopostJob = null;
+  base.adminAnonymousNumbers = [];
   return base;
 }
 
@@ -279,16 +287,18 @@ function notificationBadgeCount() {
 }
 
 async function fetchNotifications({ rerender = false } = {}) {
+  const token = state.token;
   if (!state.token || !state.currentUser || currentUser()?.role === 'moderator') {
     state.notifications = [];
     return;
   }
   try {
     const result = await apiRequest("/notifications", { optionalAuth: true, timeoutMs: 15000 });
+    if (token !== state.token) return;
     state.notifications = Array.isArray(result.notifications) ? result.notifications.map(normalizeNotification) : [];
     if (rerender) render();
   } catch {
-    state.notifications = [];
+    if (token === state.token) state.notifications = [];
   }
 }
 
@@ -350,11 +360,12 @@ function normalizeAutopostJob(job) {
 }
 
 async function fetchAutopostJob() {
+  const token = state.token;
   let instagramRequest = Promise.resolve();
   if (currentUser()?.role === "admin") {
     instagramRequest = apiRequest("/admin/instagram", { timeoutMs: 15000 })
-      .then((result) => { instagramQueue = result.queue; })
-      .catch(() => { instagramQueue = null; });
+      .then((result) => { if (token === state.token) instagramQueue = result.queue; })
+      .catch(() => { if (token === state.token) instagramQueue = null; });
   } else instagramQueue = null;
   if (currentUser()?.role !== "admin") {
     state.autopostJob = null;
@@ -370,10 +381,11 @@ async function fetchAutopostJob() {
   try {
     const result = await apiRequest("/admin/autopost", { timeoutMs: 15000 });
     // A late refresh must not replace a draft or a newer save.
-    if (state.autopostDirty || state.autopostJob !== previousJob) return;
+    if (token !== state.token || state.autopostDirty || state.autopostJob !== previousJob) return;
     applyAutopostJob(result.job);
     autopostError = "";
   } catch (error) {
+    if (token !== state.token) return;
     autopostError = error.message || "Could not load admin queue";
     toast(autopostError);
   }
@@ -500,14 +512,17 @@ function needsProfile(user) {
 }
 
 async function fetchCurrentUser() {
+  const token = state.token;
   if (!state.token) {
     state.currentUser = null;
     return;
   }
   try {
     const result = await apiRequest("/me", { optionalAuth: true, timeoutMs: 15000 });
+    if (token !== state.token) return;
     state.currentUser = result.user || null;
   } catch (error) {
+    if (token !== state.token) return;
     if (error.code === "BROWSER_VERIFICATION_REQUIRED") throw error;
     if (error.status === 401 || error.status === 403) state.token = "";
     state.currentUser = null;
@@ -567,12 +582,25 @@ function normalizePost(post) {
   };
 }
 
-async function fetchPosts() {
+async function fetchPosts({ hydrateSession = false } = {}) {
+  const token = state.token;
   const generation = ++postsRequestGeneration;
   removedPostIds.clear();
   postsLoadFailed = false;
-  const result = await apiRequest("/posts?limit=10&offset=0", { auth: false, optionalAuth: true, timeoutMs: 30000 });
-  if (generation !== postsRequestGeneration) return;
+  const result = await apiRequest(`/posts?limit=10&offset=0${hydrateSession ? '&includeViewer=1' : ''}`, { auth: false, optionalAuth: true, timeoutMs: 30000 });
+  if (generation !== postsRequestGeneration || token !== state.token) return;
+  if (hydrateSession) {
+    if (Object.hasOwn(result, 'viewer')) {
+      state.currentUser = result.viewer || null;
+      if (!result.viewer) state.token = '';
+    } else {
+      // Compatible with an older server during a rolling deployment.
+      await fetchCurrentUser();
+      if (generation !== postsRequestGeneration) return;
+    }
+  }
+  postsError = '';
+  postsLoading = false;
   postsSnapshot = String(result.pagination?.snapshot || new Date().toISOString());
   state.posts = (Array.isArray(result.posts) ? result.posts.map(normalizePost) : []).sort((a, b) => {
     if (a.sticky !== b.sticky) return Number(b.sticky) - Number(a.sticky);
@@ -648,12 +676,14 @@ function bindPostsLoadObserver() {
 }
 
 async function fetchAdminBoardMetadata() {
+  const token = state.token;
   if (currentUser()?.role !== "admin") {
     state.adminAnonymousNumbers = [];
     return;
   }
   try {
     const result = await apiRequest("/admin/board-metadata", { timeoutMs: 15000 });
+    if (token !== state.token) return;
     state.adminAnonymousNumbers = Array.isArray(result.adminAnonymousNumbers)
       ? result.adminAnonymousNumbers.map(Number).filter((number) => Number.isInteger(number) && number >= 1000 && number <= 9999)
       : [];
@@ -1233,10 +1263,17 @@ async function finishAuthFlow() {
   state.authOpen = false;
   authReason = "";
   resetAuthDraft({ keepEmail: false });
-  await fetchPosts();
-  await fetchNotifications();
-  await fetchAutopostJob();
+  postsLoading = true;
   saveState();
+  render();
+  void refreshSecondaryData();
+  try {
+    await fetchPosts();
+  } catch (error) {
+    // Login succeeded even if refreshing the board fails.
+    postsLoading = false;
+    postsError = error.message || 'Could not load posts. Please refresh.';
+  }
   render();
   if (queuedLikePostId && currentUser()?.role !== 'moderator') {
     const postId = queuedLikePostId;
@@ -1338,7 +1375,8 @@ async function submitPassword(event) {
         method: "POST",
         body: {
           identifier: state.pendingEmail,
-          password
+          password,
+          compact: true
         },
         auth: false
       });
@@ -1393,6 +1431,8 @@ function clearLoadedPosts() {
   postsNextOffset = null;
   postsSnapshot = '';
   state.composerQuote = null;
+  postsLoading = false;
+  postsError = '';
 }
 
 async function logout() {
@@ -1405,6 +1445,8 @@ async function logout() {
   state.currentUser = null;
   clearLoadedPosts();
   state.autopostJob = null;
+  instagramQueue = null;
+  state.adminAnonymousNumbers = [];
   state.autopostDirty = false;
   state.notifications = [];
   state.notificationsOpen = false;
@@ -1899,6 +1941,10 @@ function render() {
   clearTimeout(searchRenderTimer);
   searchRenderTimer = null;
   const app = document.querySelector("#app");
+  const authInputs = [...document.querySelectorAll('#auth-modal input')].map(input => ({
+    id: input.id, value: input.value, focused: document.activeElement === input,
+    start: input.selectionStart, end: input.selectionEnd
+  }));
   const posts = filteredPosts();
   const activeBoard = state.board === "all" ? null : boardMeta(state.board);
   const signedInUser = currentUser();
@@ -2030,7 +2076,7 @@ function render() {
       <main class="thread-list">
         ${posts.length
           ? posts.map((post, index) => renderThreadCard(post, index, { profileTagKey })).join("")
-          : `<div class="empty-state">No threads matched that search.</div>`}
+          : `<div class="empty-state">${postsLoading ? 'Loading threads…' : postsError ? escapeHtml(postsError) : 'No threads matched that search.'}</div>`}
       </main>
       ${postsNextOffset !== null ? `
         <div class="posts-load-more" id="posts-load-sentinel">
@@ -2049,6 +2095,15 @@ function render() {
   bindAutopostCountdown();
   bindEvents();
   bindPostsLoadObserver();
+  for (const saved of authInputs) {
+    const input = document.getElementById(saved.id);
+    if (!input) continue;
+    input.value = saved.value;
+    if (saved.focused) {
+      input.focus({ preventScroll: true });
+      if (saved.start !== null && ['text', 'password', 'search', 'tel', 'url'].includes(input.type)) input.setSelectionRange(saved.start, saved.end);
+    }
+  }
 }
 
 function handleNotificationOutsideClick(event) {
@@ -2669,28 +2724,43 @@ function bindEvents() {
   });
 }
 
+async function refreshSecondaryData() {
+  const token = state.token;
+  await Promise.allSettled([
+    fetchNotifications(), fetchAutopostJob(), fetchAdminBoardMetadata()
+  ]);
+  if (token !== state.token) return;
+  // A background response must not erase an in-progress password or selection.
+  if (!state.authOpen && !authBusy && !document.activeElement?.matches?.('input, textarea, select')) render();
+}
+
 async function initialize() {
   window.addEventListener("beforeunload", (event) => {
     if (!hasUnsavedBoardChanges()) return;
     event.preventDefault();
     event.returnValue = "";
   });
-  await fetchCurrentUser();
-  await fetchPosts();
-  saveState();
+  postsLoading = true;
   render();
   if (!("IntersectionObserver" in window)) {
     window.addEventListener("scroll", schedulePostsScrollCheck, { passive: true });
   }
-  requestAnimationFrame(maybeLoadMorePosts);
-  void Promise.allSettled([
-    fetchNotifications(),
-    fetchAutopostJob(),
-    fetchAdminBoardMetadata()
-  ]).then(() => {
+  const generation = postsRequestGeneration + 1;
+  try {
+    await fetchPosts({ hydrateSession: true });
+    if (generation !== postsRequestGeneration) return;
     saveState();
+  } catch (error) {
+    if (generation !== postsRequestGeneration) return;
+    postsError = error.message || 'The board could not load. Please refresh.';
+  } finally {
+    if (generation === postsRequestGeneration) postsLoading = false;
+  }
+  if (generation === postsRequestGeneration) {
     render();
-  });
+    requestAnimationFrame(maybeLoadMorePosts);
+    void refreshSecondaryData();
+  }
 }
 
 initialize().catch((error) => {

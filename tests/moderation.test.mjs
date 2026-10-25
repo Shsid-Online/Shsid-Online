@@ -9,9 +9,11 @@ import moderation from '../server/moderation.cjs';
 import { hashPassword, verifyPassword } from '../worker/passwords.mjs';
 
 async function setup() {
+  const queries = [];
   const sql = new DatabaseSync(':memory:');
   sql.exec(readFileSync(new URL('../d1/schema.sql', import.meta.url), 'utf8'));
   const db = { prepare(query) {
+    queries.push(query);
     let values = [];
     const statement = {
       bind(...args) { values = args; return statement; },
@@ -44,7 +46,7 @@ async function setup() {
     method, headers: role ? { Authorization: `Bearer ${role}`, 'Content-Type': 'application/json' } : {},
     ...(method !== 'GET' && method !== 'HEAD' ? { body: JSON.stringify(body) } : {})
   }), env);
-  return { sql, env, kv, request };
+  return { sql, env, kv, request, queries };
 }
 
 test('moderator can hide but cannot restore or delete; admin retains and restores the entire post', async () => {
@@ -77,6 +79,34 @@ test('moderator signs in by username and a banned moderator loses access', async
   assert.ok(result.session.token);
   sql.prepare("UPDATE users SET status='banned' WHERE id='mod'").run();
   assert.equal((await request('/posts/post/hide','mod','POST')).status,403);
+});
+
+test('compact login skips unused social graph queries but retains role and session', async () => {
+  const {request,sql,queries}=await setup();
+  sql.prepare('UPDATE users SET password_hash=? WHERE id=?').run(await hashPassword('test-password-only'),'mod');
+  queries.length=0;
+  const response=await request('/auth/login','','POST',{identifier:'mod',password:'test-password-only',compact:true});
+  assert.equal(response.status,200);
+  const result=await response.json();
+  assert.equal(result.user.role,'moderator');
+  assert.ok(result.session.token);
+  assert.ok(!queries.some(query=>/from follows/i.test(query)));
+  assert.equal(result.user.followers,undefined);
+});
+
+test('combined startup gives each viewer fresh permissions without caching private account data', async () => {
+  const {request,queries}=await setup();
+  for (const [token,role] of [['admin','admin'],['mod','moderator'],['student','student'],['',null]]) {
+    queries.length=0;
+    const response=await request('/posts?includeViewer=1',token);
+    assert.equal(response.status,200);
+    const result=await response.json();
+    assert.equal(result.viewer?.role??null,role);
+    if(token) assert.equal(result.viewer.id,token);
+    assert.equal(result.viewer?.password_hash,undefined);
+    assert.equal(result.viewer?.followers,undefined);
+    assert.ok(!queries.some(query=>/from follows/i.test(query)));
+  }
 });
 
 test('feed cache never mixes admin visibility into readers and quote previews are redacted', async () => {
