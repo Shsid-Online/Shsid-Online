@@ -61,6 +61,18 @@ create table if not exists comments (
   created_at text not null
 );
 
+-- Restricted capability is separate from the legacy student/admin role check.
+create table if not exists board_moderators (
+  user_id text primary key references users(id),
+  created_at text not null
+);
+
+create table if not exists hidden_board_posts (
+  post_id text primary key references posts(id),
+  hidden_at text not null,
+  hidden_by text not null references users(id)
+);
+
 create table if not exists board_guest_aliases (
   owner_token_digest text primary key,
   anonymous_account_number integer not null unique,

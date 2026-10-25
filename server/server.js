@@ -19,6 +19,7 @@ loadEnvFile(path.resolve(__dirname, "..", ".env"));
 const { Store, hashPassword, verifyPassword, publicUser, id, now, tokenDigest } = require("./store");
 const { privateBoardItem, uploadExtension } = require('./board-privacy.cjs');
 const { blockedPostReason } = require('./post-spam.cjs');
+const { canHidePosts, canReadPost, moderatorRouteAllowed } = require('./moderation.cjs');
 
 const PORT = Number(process.env.PORT || 4174);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -941,6 +942,7 @@ function boardOwnerDigest(req) {
 
 function canDeleteBoardItem(user, item, ownerDigest = "") {
   if (!item) return false;
+  if (user?.role === 'moderator') return false;
   if (user?.role === "admin") return true;
   if (user?.id && item.authorId === user.id) return true;
   return Boolean(ownerDigest && item.ownerTokenDigest === ownerDigest);
@@ -994,7 +996,7 @@ function sanitizeQuoteRef(value) {
   if (!value || typeof value !== "object") return null;
   const postId = String(value.postId || "").trim();
   if (!postId) return null;
-  const targetPost = store.data.posts.find((post) => post.id === postId && !post.deletedAt);
+  const targetPost = store.data.posts.find((post) => post.id === postId && canReadPost(post, null));
   if (!targetPost) return null;
   const boardSlug = `/${String(targetPost.category || "board").trim().toLowerCase() || "board"}/`;
   const number = Number(targetPost.postNumber);
@@ -1483,10 +1485,15 @@ function boardCommentView(comment, viewer, ownerDigest = "", viewContext = null)
 
 function boardPostView(post, viewer, ownerDigest = "", followIndexes = null, viewContext = null) {
   const context = viewContext || boardViewContext();
+  const quoteHidden = post.quoteRef?.postId && !canReadPost(store.data.posts.find(p => p.id === post.quoteRef.postId), viewer);
   return {
     ...privateBoardItem(withoutOwnerTokenDigest(post), viewer),
+    ...(viewer?.role !== 'admin' ? { hiddenBy: undefined, hiddenAt: undefined } : {}),
+    ...(quoteHidden ? { quoteRef: null } : {}),
+    hidden: Boolean(post.hiddenAt),
+    canHide: canHidePosts(viewer),
     anonymousLabel: anonymousAccountLabelForBoardItem(post, context),
-    canDelete: canDeleteBoardItem(viewer, post, ownerDigest),
+    canDelete: viewer?.role !== 'moderator' && canDeleteBoardItem(viewer, post, ownerDigest),
     comments: (post.comments || []).map((comment) => boardCommentView(comment, viewer, ownerDigest, context)),
     author: post.anonymous && viewer?.role !== "admin" ? null : userView(store.findUserById(post.authorId), viewer, followIndexes),
     adminAuthor: viewer?.role === "admin" ? userView(store.findUserById(post.authorId), viewer, followIndexes) : undefined
@@ -1595,6 +1602,13 @@ async function handleApi(req, res, url) {
   }
   const isBinaryUploadPut = method === "PUT" && url.pathname.startsWith("/upload/");
   const body = method === "GET" || method === "HEAD" || isBinaryUploadPut ? {} : await parseBody(req);
+  const moderationViewer = getAuthUser(req);
+  const moderationRoute = url.pathname.replace(/^\/api\//, '/');
+  if (moderationViewer?.role === 'moderator' && (moderationViewer.status === 'banned' || !moderatorRouteAllowed(method, moderationRoute))) {
+    return sendJson(res, 403, { error: 'Moderator accounts can only read the board and hide posts' }, req);
+  }
+  const scopedPost = moderationRoute.match(/^\/posts\/([^/]+)(?:\/|$)/);
+  if (scopedPost && moderationViewer?.role !== 'admin' && store.data.posts.some(p => p.id === scopedPost[1] && p.hiddenAt)) return notFound(res);
   if (url.pathname.startsWith('/api/auth/') && String(body.email || '').trim().toLowerCase() === 'admin-2@shsid.online') {
     return sendJson(res, 403, { error: 'This account requires administrator-assisted credential recovery.' }, req);
   }
@@ -1951,7 +1965,7 @@ async function handleApi(req, res, url) {
     const beforeText = String(url.searchParams.get("before") || now());
     const before = new Date(beforeText).getTime();
     const visiblePosts = store.data.posts.filter((post) => {
-      if (post.deletedAt) return false;
+      if (!canReadPost(post, user)) return false;
       if (new Date(post.createdAt).getTime() > before) return false;
       if (!categoryFilter) return true;
       return String(post.category || "").trim().toLowerCase() === categoryFilter;
@@ -1968,6 +1982,27 @@ async function handleApi(req, res, url) {
     const admin = requireAdmin(req, res);
     if (!admin) return;
     return sendJson(res, 200, { adminAnonymousNumbers: adminAnonymousNumbersView() }, req);
+  }
+
+  const visibilityMatch = moderationRoute.match(/^\/posts\/([^/]+)\/(hide|restore)$/);
+  if (method === 'POST' && visibilityMatch) {
+    const restoring = visibilityMatch[2] === 'restore';
+    if (!canHidePosts(moderationViewer) || (restoring && moderationViewer.role !== 'admin')) return sendJson(res, 403, { error: 'Not allowed' }, req);
+    const post = store.data.posts.find(p => p.id === visibilityMatch[1] && !p.deletedAt);
+    if (!post) return notFound(res);
+    if (restoring) { delete post.hiddenAt; delete post.hiddenBy; }
+    else if (!post.hiddenAt) { post.hiddenAt = now(); post.hiddenBy = moderationViewer.id; }
+    store.audit(moderationViewer.id, restoring ? 'post_restored' : 'post_hidden', { postId: post.id });
+    store.save();
+    return sendJson(res, 200, { ok: true, postId: post.id, hidden: !restoring }, req);
+  }
+
+  const visiblePostMatch = moderationRoute.match(/^\/posts\/([^/]+)$/);
+  if (method === 'GET' && visiblePostMatch) {
+    if (!moderationViewer) return sendJson(res, 401, { error: 'Authentication required' }, req);
+    const post = store.data.posts.find(p => p.id === visiblePostMatch[1] && canReadPost(p, moderationViewer));
+    if (!post) return notFound(res);
+    return sendJson(res, 200, { post: boardPostView(post, moderationViewer, boardOwnerDigest(req)) }, req);
   }
 
   if (method === "POST" && url.pathname === "/api/posts") {
@@ -2620,7 +2655,7 @@ async function handleApi(req, res, url) {
       let job = await queue.queueAction(repo, action, body, credentials, post, body.imageUrl);
       if (action === 'post-now') {
         await queue.runQueue(repo, credentials, (id, commentId) => {
-          const source = store.data.posts.find(p => p.id === id && !p.deletedAt);
+          const source = store.data.posts.find(p => p.id === id && canReadPost(p, null));
           if (!source || !commentId) return source;
           const seen = new Set();
           while (commentId && !seen.has(commentId)) {
@@ -3065,7 +3100,7 @@ const server = http.createServer(async (req, res) => {
 setInterval(() => {
   instagramModules.then(([queue]) => queue.runQueue(queue.localQueue(store), instagramCredentials(),
     (id, commentId) => {
-      const post = store.data.posts.find(p => p.id === id && !p.deletedAt);
+      const post = store.data.posts.find(p => p.id === id && canReadPost(p, null));
       if (!post || !commentId) return post;
       const commentsById = new Map((post.comments || []).filter(comment => !comment.deletedAt).map(comment => [comment.id, comment]));
       const seen = new Set();

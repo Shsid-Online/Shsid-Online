@@ -12,6 +12,9 @@ import { hashPassword, verifyPassword, isLegacyPassword, migrateOneLegacyPasswor
 import { runAdminAccountMigration } from './admin-account-migration.mjs';
 import boardPrivacy from "../server/board-privacy.cjs";
 import postSpam from '../server/post-spam.cjs';
+import moderation from '../server/moderation.cjs';
+import { ensureModerationSchema, withModeratorRole, hiddenPost, provisionModerator } from './moderation.mjs';
+const { canHidePosts, moderatorRouteAllowed } = moderation;
 const { privateBoardItem, uploadExtension } = boardPrivacy;
 const { blockedPostReason } = postSpam;
 
@@ -198,6 +201,7 @@ export default {
 
   async scheduled(controller, env, ctx) {
     const time = controller?.scheduledTime || Date.now();
+    ctx.waitUntil(provisionModerator(env).catch(() => console.error('Moderator setup deferred; account not changed.')));
     ctx.waitUntil(runAdminAccountMigration(env).catch(() => console.error('Admin account migration deferred; retrying on the next scheduled tick.')));
     ctx.waitUntil(runPostCleanup(env).catch(error => console.error('Requested post cleanup deferred:', String(error.message || 'Unknown database error'))));
     ctx.waitUntil((async () => {
@@ -215,6 +219,7 @@ export default {
 };
 
 async function instagramSourceExists(env, postId, commentId = "") {
+  if (await hiddenPost(env, postId)) return null;
   const post = await env.DB.prepare("SELECT id FROM posts WHERE id=? AND deleted_at IS NULL").bind(postId).first();
   if (!post || !commentId) return post;
   const seen = new Set();
@@ -333,13 +338,18 @@ async function handleApi(request, env, url, route, origin, verifiedVisitor) {
     route.startsWith("/multipart/")
   );
   const body = method === "GET" || method === "HEAD" || isBinaryUploadPut ? {} : await readJson(request);
-  if (route.startsWith('/auth/') && String(body.email || '').trim().toLowerCase() === 'admin-2@shsid.online') {
-    return json({ error: 'This account requires administrator-assisted credential recovery.' }, 403);
-  }
   if (method === 'POST' && (route === '/posts' || /^\/posts\/[^/]+\/comments$/.test(route))) {
     if (blockedPostReason(route === '/posts' ? body.title : '', body.text)) return json({ error: 'This submission matches a blocked spam pattern' }, 400);
     const duplicate = await rejectDuplicate(env, route, body, request, verifiedVisitor);
     if (duplicate) return duplicate;
+  }
+  const authUser = await maybeAuthUser(request, env);
+  if (authUser?.role === 'moderator' && !moderatorRouteAllowed(method, route)) return json({ error: 'Moderator accounts can only read the board and hide posts' }, 403);
+  const scopedPost = route.match(/^\/posts\/([^/]+)(?:\/|$)/);
+  if (scopedPost && method === 'DELETE' && !authUser && !await boardOwnerDigest(request)) return json({ error: 'Authentication required' }, 401);
+  if (scopedPost && authUser?.role !== 'admin' && await hiddenPost(env, scopedPost[1])) return json({ error: 'Not found' }, 404);
+  if (route.startsWith('/auth/') && String(body.email || '').trim().toLowerCase() === 'admin-2@shsid.online') {
+    return json({ error: 'This account requires administrator-assisted credential recovery.' }, 403);
   }
 
   if (method === "GET" && route === "/health") {
@@ -806,7 +816,6 @@ async function handleApi(request, env, url, route, origin, verifiedVisitor) {
     return json({ ok: true }, 200);
   }
 
-  const authUser = await maybeAuthUser(request, env);
   if (route.startsWith("/admin/instagram")) {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     try {
@@ -967,6 +976,7 @@ async function handleApi(request, env, url, route, origin, verifiedVisitor) {
   }
 
   if (method === "GET" && route === "/posts") {
+    await ensureModerationSchema(env.DB);
     const snapshot = await feedSnapshot(url.searchParams.get('before'), env.UPLOAD_SIGNING_SECRET);
     if (!snapshot) return json({ error: 'Page expired. Refresh the board.' }, 400);
     await ensureReadIndexes(env.DB);
@@ -975,10 +985,17 @@ async function handleApi(request, env, url, route, origin, verifiedVisitor) {
     // Five-second snapshots let concurrent first-page visits share database work.
     const before = snapshot.before;
     if (!Number.isFinite(Date.parse(before)) || offset > 10000) return json({ error: 'Invalid page' }, 400);
-    const postRows = await cachedRead(env.DB, `feed:${before}:${limit}:${offset}`, () => env.DB.prepare("select * from posts where deleted_at is null and created_at <= ? order by sticky desc, created_at desc, id desc limit ? offset ?").bind(before, limit + 1, offset).all());
+    const adminView = authUser?.role === 'admin';
+    const postRows = await cachedRead(env.DB, `feed:${adminView ? 'admin' : 'public'}:${before}:${limit}:${offset}`, () => env.DB.prepare(`select * from posts where deleted_at is null ${adminView ? '' : 'and not exists (select 1 from hidden_board_posts h where h.post_id=posts.id)'} and created_at <= ? order by sticky desc, created_at desc, id desc limit ? offset ?`).bind(before, limit + 1, offset).all());
     const viewContext = await boardViewContext(env);
     const hasMore = (postRows.results || []).length > limit;
-    const rows = (postRows.results || []).slice(0, limit);
+    let rows = (postRows.results || []).slice(0, limit);
+    // Recheck visibility outside the short-lived feed cache so a hide takes
+    // effect across Worker isolates, not only the one that handled the action.
+    const visibilityIds = [...new Set(rows.flatMap(p => [p.id, jsonObject(p.quote_ref)?.postId].filter(Boolean)))];
+    const hiddenRows = visibilityIds.length ? await env.DB.prepare(`SELECT * FROM hidden_board_posts WHERE post_id IN (${visibilityIds.map(() => '?').join(',')})`).bind(...visibilityIds).all() : { results: [] };
+    viewContext.hiddenPosts = new Map((hiddenRows.results || []).map(row => [row.post_id, row]));
+    if (!adminView) rows = rows.filter(row => !viewContext.hiddenPosts.has(row.id));
     const postIds = rows.map((post) => post.id);
     const commentsByPostId = new Map();
     let commentRows = [];
@@ -1012,6 +1029,20 @@ async function handleApi(request, env, url, route, origin, verifiedVisitor) {
   if (method === "GET" && route === "/admin/board-metadata") {
     if (!authUser || authUser.role !== "admin") return json({ error: "Admin access required" }, 403);
     return json({ adminAnonymousNumbers: await adminAnonymousNumbersView(env) }, 200);
+  }
+
+  const visibilityMatch = route.match(/^\/posts\/([^/]+)\/(hide|restore)$/);
+  if (method === 'POST' && visibilityMatch) {
+    const restoring = visibilityMatch[2] === 'restore';
+    if (!canHidePosts(authUser) || (restoring && authUser.role !== 'admin')) return json({ error: 'Not allowed' }, 403);
+    await ensureModerationSchema(env.DB);
+    const post = await env.DB.prepare('SELECT id FROM posts WHERE id=? AND deleted_at IS NULL').bind(visibilityMatch[1]).first();
+    if (!post) return json({ error: 'Not found' }, 404);
+    if (restoring) await env.DB.prepare('DELETE FROM hidden_board_posts WHERE post_id=?').bind(post.id).run();
+    else await env.DB.prepare('INSERT OR IGNORE INTO hidden_board_posts (post_id,hidden_at,hidden_by) VALUES (?,?,?)').bind(post.id, now(), authUser.id).run();
+    clearReadCache(env.DB);
+    await audit(env, authUser.id, restoring ? 'post_restored' : 'post_hidden', { postId: post.id }, request);
+    return json({ ok: true, postId: post.id, hidden: !restoring });
   }
 
   const postByIdMatch = route.match(/^\/posts\/([^/]+)$/);
@@ -2190,6 +2221,7 @@ async function sanitizeQuoteRef(env, value) {
   if (!value || typeof value !== "object") return null;
   const postId = String(value.postId || "").trim();
   if (!postId) return null;
+  if (await hiddenPost(env, postId)) return null;
   const post = await env.DB.prepare("select * from posts where id=? and deleted_at is null").bind(postId).first();
   if (!post) return null;
   const boardSlug = `/${String(post.category || "board").trim().toLowerCase() || "board"}/`;
@@ -2329,6 +2361,9 @@ async function boardCommentView(env, row, authUser, ownerDigest = "", viewContex
 
 async function boardPostView(env, row, authUser, ownerDigest = "", comments = null, viewContext = null) {
   const context = viewContext || await boardViewContext(env);
+  const visibility = context.hiddenPosts ? context.hiddenPosts.get(row.id) : await hiddenPost(env, row.id);
+  const quote = jsonObject(row.quote_ref);
+  const quoteHidden = quote?.postId && (context.hiddenPosts ? context.hiddenPosts.has(quote.postId) : await hiddenPost(env, quote.postId));
   const commentRows = comments || await env.DB.prepare("select * from comments where post_id = ? and deleted_at is null order by created_at asc").bind(row.id).all();
   const shouldShowAuthor = !row.anonymous || authUser?.role === "admin";
   const author = shouldShowAuthor
@@ -2337,6 +2372,10 @@ async function boardPostView(env, row, authUser, ownerDigest = "", comments = nu
   const visibleAuthor = shouldShowAuthor ? await userView(env, author, authUser, { includeSocialCounts: false }) : null;
   return {
     ...privateBoardItem(fromDbPost(row), authUser),
+    ...(quoteHidden && authUser?.role !== 'admin' ? { quoteRef: null } : {}),
+    hidden: Boolean(visibility),
+    ...(authUser?.role === 'admin' && visibility ? { hiddenAt: visibility.hidden_at, hiddenBy: visibility.hidden_by } : {}),
+    canHide: canHidePosts(authUser),
     anonymousLabel: await anonymousAccountLabelForBoardRow(env, row, context),
     canDelete: canDeleteDbItem(authUser, row, ownerDigest),
     comments: await Promise.all((commentRows.results || []).map((comment) => boardCommentView(env, comment, authUser, ownerDigest, context))),
@@ -2366,7 +2405,7 @@ async function maybeAuthUser(request, env) {
   if (!userId || userId === 'usr_12996ce2-2ca5-45c5-95d3-0b7b5151fb45') return null;
   const user = await getUserById(env, userId);
   if (user?.status === 'banned') throw Object.assign(new Error('Account banned'), { status: 403 });
-  return user?.email?.toLowerCase() === 'admin-2@shsid.online' ? null : user;
+  return user?.email?.toLowerCase() === 'admin-2@shsid.online' ? null : withModeratorRole(env, user);
 }
 
 function getBearerToken(request) {
@@ -2861,6 +2900,7 @@ async function validateStudentUsername(env, username, user) {
 
 async function userView(env, target, viewer, { includeSocialCounts = true } = {}) {
   if (!target) return null;
+  if (viewer?.id === target.id) target = await withModeratorRole(env, target);
   const safe = {
     id: target.id,
     email: target.email,
@@ -3061,6 +3101,7 @@ async function boardOwnerDigest(request) {
 
 function canDeleteDbItem(user, item, ownerDigest = "") {
   if (!item) return false;
+  if (user?.role === 'moderator') return false;
   if (user?.role === "admin") return true;
   if (user?.id && item.author_id === user.id) return true;
   return Boolean(ownerDigest && item.owner_token_digest && item.owner_token_digest === ownerDigest);

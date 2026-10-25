@@ -20,7 +20,7 @@ function ui() {
   });
   const run = code => vm.runInContext(code, context);
   run(source); context.countRender = () => { renders++; };
-  run('render = countRender; bindEvents();');
+  run('var renderPage = render; render = countRender; bindEvents();');
   return { input, document, context, run, timers,
     flush() { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()); },
     get writes() { return writes; }, get renders() { return renders; }, get focused() { return focused; } };
@@ -121,6 +121,53 @@ test('Instagram queue shows cooldown, safe retry and uncertain-publication revie
   assert.doesNotMatch(html, /data-action="instagram-retry" data-id="uncertain"/);
   assert.match(html, /data-action="instagram-resolve" data-id="uncertain"/);
   assert.doesNotMatch(html, /<script>secret/);
+});
+
+test('moderator cards expose hide only, while admins see hidden status and restoration', () => {
+  const u = ui();
+  u.run('state.currentUser={id:"mod",role:"moderator",englishName:"gh2323"};');
+  u.context.postFixture = { id: 'p', title: 'Post', text: 'Text', category: 'school', likes: [], comments: [], canHide: true };
+  let html = u.run('renderThreadCard(normalizePost(postFixture),0)');
+  assert.match(html, /data-action="hide-post"/);
+  assert.doesNotMatch(html, /data-action="(?:restore-post|delete-post|instagram-queue|open-reply)"/);
+  u.run('state.currentUser.role="admin";postFixture.hidden=true;');
+  html = u.run('renderThreadCard(normalizePost(postFixture),0)');
+  assert.match(html, /Hidden from readers/);
+  assert.match(html, /data-action="restore-post"/);
+  u.run('state.currentUser.role="student";');
+  html = u.run('renderThreadCard(normalizePost(postFixture),0)');
+  assert.doesNotMatch(html, /data-action="(?:hide-post|restore-post)"/);
+});
+
+test('signing out clears privileged posts and ignores an outstanding admin feed response', async () => {
+  const u = ui(); let completeAdminFeed;
+  u.run('state.token="admin";state.currentUser={id:"admin",role:"admin"};state.posts=[{id:"secret",hidden:true}];');
+  u.context.fetch = async (url, options) => {
+    if (url.includes('/posts') && options.headers.Authorization) return new Promise(resolve => { completeAdminFeed = resolve; });
+    return Response.json(url.includes('/posts') ? {posts:[]} : {ok:true});
+  };
+  const pending = u.run('fetchPosts()');
+  await u.run('logout()');
+  completeAdminFeed(Response.json({posts:[{id:'secret',hidden:true}]}));
+  await pending;
+  assert.equal(u.run('state.posts.length'),0);
+  assert.equal(u.run('state.currentUser'),null);
+});
+
+test('non-admin rendering filters previously loaded hidden posts', () => {
+  const u = ui();
+  u.run('state.currentUser=null;state.posts=[{id:"secret",hidden:true,category:"school"}];');
+  assert.equal(u.run('filteredPosts().length'),0);
+});
+
+test('moderator page renders without composer or administration panels', () => {
+  const u = ui(); const app = {innerHTML:''};
+  u.document.querySelector = selector => selector === '#app' ? app : null;
+  u.run('state.currentUser={id:"mod",role:"moderator",englishName:"gh2323"};renderPage();');
+  assert.match(app.innerHTML,/gh2323/);
+  assert.match(app.innerHTML,/Moderator/);
+  assert.doesNotMatch(app.innerHTML,/id="composer-(?:title|body)"/);
+  assert.doesNotMatch(app.innerHTML,/data-action="instagram-/);
 });
 
 test('verification configuration failure never sends or retries a post', async () => {

@@ -279,7 +279,7 @@ function notificationBadgeCount() {
 }
 
 async function fetchNotifications({ rerender = false } = {}) {
-  if (!state.token || !state.currentUser) {
+  if (!state.token || !state.currentUser || currentUser()?.role === 'moderator') {
     state.notifications = [];
     return;
   }
@@ -530,6 +530,8 @@ function normalizePost(post) {
   ).trim();
   return {
     id: post.id,
+    hidden: Boolean(post.hidden),
+    canHide: Boolean(post.canHide),
     authorId,
     title: String(post.title || "").trim() === "Untitled thread" ? "" : String(post.title || "").trim(),
     postNumber: Number.isInteger(postNumber) && postNumber > 0 ? postNumber : null,
@@ -1227,14 +1229,16 @@ function closeAuth() {
 }
 
 async function finishAuthFlow() {
+  clearLoadedPosts();
   state.authOpen = false;
   authReason = "";
   resetAuthDraft({ keepEmail: false });
+  await fetchPosts();
   await fetchNotifications();
   await fetchAutopostJob();
   saveState();
   render();
-  if (queuedLikePostId) {
+  if (queuedLikePostId && currentUser()?.role !== 'moderator') {
     const postId = queuedLikePostId;
     clearQueuedLike();
     await likePost(postId);
@@ -1383,6 +1387,14 @@ async function submitProfile(event) {
   }
 }
 
+function clearLoadedPosts() {
+  postsRequestGeneration++;
+  state.posts = [];
+  postsNextOffset = null;
+  postsSnapshot = '';
+  state.composerQuote = null;
+}
+
 async function logout() {
   try {
     if (state.token) await apiRequest("/auth/logout", { method: "POST", body: {} });
@@ -1391,6 +1403,7 @@ async function logout() {
   }
   state.token = "";
   state.currentUser = null;
+  clearLoadedPosts();
   state.autopostJob = null;
   state.autopostDirty = false;
   state.notifications = [];
@@ -1399,6 +1412,12 @@ async function logout() {
   clearQueuedLike();
   saveState();
   render();
+  try {
+    await fetchPosts();
+    render();
+  } catch {
+    toast('Signed out. Refresh to reload the public board.');
+  }
 }
 
 async function submitThread(event) {
@@ -1536,6 +1555,7 @@ function filteredPosts() {
   const query = String(state.search || "").trim().toLowerCase();
   const authorFilter = String(state.authorFilter || "").trim().toLowerCase();
   const posts = state.posts.filter((post) => {
+    if (post.hidden && currentUser()?.role !== 'admin') return false;
     const matchesBoard = state.board === "all" || post.category === state.board;
     if (!matchesBoard) return false;
     if (authorFilter && !postMatchesUserTag(post, authorFilter)) return false;
@@ -1615,6 +1635,7 @@ function renderThreadCard(post, index, options = {}) {
   const board = boardMeta(post.category);
   const liked = userCanLike(post);
   const adminMode = currentUser()?.role === "admin";
+  const moderatorMode = currentUser()?.role === 'moderator';
   const canDeletePost = adminMode || Boolean(post.canDelete);
   const replyOpen = openReplyPostId === post.id;
   const replyCount = (post.comments || []).length;
@@ -1637,6 +1658,8 @@ function renderThreadCard(post, index, options = {}) {
           <button class="thread-author" type="button" data-action="filter-author" data-author="${escapeHtml(userTagLabel(post))}">${escapeHtml(userTagLabel(post))}</button>
           <span class="thread-separator">/</span>
           <span class="thread-id">No.${displayNumber}</span>
+          ${post.hidden && adminMode ? `<strong>Hidden from readers</strong>` : ""}
+          ${!options.captureMode && (adminMode || moderatorMode) ? `<button class="inline-admin-link" data-action="${post.hidden ? 'restore-post' : 'hide-post'}" data-id="${escapeHtml(post.id)}">${post.hidden ? 'Restore to readers' : 'Hide from readers'}</button>` : ""}
           ${canDeletePost ? `<button class="inline-admin-link" data-action="delete-post" data-id="${escapeHtml(post.id)}">Delete</button>` : ""}
         </div>
         ${post.title ? `<div class="thread-title">${escapeHtml(post.title)}</div>` : ""}
@@ -1657,7 +1680,7 @@ function renderThreadCard(post, index, options = {}) {
         <span>${replyCount} repl${replyCount === 1 ? "y" : "ies"}</span>
         <span>posted ${escapeHtml(timeAgo(post.createdAt))}</span>
         ${replyCount && !profileMode ? `<button class="plain-board-action" type="button" data-action="${repliesOpen ? "hide-replies" : "show-replies"}" data-id="${escapeHtml(post.id)}">${repliesOpen ? "Hide replies" : "Show replies"}</button>` : ""}
-        <button class="vote-button ${liked ? "liked" : ""}" data-action="like-post" data-id="${escapeHtml(post.id)}">
+        <button class="vote-button ${liked ? "liked" : ""}" data-action="like-post" data-id="${escapeHtml(post.id)}" ${moderatorMode ? 'disabled' : ''}>
           ${liked ? "▲" : "△"} ${Array.isArray(post.likes) ? post.likes.length : 0}
         </button>
       </div>
@@ -1689,14 +1712,14 @@ function renderThreadCard(post, index, options = {}) {
                 </div>
               ` : ""}
               <div class="reply-inline-actions">
-                <button class="plain-board-action" type="button" data-action="open-comment-reply" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Reply</button>
+                ${!moderatorMode ? `<button class="plain-board-action" type="button" data-action="open-comment-reply" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}">Reply</button>` : ''}
                 ${adminMode && !options.captureMode ? `<button class="plain-board-action" type="button" data-action="instagram-queue-reply" data-id="${escapeHtml(post.id)}" data-comment-id="${escapeHtml(comment.id)}"${(instagramQueue?.entries || []).some((entry) => entry.postId === post.id && entry.commentId === comment.id && !isCompletedInstagramEntry(entry)) ? " disabled" : ""}>${(instagramQueue?.entries || []).some((entry) => entry.postId === post.id && entry.commentId === comment.id && !isCompletedInstagramEntry(entry)) ? "Reply queued" : "Queue reply"}</button>` : ""}
               </div>
             </div>
           `).join("")}
         </div>
       ` : ""}
-      ${replyOpen && !options.captureMode ? `
+      ${replyOpen && !options.captureMode && !moderatorMode ? `
         <form class="reply-form" data-reply-form="${escapeHtml(post.id)}">
           ${replyTarget ? `
             <div class="replying-to-note">
@@ -1726,7 +1749,7 @@ function renderThreadCard(post, index, options = {}) {
             ${adminMode ? `<button class="board-button instagram-queue-toggle" type="button" data-action="instagram-queue" data-id="${escapeHtml(post.id)}"${instagramPostQueued ? " disabled" : ""}>${instagramPostQueued ? "Queued for Instagram" : "Queue for Instagram"}</button>` : ""}
           </div>
         </form>
-      ` : !options.captureMode ? `
+      ` : !options.captureMode && !moderatorMode ? `
         <div class="thread-card-actions">
           ${adminMode ? `<button class="board-button instagram-queue-toggle" type="button" data-action="instagram-queue" data-id="${escapeHtml(post.id)}"${instagramPostQueued ? " disabled" : ""}>${instagramPostQueued ? "Queued for Instagram" : "Queue for Instagram"}</button>` : ""}
           <button class="board-button reply-toggle" type="button" data-action="open-reply" data-id="${escapeHtml(post.id)}">Reply</button>
@@ -1880,6 +1903,7 @@ function render() {
   const activeBoard = state.board === "all" ? null : boardMeta(state.board);
   const signedInUser = currentUser();
   const adminComposer = signedInUser?.role === "admin";
+  const moderatorMode = signedInUser?.role === 'moderator';
   const quoteResults = quoteSearchResults();
   const composerOpen = Boolean(state.composerOpen || hasUnsavedComposerDraft());
   const composerPhotoSummary = selectedPhotoSummary(composerPhotoFiles, "No photos selected");
@@ -1896,7 +1920,7 @@ function render() {
           </div>
           <div class="account-actions">
             ${signedInUser
-              ? `${renderNotificationBell()}<button class="board-button small" data-action="logout">Log out</button>`
+              ? `${moderatorMode ? '' : renderNotificationBell()}<button class="board-button small" data-action="logout">Log out</button>`
               : `<button class="board-button small primary" data-action="open-auth">Sign in / Create account</button>`}
           </div>
         </div>
@@ -1910,7 +1934,7 @@ function render() {
         `).join("")}
       </nav>
 
-      <section class="post-box">
+      ${moderatorMode ? '<section class="post-box"><h2>Moderator</h2><p>You can hide posts from readers. Only admins can see and restore hidden posts.</p></section>' : `<section class="post-box">
         <div class="post-box-head">
           <div>
             <h2>Thread</h2>
@@ -1971,6 +1995,7 @@ function render() {
         ` : ""}
       </section>
 
+      `}
       ${adminComposer ? renderAutopostAdminPanel() : ""}
       ${adminComposer ? renderInstagramQueue() : ""}
 
@@ -2461,6 +2486,21 @@ function bindEvents() {
       }
       if (action === "delete-post") {
         await deletePost(id);
+        return;
+      }
+      if (action === 'hide-post' || action === 'restore-post') {
+        const restoring = action === 'restore-post';
+        if (!window.confirm(restoring ? 'Show this post to readers again?' : 'Hide this post and its replies from readers? Admins will still see it.')) return;
+        try {
+          await apiRequest(`/posts/${encodeURIComponent(id)}/${restoring ? 'restore' : 'hide'}`, { method: 'POST', body: {} });
+          // Remove immediately from moderator memory, including quoted previews.
+          if (!restoring && currentUser()?.role !== 'admin') {
+            state.posts = state.posts.filter(post => post.id !== id).map(post => post.quoteRef?.postId === id ? { ...post, quoteRef: null } : post);
+          }
+          await fetchPosts();
+          render();
+          toast(restoring ? 'Post restored to readers' : 'Post hidden from readers; admins can still review it');
+        } catch (error) { render(); toast(error.message || 'Visibility change failed'); }
         return;
       }
       if (action === "delete-comment") {
