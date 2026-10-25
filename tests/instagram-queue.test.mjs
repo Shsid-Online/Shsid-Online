@@ -219,3 +219,159 @@ test("OAuth refuses read-only credentials before storing connection", async t =>
   t.mock.method(globalThis, "fetch", async url => response(String(url).includes("me/permissions") ? { data: [{ permission: "instagram_basic", status: "granted" }] } : { access_token: "test-token" }));
   await assert.rejects(exchangeConnection({ FACEBOOK_APP_ID: "id", FACEBOOK_APP_SECRET: "secret", FACEBOOK_REDIRECT_URI: "https://example.com/callback" }, "code"), /Missing instagram_content_publish/);
 });
+
+test('temporary create throttling waits for Retry-After, keeps FIFO, and recovers automatically', async t => {
+  const { repo } = fixture(); await add(repo); await add(repo, { ...post, id: 'post2' });
+  await queueAction(repo, 'start', {}, credentials, null, null, 0);
+  let calls = 0, publishes = 0;
+  t.mock.method(globalThis, 'fetch', async url => {
+    calls++;
+    if (calls === 1) return new Response(JSON.stringify({ error: { code: 4, message: 'SECRET' } }), { status: 429, headers: { 'Retry-After': '300' } });
+    if (url.endsWith('/media_publish')) { publishes++; return response({ id: 'published' }); }
+    return response(url.endsWith('/media') ? { id: 'container' } : { status_code: 'FINISHED' });
+  });
+  await runQueue(repo, credentials, () => post, INTERVAL_MS);
+  const waiting = await repo.read();
+  assert.equal(waiting.active, true);
+  assert.equal(waiting.entries[0].status, 'queued');
+  assert.equal(waiting.entries[0].retryAt, INTERVAL_MS + 300000);
+  assert.equal(waiting.entries[0].failure.code, 4);
+  assert.ok(!JSON.stringify(waiting).includes('SECRET'));
+  await assert.rejects(queueAction(repo, 'post-now', { id: waiting.entries[1].id }, credentials, null, null, INTERVAL_MS + 1), /cooling down/);
+  await runQueue(repo, credentials, () => post, INTERVAL_MS + 299999);
+  assert.equal(calls, 1);
+  t.mock.method(Date, 'now', () => INTERVAL_MS + 300000);
+  await runQueue(repo, credentials, () => post, INTERVAL_MS + 300000);
+  const result = await repo.read();
+  assert.equal(publishes, 1);
+  assert.deepEqual(result.entries.map(e => e.postId), ['post2']);
+  assert.equal(result.nextAt, 2 * INTERVAL_MS + 300000);
+});
+
+test('status transient errors preserve the existing container', async t => {
+  const { repo } = fixture(); await add(repo);
+  await queueAction(repo, 'start', {}, credentials, null, null, 0);
+  let creates = 0, checks = 0;
+  t.mock.method(globalThis, 'fetch', async url => {
+    if (url.endsWith('/media')) { creates++; return response({ id: 'container' }); }
+    if (url.endsWith('/media_publish')) return response({ id: 'published' });
+    if (checks++ === 0) return new Response(JSON.stringify({ error: { code: 2, is_transient: true } }), { status: 503 });
+    return response({ status_code: 'FINISHED' });
+  });
+  await runQueue(repo, credentials, () => post, INTERVAL_MS);
+  const entry = (await repo.read()).entries[0];
+  assert.equal(entry.containerId, 'container');
+  assert.equal(entry.status, 'processing');
+  await runQueue(repo, credentials, () => post, entry.retryAt);
+  assert.equal(creates, 1);
+  assert.equal((await repo.read()).entries.length, 0);
+});
+
+test('explicit publish throttling rechecks the same container before retrying', async t => {
+  const { repo } = fixture(); await add(repo);
+  await queueAction(repo, 'start', {}, credentials, null, null, 0);
+  let creates = 0, checks = 0, publishes = 0;
+  t.mock.method(globalThis, 'fetch', async url => {
+    if (url.endsWith('/media')) { creates++; return response({ id: 'container' }); }
+    if (url.endsWith('/media_publish')) {
+      publishes++;
+      return publishes === 1 ? response({ error: { code: 613 } }) : response({ id: 'published' });
+    }
+    checks++; return response({ status_code: 'FINISHED' });
+  });
+  await runQueue(repo, credentials, () => post, INTERVAL_MS);
+  const entry = (await repo.read()).entries[0];
+  assert.equal(entry.status, 'processing');
+  assert.equal((await repo.read()).active, true);
+  await runQueue(repo, credentials, () => post, entry.retryAt);
+  assert.equal(creates, 1); assert.equal(checks, 2); assert.equal(publishes, 2);
+  assert.equal((await repo.read()).entries.length, 0);
+});
+
+test('PUBLISHED container is removed without another publication', async t => {
+  const { repo, store } = fixture(); await add(repo);
+  await queueAction(repo, 'start', {}, credentials, null, null, 0);
+  Object.assign(store.data.instagramQueue.entries[0], { containerId: 'already-published', status: 'processing' });
+  t.mock.method(globalThis, 'fetch', async url => {
+    assert.match(url, /already-published\?fields=status_code$/);
+    return response({ status_code: 'PUBLISHED' });
+  });
+  await runQueue(repo, credentials, () => post, INTERVAL_MS);
+  assert.equal((await repo.read()).entries.length, 0);
+});
+
+test('bare HTTP 429 and server errors during publish remain uncertain and are never replayed', async t => {
+  for (const status of [429, 500, 503]) {
+    const { repo } = fixture(); await add(repo);
+    await queueAction(repo, 'start', {}, credentials, null, null, 0);
+    const mock = t.mock.method(globalThis, 'fetch', async url => {
+      if (url.endsWith('/media_publish')) return new Response('not JSON', { status });
+      return response(url.endsWith('/media') ? { id: 'container' } : { status_code: 'FINISHED' });
+    });
+    await runQueue(repo, credentials, () => post, INTERVAL_MS);
+    const job = await repo.read();
+    assert.equal(job.active, false); assert.equal(job.entries[0].status, 'review');
+    await assert.rejects(queueAction(repo, 'retry', { id: job.entries[0].id }, credentials, null, null, 2 * INTERVAL_MS), /Only a stopped/);
+    mock.mock.restore();
+  }
+});
+
+test('network failure before publish retries without exposing raw errors', async t => {
+  const { repo } = fixture(); await add(repo);
+  await queueAction(repo, 'start', {}, credentials, null, null, 0);
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('SECRET token=test-token'); });
+  await runQueue(repo, credentials, () => post, INTERVAL_MS);
+  const job = await repo.read();
+  assert.equal(job.active, true); assert.equal(job.entries[0].retryCount, 1);
+  assert.ok(!JSON.stringify(job).includes('SECRET'));
+});
+
+test('authorization errors pause with reconnect guidance instead of retrying', async t => {
+  const { repo } = fixture(); await add(repo);
+  await queueAction(repo, 'start', {}, credentials, null, null, 0);
+  t.mock.method(globalThis, 'fetch', async () => response({ error: { code: 190, error_subcode: 463, is_transient: true, message: 'SECRET' } }));
+  await runQueue(repo, credentials, () => post, INTERVAL_MS);
+  const job = await repo.read();
+  assert.equal(job.active, false); assert.equal(job.entries[0].status, 'failed');
+  assert.match(job.entries[0].error, /Reconnect/); assert.equal(job.entries[0].retryAt, undefined);
+  assert.deepEqual(job.entries[0].failure, { phase: 'create', httpStatus: 200, code: 190, subcode: 463 });
+});
+
+test('automatic retry count is bounded; failed item can be reset without publishing immediately', async t => {
+  const { repo } = fixture(); await add(repo);
+  await queueAction(repo, 'start', {}, credentials, null, null, 0);
+  t.mock.method(globalThis, 'fetch', async () => response({ error: { code: 4 } }));
+  let time = INTERVAL_MS;
+  for (let i = 0; i < 6; i++) {
+    await runQueue(repo, credentials, () => post, time);
+    const entry = (await repo.read()).entries[0];
+    if (i < 5) { assert.equal(entry.retryCount, i + 1); time = entry.retryAt; }
+  }
+  const failed = await repo.read();
+  assert.equal(failed.active, false); assert.equal(failed.entries[0].status, 'failed');
+  assert.match(failed.entries[0].error, /exhausted/);
+  await queueAction(repo, 'retry', { id: failed.entries[0].id }, credentials, null, null, time);
+  const reset = await repo.read();
+  assert.equal(reset.active, false); assert.equal(reset.entries[0].status, 'queued');
+  assert.equal(reset.entries[0].retryCount, undefined);
+});
+
+test('paused, scheduled-for-later and cooling-down ticks do not write queue state', async () => {
+  for (const state of [emptyQueue(), { ...emptyQueue(), active: true, nextAt: INTERVAL_MS }, { ...emptyQueue(), active: true, retryAt: INTERVAL_MS }]) {
+    const repo = { read: async () => state, write: async () => assert.fail('Idle tick wrote to D1') };
+    await runQueue(repo, credentials, () => assert.fail('Idle tick read a post'), 1);
+  }
+});
+
+test('pause during a retryable failure remains paused and does not resurrect post-now', async t => {
+  const { repo } = fixture(); const job = await add(repo);
+  await queueAction(repo, 'post-now', { id: job.entries[0].id }, credentials, null, null, 1);
+  t.mock.method(globalThis, 'fetch', async () => {
+    await queueAction(repo, 'pause', {}, credentials, null, null, 2);
+    return response({ error: { code: 4 } });
+  });
+  await runQueue(repo, credentials, () => post, 2);
+  const paused = await repo.read();
+  assert.equal(paused.active, false); assert.equal(paused.immediateId, undefined);
+  assert.equal(paused.entries[0].status, 'queued');
+});

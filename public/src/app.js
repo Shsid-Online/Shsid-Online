@@ -938,7 +938,8 @@ function renderInstagramQueue() {
   return `<section class="post-box instagram-queue">
     <h2>Instagram queue</h2>
     <p>Queue a board post with up to three random replies, or queue one specific reply with its post. Items publish in order, one hour apart, even when this page is closed.</p>
-    <p>${queue ? queue.connected ? "Instagram connected" : "Instagram connection required before starting" : "Queue not loaded"} · ${queue?.active ? `Running. Next eligible post: ${escapeHtml(new Date(queue.nextAt).toLocaleString())}` : "Paused"}</p>
+    <p>${queue ? queue.connected ? "Instagram connected" : "Instagram connection required before starting" : "Queue not loaded"} · ${queue?.active ? `Running. Next eligible post: ${escapeHtml(new Date(queue.nextAt).toLocaleString())}` : queue?.pendingImmediate ? "Selected item pending automatic publication" : "Paused"}</p>
+    ${queue?.retryAt > Date.now() ? `<p>Instagram cooldown until ${escapeHtml(new Date(queue.retryAt).toLocaleString())}. Queued items are preserved.</p>` : ""}
     <div class="instagram-actions">
       <button class="board-button" data-action="instagram-connect">${queue?.connected ? "Reconnect Instagram" : "Connect Instagram"}</button>
       <button class="board-button" data-action="instagram-refresh">Refresh status</button>
@@ -949,6 +950,8 @@ function renderInstagramQueue() {
       <a href="${escapeHtml(e.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(e.imageUrl)}" alt="${escapeHtml(e.caption)}" loading="lazy"></a>
       <div><strong>${escapeHtml(e.caption)}${e.commentId ? " · selected reply" : ""}</strong><p>${escapeHtml(e.title)}</p><p>${index + 1} of ${entries.length} in line · ${escapeHtml(e.status)}</p>
       ${e.error ? `<p role="alert">${escapeHtml(e.error)}</p>` : ""}
+      ${e.retryAt ? `<p>Retry after ${escapeHtml(new Date(e.retryAt).toLocaleString())}${queue?.active || queue?.pendingImmediate ? " (automatic)" : ". If paused, start the queue to resume."}</p>` : ""}
+      ${e.status === "failed" ? `<button class="board-button small" data-action="instagram-retry" data-id="${escapeHtml(e.id)}" ${queue?.connected ? "" : "disabled"}>Retry item</button>` : ""}
       ${["queued", "processing"].includes(e.status) ? `<button class="board-button small primary" data-action="instagram-post-now" data-id="${escapeHtml(e.id)}" ${queue?.connected ? "" : "disabled"}>Post now</button>` : ""}
       ${["queued", "processing", "failed"].includes(e.status) ? `<button class="board-button small" data-action="instagram-remove" data-id="${escapeHtml(e.id)}">Remove</button>` : ""}
       ${e.status === "review" ? `<button class="board-button small" data-action="instagram-resolve" data-id="${escapeHtml(e.id)}">I checked Instagram: archive item</button>` : ""}
@@ -2281,6 +2284,7 @@ function bindEvents() {
               const item = instagramQueue.entries.find(entry => entry.id === id);
               toast(!item ? "Published to Instagram" : item.error || "Instagram is preparing the image. Publishing will continue automatically.");
             }
+            if (command === "retry") toast(instagramQueue.active ? "Item returned to the queue" : "Item ready. Start the queue or choose Post now to publish.");
           }
           render();
         } catch (error) { toast(error.message || "Instagram queue action failed"); }

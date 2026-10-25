@@ -104,6 +104,25 @@ test('apex board API stays on the same host for browser clearance', () => {
   assert.equal(vm.runInContext('API_BASE', context), 'https://shsid.online/api');
 });
 
+test('Instagram queue shows cooldown, safe retry and uncertain-publication review separately', () => {
+  const u = ui();
+  u.context.queueFixture = { active: false, connected: true, pendingImmediate: true, retryAt: Date.now() + 60000,
+    entries: [
+      { id: 'waiting', status: 'processing', caption: 'Waiting', imageUrl: '/test.jpg', retryAt: Date.now() + 60000 },
+      { id: 'failed', status: 'failed', caption: 'Failed', imageUrl: '/test.jpg', error: '<script>secret</script>' },
+      { id: 'uncertain', status: 'review', caption: 'Review', imageUrl: '/test.jpg' }
+    ] };
+  u.run('instagramQueue = queueFixture;');
+  const html = u.run('renderInstagramQueue()');
+  assert.match(html, /Instagram cooldown until/);
+  assert.match(html, /Selected item pending automatic publication/);
+  assert.match(html, /\(automatic\)/);
+  assert.match(html, /data-action="instagram-retry" data-id="failed"/);
+  assert.doesNotMatch(html, /data-action="instagram-retry" data-id="uncertain"/);
+  assert.match(html, /data-action="instagram-resolve" data-id="uncertain"/);
+  assert.doesNotMatch(html, /<script>secret/);
+});
+
 test('verification configuration failure never sends or retries a post', async () => {
   const u=ui(); const calls=[];
   u.context.fetch=async (url,options)=>{calls.push([url,options.method]);return Response.json({error:'temporarily unavailable'},{status:503});};
